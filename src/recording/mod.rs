@@ -1,5 +1,7 @@
+pub mod catalog;
 pub mod ffmpeg;
 pub mod job;
+pub mod persist;
 pub mod scan;
 pub mod schedule;
 pub mod ytdlp;
@@ -12,12 +14,24 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::AppEvent;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, RecordingFormat, ResolvedFormat};
 use crate::platform::PlatformKind;
 use crate::recording::ffmpeg::{FfmpegBuilder, FfmpegProcess};
 use crate::recording::job::{RecordingJob, RecordingState};
 use crate::recording::ytdlp::YtDlpProcess;
 use crate::stream::resolver;
+
+/// Resolve the format/quality settings for a recording, walking
+/// per-channel override → global → built-in defaults.
+pub fn resolve_format(config: &AppConfig, channel_id: &str, platform: PlatformKind) -> ResolvedFormat {
+    let platform_str = platform.to_string();
+    let channel_override: Option<&RecordingFormat> = config
+        .auto_record_channels
+        .iter()
+        .find(|c| c.channel_id == channel_id && c.platform == platform_str)
+        .and_then(|c| c.format.as_ref());
+    RecordingFormat::resolved(channel_override, &config.recording.format)
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum RecordingCommand {
@@ -136,6 +150,8 @@ pub async fn run_manager(
                             from_start,
                         });
 
+                        let resolved_format = resolve_format(&config, &channel_id, platform);
+
                         // YouTube + from_start: use yt-dlp directly (no URL resolution needed)
                         if platform == PlatformKind::YouTube && from_start {
                             let rtx = resolve_tx.clone();
@@ -145,8 +161,9 @@ pub async fn run_manager(
                                 format!("https://www.youtube.com/@{channel_name}/live")
                             };
                             let cookies = cookies_path.clone();
+                            let fmt = resolved_format.clone();
                             tokio::spawn(async move {
-                                match YtDlpProcess::new(&url, output_path, cookies.as_deref()) {
+                                match YtDlpProcess::with_options(&url, output_path, cookies.as_deref(), Some(&fmt), true) {
                                     Ok(process) => {
                                         let _ = rtx.send((job_id, Ok(RecorderProcess::YtDlp(process))));
                                     }
@@ -163,6 +180,7 @@ pub async fn run_manager(
 
                             let rtx = resolve_tx.clone();
                             let etx = event_tx.clone();
+                            let fmt = resolved_format.clone();
                             tokio::spawn(async move {
                                 match resolver::resolve_stream_url(platform, &channel_name, cookies_path.as_deref()).await {
                                     Ok(stream_info) => {
@@ -172,6 +190,7 @@ pub async fn run_manager(
                                         ));
                                         match FfmpegBuilder::new(stream_info.url, output_path)
                                             .transcode(transcode)
+                                            .format(fmt)
                                             .build()
                                         {
                                             Ok(process) => {
@@ -238,8 +257,9 @@ pub async fn run_manager(
                         });
 
                         let rtx = resolve_tx.clone();
+                        let fmt = resolve_format(&config, "", platform);
                         tokio::spawn(async move {
-                            match YtDlpProcess::new(&url, output_path, cookies_path.as_deref()) {
+                            match YtDlpProcess::with_options(&url, output_path, cookies_path.as_deref(), Some(&fmt), false) {
                                 Ok(process) => {
                                     let _ = rtx.send((job_id, Ok(RecorderProcess::YtDlp(process))));
                                 }
@@ -327,6 +347,7 @@ pub async fn run_manager(
                                     let job = rec.job.clone();
                                     let jid = *id;
                                     let retry_cookies = rec.cookies_path.clone();
+                                    let retry_fmt = resolve_format(&config, &job.channel_id, job.platform);
                                     tokio::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
                                         match resolver::resolve_stream_url(
@@ -337,6 +358,7 @@ pub async fn run_manager(
                                             Ok(info) => {
                                                 match FfmpegBuilder::new(info.url, job.output_path)
                                                     .transcode(job.transcode)
+                                                    .format(retry_fmt)
                                                     .build()
                                                 {
                                                     Ok(p) => { let _ = rtx.send((jid, Ok(RecorderProcess::Ffmpeg(p)))); }
@@ -406,6 +428,132 @@ pub fn build_output_path(
         .replace("{platform}", platform_str);
 
     disambiguate_path(config.recording_dir.join(filename))
+}
+
+/// Compute the per-episode output directory for catalog-pull and structured recordings.
+///
+/// Layout: `{root}/{platform}/{channel}/{YYYY-MM-DD}_{title}/`
+///
+/// Both `channel` and `title` are filesystem-sanitized. The result is *not*
+/// disambiguated — a re-run that lands on the same date+title will reuse the
+/// directory; the catalog index in §5 is what guarantees we don't re-download.
+pub fn episode_dir(
+    root: &std::path::Path,
+    platform: PlatformKind,
+    channel: &str,
+    date: chrono::DateTime<chrono::Utc>,
+    title: &str,
+) -> PathBuf {
+    let platform_str = match platform {
+        PlatformKind::Twitch => "twitch",
+        PlatformKind::YouTube => "youtube",
+        PlatformKind::Patreon => "patreon",
+    };
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let leaf = format!("{date_str}_{}", sanitize_path_component(title));
+    root.join(platform_str)
+        .join(sanitize_path_component(channel))
+        .join(leaf)
+}
+
+/// Strip filesystem-hostile characters and clamp length so deeply-nested paths
+/// don't exceed PATH_MAX on any platform.
+pub fn sanitize_path_component(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.') { c } else { '_' })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    let truncated: String = trimmed.chars().take(80).collect();
+    if truncated.is_empty() { "untitled".to_string() } else { truncated }
+}
+
+/// Per-episode metadata sidecar. Written next to `video.mkv` after a catalog-pull
+/// recording finishes so downstream tools (Crunchr, archiver, etc.) have provenance
+/// without parsing filenames.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EpisodeMetadata {
+    pub platform: String,
+    pub channel_id: String,
+    pub channel_name: String,
+    pub vod_id: String,
+    pub title: String,
+    pub source_url: String,
+    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub recorded_at: chrono::DateTime<chrono::Utc>,
+    pub duration_secs: Option<f64>,
+    pub format: String,
+    pub container: String,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+/// Serialize EpisodeMetadata to `{episode_dir}/metadata.json`, creating the dir
+/// if needed. Best-effort: errors are returned but never panic.
+pub fn write_metadata_json(episode_dir: &std::path::Path, meta: &EpisodeMetadata) -> Result<()> {
+    std::fs::create_dir_all(episode_dir)?;
+    let path = episode_dir.join("metadata.json");
+    let json = serde_json::to_string_pretty(meta)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RecordingFormat;
+
+    #[test]
+    fn format_resolution_precedence() {
+        let global = RecordingFormat {
+            format: Some("bestvideo+bestaudio".into()),
+            container: Some("mp4".into()),
+            ..Default::default()
+        };
+        let channel = RecordingFormat {
+            format: Some("worst".into()),
+            ..Default::default()
+        };
+        let r = RecordingFormat::resolved(Some(&channel), &global);
+        assert_eq!(r.format, "worst", "channel wins on format");
+        assert_eq!(r.container, "mp4", "global fills missing container");
+        assert_eq!(r.video_codec, "copy", "built-in default copy");
+        assert_eq!(r.audio_codec, "copy");
+    }
+
+    #[test]
+    fn format_resolution_uses_builtin_default_when_empty() {
+        let r = RecordingFormat::resolved(None, &RecordingFormat::default());
+        assert_eq!(r.format, "best");
+        assert_eq!(r.container, "mkv");
+        assert_eq!(r.video_codec, "copy");
+        assert_eq!(r.audio_codec, "copy");
+    }
+
+    #[test]
+    fn episode_dir_layout() {
+        let root = std::path::PathBuf::from("/tmp/strivo");
+        let date = chrono::DateTime::parse_from_rfc3339("2026-04-12T15:30:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let dir = episode_dir(&root, PlatformKind::Patreon, "Some Creator", date, "Episode 1: Hello!");
+        assert_eq!(
+            dir,
+            std::path::PathBuf::from("/tmp/strivo/patreon/Some Creator/2026-04-12_Episode 1_ Hello_")
+        );
+    }
+
+    #[test]
+    fn sanitize_clamps_and_strips() {
+        assert_eq!(sanitize_path_component(""), "untitled");
+        assert_eq!(sanitize_path_component("...."), "untitled");
+        assert_eq!(sanitize_path_component("a/b\\c:d"), "a_b_c_d");
+        let long = "x".repeat(200);
+        assert_eq!(sanitize_path_component(&long).len(), 80);
+    }
 }
 
 /// If `path` already exists, return `stem_1.ext`, `stem_2.ext`, ... until a

@@ -24,6 +24,7 @@ struct DaemonState {
     youtube_connected: bool,
     patreon_connected: bool,
     pending_auth: Option<(PlatformKind, String, String)>,
+    auth_queue: std::collections::VecDeque<(PlatformKind, String, String)>,
 }
 
 impl DaemonState {
@@ -60,7 +61,17 @@ impl DaemonState {
                 }
             }
             DaemonEvent::DeviceCodeRequired { kind, verification_uri, user_code } => {
-                self.pending_auth = Some((*kind, verification_uri.clone(), user_code.clone()));
+                let entry = (*kind, verification_uri.clone(), user_code.clone());
+                if matches!(&self.pending_auth, Some((p, _, _)) if *p == entry.0) {
+                    self.pending_auth = Some(entry);
+                } else {
+                    self.auth_queue.retain(|(p, _, _)| *p != entry.0);
+                    if self.pending_auth.is_none() {
+                        self.pending_auth = Some(entry);
+                    } else {
+                        self.auth_queue.push_back(entry);
+                    }
+                }
             }
             DaemonEvent::PlatformAuthenticated { kind } => {
                 match kind {
@@ -68,7 +79,10 @@ impl DaemonState {
                     PlatformKind::YouTube => self.youtube_connected = true,
                     PlatformKind::Patreon => self.patreon_connected = true,
                 }
-                self.pending_auth = None;
+                if matches!(&self.pending_auth, Some((pending, _, _)) if pending == kind) {
+                    self.pending_auth = self.auth_queue.pop_front();
+                }
+                self.auth_queue.retain(|(p, _, _)| p != kind);
             }
             _ => {}
         }
@@ -107,6 +121,26 @@ pub async fn run() -> Result<()> {
     // Load config
     let config = AppConfig::load(None)?;
     tracing::info!("Config loaded");
+
+    // Open the persistence db (jobs / catalog / crunchr_queue) and recover any
+    // jobs that were marked running when the daemon last died. Recovery is
+    // intentionally minimal: we mark orphans as 'interrupted' so the audit log
+    // is honest. Catalog-pull resumption is automatic — the catalog dedupe
+    // index in §5 already skips already-recorded VODs on the next pull.
+    let persist_db = match crate::recording::persist::PersistDb::open(&AppConfig::data_dir().join("jobs.db")) {
+        Ok(db) => {
+            match db.recover_orphaned_running().await {
+                Ok(n) if n > 0 => tracing::info!("daemon: marked {n} orphan job(s) as interrupted"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("daemon: persist recover failed: {e}"),
+            }
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            tracing::warn!("daemon: failed to open jobs.db: {e} — durability disabled");
+            None
+        }
+    };
 
     let cancel = CancellationToken::new();
 
@@ -270,6 +304,7 @@ pub async fn run() -> Result<()> {
         youtube_connected: false,
         patreon_connected: false,
         pending_auth: None,
+        auth_queue: std::collections::VecDeque::new(),
     };
     for job in scanned {
         state.recordings.insert(job.id, job);
@@ -342,6 +377,16 @@ pub async fn run() -> Result<()> {
                     state.apply(de);
                     // Fan out to all connected clients
                     let _ = broadcast_tx.send(de.clone());
+
+                    // Persist recording lifecycle for crash-recovery audit.
+                    if let Some(ref db) = persist_db {
+                        let db = db.clone();
+                        let de = de.clone();
+                        let recordings = state.recordings.clone();
+                        tokio::spawn(async move {
+                            persist_event(&db, &de, &recordings).await;
+                        });
+                    }
                 }
             }
             _ = cancel.cancelled() => {
@@ -463,4 +508,53 @@ async fn handle_client(
     broadcast_task.abort();
     writer_task.abort();
     Ok(())
+}
+
+/// Persist a recording's lifecycle for crash-recovery. Best-effort — a sqlite
+/// hiccup never breaks the live event flow.
+async fn persist_event(
+    db: &crate::recording::persist::PersistDb,
+    event: &DaemonEvent,
+    recordings: &HashMap<Uuid, RecordingJob>,
+) {
+    use crate::recording::persist::PersistedJob;
+    use crate::recording::job::RecordingState;
+
+    let snapshot = |job_id: &Uuid, state: RecordingState, error: Option<String>| -> Option<PersistedJob> {
+        let job = recordings.get(job_id)?;
+        Some(PersistedJob {
+            id: job.id.to_string(),
+            kind: "Recording".to_string(),
+            payload: serde_json::to_string(job).unwrap_or_default(),
+            state: format!("{state:?}").to_lowercase(),
+            attempts: 0,
+            last_error: error,
+            episode_dir: job.output_path.parent().map(|p| p.to_path_buf()),
+        })
+    };
+
+    let result = match event {
+        DaemonEvent::RecordingStarted { job } => {
+            let pj = PersistedJob {
+                id: job.id.to_string(),
+                kind: "Recording".to_string(),
+                payload: serde_json::to_string(job).unwrap_or_default(),
+                state: "running".to_string(),
+                attempts: 0,
+                last_error: None,
+                episode_dir: job.output_path.parent().map(|p| p.to_path_buf()),
+            };
+            db.upsert_job(&pj).await
+        }
+        DaemonEvent::RecordingFinished { job_id, final_state, error } => {
+            let Some(pj) = snapshot(job_id, *final_state, error.clone()) else {
+                return;
+            };
+            db.upsert_job(&pj).await
+        }
+        _ => return,
+    };
+    if let Err(e) = result {
+        tracing::warn!("daemon: persist event failed: {e}");
+    }
 }

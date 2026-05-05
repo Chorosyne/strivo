@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::app::AppEvent;
 use crate::config::credentials;
-use crate::platform::PlatformKind;
+use crate::platform::{PlatformKind, VodEntry};
 
 const PATREON_API_URL: &str = "https://www.patreon.com/api/oauth2/v2";
 const PATREON_AUTH_URL: &str = "https://www.patreon.com/oauth2/authorize";
@@ -109,10 +109,14 @@ impl PatreonClient {
             return Ok(());
         }
 
-        // Start local HTTP listener
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let port = listener.local_addr()?.port();
-        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+        // Fixed port so the redirect URI can be pre-registered in the Patreon client.
+        const PATREON_CALLBACK_PORT: u16 = 47823;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", PATREON_CALLBACK_PORT))
+            .await
+            .with_context(|| format!(
+                "Failed to bind Patreon OAuth callback on 127.0.0.1:{PATREON_CALLBACK_PORT} (port in use?)"
+            ))?;
+        let redirect_uri = format!("http://127.0.0.1:{PATREON_CALLBACK_PORT}/callback");
 
         let auth_url = format!(
             "{PATREON_AUTH_URL}?response_type=code&client_id={}&redirect_uri={}&scope=identity%20identity.memberships",
@@ -394,6 +398,108 @@ impl PatreonClient {
 
     pub async fn is_authenticated(&self) -> bool {
         self.access_token.read().await.is_some()
+    }
+
+    /// Enumerate a campaign's full back catalog of video/audio posts. Pages until exhausted
+    /// or `limit` is hit. `since` filters server-side via Patreon's `published_at[gte]` filter.
+    pub async fn fetch_channel_vods(
+        &self,
+        campaign_id: &str,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<VodEntry>> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let mut url = format!(
+                "{PATREON_API_URL}/campaigns/{campaign_id}/posts\
+                 ?fields%5Bpost%5D=title,url,published_at,embed,post_type,post_file\
+                 &filter%5Bis_by_creator%5D=true&page%5Bcount%5D=20&sort=-published_at"
+            );
+            if let Some(ref s) = since {
+                url.push_str(&format!(
+                    "&filter%5Bpublished_at%5D%5Bgte%5D={}",
+                    s.to_rfc3339()
+                ));
+            }
+            if let Some(ref c) = cursor {
+                url.push_str(&format!("&page%5Bcursor%5D={c}"));
+            }
+
+            let data = self.api_get(&url).await?;
+
+            if let Some(items) = data.get("data").and_then(|v| v.as_array()) {
+                for item in items {
+                    let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if id.is_empty() { continue; }
+                    let attrs = item.get("attributes");
+                    let post_type = attrs.and_then(|a| a.get("post_type"))
+                        .and_then(|v| v.as_str()).unwrap_or("");
+                    let title = attrs.and_then(|a| a.get("title"))
+                        .and_then(|v| v.as_str()).unwrap_or("Untitled").to_string();
+                    let post_url = attrs.and_then(|a| a.get("url"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let published_at = attrs.and_then(|a| a.get("published_at"))
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s)
+                            .ok().map(|dt| dt.with_timezone(&chrono::Utc)));
+                    let direct_file = attrs.and_then(|a| a.get("post_file"))
+                        .and_then(|f| f.get("url"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let embed_url = attrs.and_then(|a| a.get("embed"))
+                        .and_then(|e| e.get("url"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+
+                    // Pick something downloadable. Prefer direct file, fall back to embed,
+                    // last resort the post page (yt-dlp's patreon extractor handles it).
+                    let download_url = direct_file
+                        .or(embed_url)
+                        .unwrap_or_else(|| post_url.clone());
+
+                    let is_video_like = matches!(
+                        post_type,
+                        "video_external_file" | "video_embed" | "audio_file"
+                            | "podcast" | "video_file" | "audio_embed"
+                    );
+                    if !is_video_like {
+                        continue;
+                    }
+
+                    out.push(VodEntry {
+                        id,
+                        platform: PlatformKind::Patreon,
+                        channel_id: campaign_id.to_string(),
+                        title,
+                        published_at,
+                        duration: None,
+                        url: download_url,
+                        thumbnail_url: None,
+                    });
+
+                    if let Some(cap) = limit {
+                        if out.len() >= cap {
+                            return Ok(out);
+                        }
+                    }
+                }
+            }
+
+            cursor = data.get("meta")
+                .and_then(|m| m.get("pagination"))
+                .and_then(|p| p.get("cursors"))
+                .and_then(|c| c.get("next"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            if cursor.is_none() {
+                break;
+            }
+        }
+
+        Ok(out)
     }
 }
 

@@ -2,6 +2,8 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tokio::process::{Child, Command};
 
+use crate::config::ResolvedFormat;
+
 pub struct YtDlpProcess {
     child: Child,
     pub output_path: PathBuf,
@@ -13,18 +15,38 @@ impl YtDlpProcess {
         output_path: PathBuf,
         cookies_path: Option<&std::path::Path>,
     ) -> Result<Self> {
+        Self::with_options(url, output_path, cookies_path, None, true)
+    }
+
+    /// Spawn yt-dlp with an explicit format selector and optional `--live-from-start`.
+    /// `format` of `None` means use built-in default `"best"`.
+    pub fn with_options(
+        url: &str,
+        output_path: PathBuf,
+        cookies_path: Option<&std::path::Path>,
+        format: Option<&ResolvedFormat>,
+        live_from_start: bool,
+    ) -> Result<Self> {
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         let mut cmd = Command::new("yt-dlp");
-        cmd.args([
-            "--live-from-start",
-            "-f",
-            "best",
-            "--no-part",
-            "-o",
-        ]);
+        if live_from_start {
+            cmd.arg("--live-from-start");
+        }
+        cmd.arg("--continue");
+        cmd.args(["--no-part"]);
+
+        let format_str = format.map(|f| f.format.as_str()).unwrap_or("best");
+        cmd.args(["-f", format_str]);
+
+        // Bitrate hint for format selection sort.
+        if let Some(kbps) = format.and_then(|f| f.bitrate_kbps) {
+            cmd.args(["-S", &format!("vbr~{kbps}")]);
+        }
+
+        cmd.arg("-o");
         cmd.arg(&output_path);
 
         if let Some(cookies) = cookies_path {

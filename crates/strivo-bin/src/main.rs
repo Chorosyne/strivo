@@ -65,7 +65,127 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
         Command::Doctor => handle_doctor(),
         Command::Completions { shell } => handle_completions(*shell),
         Command::Man => handle_man(),
+        Command::Pull { target, format, since, max, force, no_transcribe } => {
+            handle_pull(target, format.as_deref(), since.as_deref(), *max, *force, *no_transcribe, config_path).await
+        }
     }
+}
+
+fn parse_since(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&chrono::Utc));
+    }
+    let (num_part, unit) = s.split_at(s.len().saturating_sub(1));
+    let n: i64 = num_part.parse().with_context(|| format!("bad --since duration: {s}"))?;
+    let dur = match unit {
+        "h" => chrono::Duration::hours(n),
+        "d" => chrono::Duration::days(n),
+        "w" => chrono::Duration::weeks(n),
+        _ => anyhow::bail!("unknown --since suffix '{unit}' (use h/d/w or RFC3339)"),
+    };
+    Ok(chrono::Utc::now() - dur)
+}
+
+async fn handle_pull(
+    target: &str,
+    format_override: Option<&str>,
+    since: Option<&str>,
+    max: Option<usize>,
+    force: bool,
+    no_transcribe: bool,
+    config_path: Option<&std::path::Path>,
+) -> Result<()> {
+    use strivo_core::config::{AppConfig, RecordingFormat};
+    use strivo_core::platform::{Platform, PlatformKind, VodEntry};
+    use strivo_core::recording::catalog::{self, CatalogPullOptions};
+    use strivo_core::recording::persist::PersistDb;
+
+    let (platform_str, channel_id) = target.split_once(':').ok_or_else(|| {
+        anyhow::anyhow!("target must be `<platform>:<channel_id>`, got `{target}`")
+    })?;
+    let platform = match platform_str.to_lowercase().as_str() {
+        "youtube" | "yt" => PlatformKind::YouTube,
+        "twitch" | "tw" => PlatformKind::Twitch,
+        "patreon" | "pt" => PlatformKind::Patreon,
+        other => anyhow::bail!("unknown platform `{other}` (try youtube/twitch/patreon)"),
+    };
+    let since = since.map(parse_since).transpose()?;
+
+    let config = AppConfig::load(config_path).context("load config")?;
+
+    // Resolve format: per-channel override → CLI flag → global default → built-ins.
+    let cli_override = format_override.map(|f| RecordingFormat {
+        format: Some(f.to_string()),
+        ..Default::default()
+    });
+    let chan_override = config
+        .auto_record_channels
+        .iter()
+        .find(|c| c.channel_id == channel_id && c.platform == platform.to_string())
+        .and_then(|c| c.format.clone());
+    let resolved = RecordingFormat::resolved(
+        cli_override.as_ref().or(chan_override.as_ref()),
+        &config.recording.format,
+    );
+
+    let cookies_path = if matches!(platform, PlatformKind::YouTube) {
+        config.youtube.as_ref().and_then(|y| y.cookies_path.clone())
+    } else {
+        None
+    };
+
+    let db_path = AppConfig::data_dir().join("jobs.db");
+    let db = PersistDb::open(&db_path).context("open jobs.db")?;
+
+    println!("Enumerating {platform} catalog for {channel_id}…");
+    let vods: Vec<VodEntry> = match platform {
+        PlatformKind::YouTube => {
+            let yt_cfg = config.youtube.clone().context("youtube section missing in config")?;
+            let yt = strivo_core::platform::youtube::YouTubePlatform::new(
+                yt_cfg.client_id, yt_cfg.client_secret, yt_cfg.cookies_path.clone());
+            yt.load_stored_tokens().await.context("youtube auth")?;
+            yt.fetch_channel_vods(channel_id, since, max).await?
+        }
+        PlatformKind::Twitch => {
+            let tw_cfg = config.twitch.clone().context("twitch section missing in config")?;
+            let tw = strivo_core::platform::twitch::TwitchPlatform::new(
+                tw_cfg.client_id, tw_cfg.client_secret);
+            tw.load_stored_tokens().await.context("twitch auth")?;
+            tw.fetch_channel_vods(channel_id, since, max).await?
+        }
+        PlatformKind::Patreon => {
+            let pt_cfg = config.patreon.clone().context("patreon section missing in config")?;
+            let pt = strivo_core::platform::patreon::PatreonClient::new(
+                pt_cfg.client_id, pt_cfg.client_secret);
+            pt.load_stored_tokens().await.context("patreon auth")?;
+            pt.fetch_channel_vods(channel_id, since, max).await?
+        }
+    };
+
+    if vods.is_empty() {
+        println!("No matching VODs found.");
+        return Ok(());
+    }
+    println!("Discovered {} VOD(s).", vods.len());
+
+    let opts = CatalogPullOptions {
+        root: config.recording_dir.clone(),
+        channel_name: channel_id.to_string(),
+        format: resolved,
+        cookies_path,
+        force,
+        crunchr_auto: !no_transcribe && config.crunchr.enabled,
+    };
+
+    let report = catalog::run_pull(&db, vods, &opts, None).await?;
+    println!(
+        "Done. discovered={} skipped={} downloaded={} failed={}",
+        report.discovered, report.skipped_existing, report.downloaded, report.failed.len()
+    );
+    for (id, err) in &report.failed {
+        eprintln!("  failed: {id} — {err}");
+    }
+    Ok(())
 }
 
 fn handle_completions(shell: clap_complete::Shell) -> Result<()> {

@@ -45,6 +45,30 @@ pub enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Pull a creator's full back-catalog (Patreon, YouTube, Twitch) and feed
+    /// each episode to the recording + Crunchr pipeline.
+    Pull {
+        /// Target as `platform:channel_id`, e.g. `youtube:UCxxxx` or
+        /// `patreon:1234567` or `twitch:7890`.
+        target: String,
+        /// yt-dlp format selector (default `best`). Overrides config defaults.
+        #[arg(long)]
+        format: Option<String>,
+        /// Lower bound on `published_at` — accepts an RFC3339 timestamp or a
+        /// relative offset like `30d`, `90d`, `12h`.
+        #[arg(long)]
+        since: Option<String>,
+        /// Cap on number of episodes to pull (oldest dropped first).
+        #[arg(long)]
+        max: Option<usize>,
+        /// Skip the dedupe index — re-download even if marked recorded.
+        #[arg(long)]
+        force: bool,
+        /// Don't auto-tandem to Crunchr; just download.
+        #[arg(long)]
+        no_transcribe: bool,
+    },
+
     /// Check that required external tools are installed
     Doctor,
     /// Print shell completion script to stdout

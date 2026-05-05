@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::app::AppEvent;
 use crate::config::credentials;
-use crate::platform::{ChannelEntry, Platform, PlatformKind};
+use crate::platform::{ChannelEntry, Platform, PlatformKind, VodEntry};
 
 const YOUTUBE_API_URL: &str = "https://www.googleapis.com/youtube/v3";
 const GOOGLE_AUTH_URL: &str = "https://oauth2.googleapis.com";
@@ -412,6 +412,110 @@ impl YouTubePlatform {
         Ok(live_channels)
     }
 
+    /// Enumerate uploads via the channel's auto-generated `UU…` playlist.
+    /// Requires authenticated access. Pages 50 items at a time.
+    async fn fetch_uploads_playlist(
+        &self,
+        channel_id: &str,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<VodEntry>> {
+        // YouTube's "uploads" playlist for any UC… channel is UU + the last chars after "UC".
+        let uploads_id = if let Some(rest) = channel_id.strip_prefix("UC") {
+            format!("UU{rest}")
+        } else {
+            bail!("channel_id must start with 'UC' for YouTube uploads enumeration: {channel_id}");
+        };
+
+        let mut out = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let mut url = format!(
+                "{YOUTUBE_API_URL}/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId={uploads_id}"
+            );
+            if let Some(ref t) = page_token {
+                url.push_str(&format!("&pageToken={t}"));
+            }
+
+            let resp: serde_json::Value = self.api_get(&url).await?;
+            let items = resp.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+            for item in items {
+                let snippet = item.get("snippet");
+                let content_details = item.get("contentDetails");
+
+                let video_id = content_details
+                    .and_then(|c| c.get("videoId"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_default();
+                if video_id.is_empty() {
+                    continue;
+                }
+
+                let title = snippet
+                    .and_then(|s| s.get("title"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Untitled")
+                    .to_string();
+
+                let published_at = content_details
+                    .and_then(|c| c.get("videoPublishedAt"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| snippet.and_then(|s| s.get("publishedAt")).and_then(|v| v.as_str()))
+                    .and_then(|s| {
+                        chrono::DateTime::parse_from_rfc3339(s)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                    });
+
+                if let (Some(after), Some(pub_at)) = (since, published_at) {
+                    if pub_at < after {
+                        // playlistItems is reverse-chrono — once we drop below the cutoff
+                        // every subsequent item will too.
+                        return Ok(out);
+                    }
+                }
+
+                let thumbnail = snippet
+                    .and_then(|s| s.get("thumbnails"))
+                    .and_then(|t| t.get("high").or_else(|| t.get("medium")))
+                    .and_then(|t| t.get("url"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                out.push(VodEntry {
+                    id: video_id.clone(),
+                    platform: PlatformKind::YouTube,
+                    channel_id: channel_id.to_string(),
+                    title,
+                    published_at,
+                    duration: None,
+                    url: format!("https://www.youtube.com/watch?v={video_id}"),
+                    thumbnail_url: thumbnail,
+                });
+
+                if let Some(cap) = limit {
+                    if out.len() >= cap {
+                        return Ok(out);
+                    }
+                }
+            }
+
+            page_token = resp
+                .get("nextPageToken")
+                .and_then(|v| v.as_str())
+                .filter(|t| !t.is_empty())
+                .map(String::from);
+            if page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(out)
+    }
+
     #[allow(dead_code)]
     pub fn cookies_path(&self) -> Option<&std::path::Path> {
         self.cookies_path.as_deref()
@@ -516,5 +620,14 @@ impl Platform for YouTubePlatform {
 
     async fn refresh_token(&self) -> Result<()> {
         self.do_refresh_token().await
+    }
+
+    async fn fetch_channel_vods(
+        &self,
+        channel_id: &str,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: Option<usize>,
+    ) -> Result<Vec<VodEntry>> {
+        self.fetch_uploads_playlist(channel_id, since, limit).await
     }
 }

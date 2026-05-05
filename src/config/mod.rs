@@ -224,6 +224,10 @@ pub struct RecordingConfig {
 
     #[serde(default = "default_filename_template")]
     pub filename_template: String,
+
+    /// Default format/bitrate selection. Per-channel `format` overrides this.
+    #[serde(default)]
+    pub format: RecordingFormat,
 }
 
 impl Default for RecordingConfig {
@@ -231,8 +235,75 @@ impl Default for RecordingConfig {
         Self {
             transcode: false,
             filename_template: default_filename_template(),
+            format: RecordingFormat::default(),
         }
     }
+}
+
+/// Format / quality selection for a recording job.
+///
+/// All fields optional — `RecordingFormat::resolve(channel_override, global)` walks
+/// channel → global → built-in defaults: `format = "best"`, copy-mux into MKV.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecordingFormat {
+    /// yt-dlp `-f` selector, e.g. `"best"`, `"bestvideo[height<=1080]+bestaudio"`,
+    /// `"bestaudio"`. Default: `"best"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+
+    /// Target video bitrate in kbps for transcode paths. Ignored when codec is `"copy"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitrate_kbps: Option<u32>,
+
+    /// Container: `"mkv"` (default — crash-resilient) or `"mp4"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+
+    /// `"copy"` (default), `"h264_nvenc"`, `"libx264"`, …
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_codec: Option<String>,
+
+    /// `"copy"` (default), `"aac"`, …
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_codec: Option<String>,
+}
+
+impl RecordingFormat {
+    /// Merge with precedence: per-channel override → global default → built-in defaults.
+    /// Result has every field populated.
+    pub fn resolved(channel: Option<&Self>, global: &Self) -> ResolvedFormat {
+        let pick = |c: fn(&Self) -> Option<&str>| -> String {
+            channel.and_then(|x| c(x))
+                .or_else(|| c(global))
+                .map(String::from)
+                .unwrap_or_default()
+        };
+        let format = if let Some(s) = channel.and_then(|x| x.format.as_deref())
+            .or(global.format.as_deref())
+        {
+            s.to_string()
+        } else {
+            "best".to_string()
+        };
+        let container = pick(|x| x.container.as_deref());
+        let container = if container.is_empty() { "mkv".into() } else { container };
+        let video_codec = pick(|x| x.video_codec.as_deref());
+        let video_codec = if video_codec.is_empty() { "copy".into() } else { video_codec };
+        let audio_codec = pick(|x| x.audio_codec.as_deref());
+        let audio_codec = if audio_codec.is_empty() { "copy".into() } else { audio_codec };
+        let bitrate_kbps = channel.and_then(|x| x.bitrate_kbps).or(global.bitrate_kbps);
+        ResolvedFormat { format, bitrate_kbps, container, video_codec, audio_codec }
+    }
+}
+
+/// Fully-populated result of `RecordingFormat::resolved`.
+#[derive(Debug, Clone)]
+pub struct ResolvedFormat {
+    pub format: String,
+    pub bitrate_kbps: Option<u32>,
+    pub container: String,
+    pub video_codec: String,
+    pub audio_codec: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +311,11 @@ pub struct AutoRecordEntry {
     pub platform: String,
     pub channel_id: String,
     pub channel_name: String,
+
+    /// Per-channel override of recording format/bitrate. Falls back to
+    /// `recording.format` global when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<RecordingFormat>,
 }
 
 /// Schedule-based recording entry.

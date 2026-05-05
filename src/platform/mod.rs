@@ -4,6 +4,7 @@ pub mod youtube;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlatformKind {
@@ -37,6 +38,22 @@ pub struct ChannelEntry {
     pub auto_record: bool,
 }
 
+/// One past video / VOD / video-bearing post returned from a channel's back catalog.
+///
+/// Common shape across YouTube uploads, Twitch archive videos, and Patreon video posts —
+/// just enough for the catalog runner to dedupe and hand a downloadable URL to yt-dlp.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VodEntry {
+    pub id: String,
+    pub platform: PlatformKind,
+    pub channel_id: String,
+    pub title: String,
+    pub published_at: Option<DateTime<Utc>>,
+    pub duration: Option<Duration>,
+    pub url: String,
+    pub thumbnail_url: Option<String>,
+}
+
 #[allow(dead_code)]
 #[async_trait::async_trait]
 pub trait Platform: Send + Sync {
@@ -45,4 +62,17 @@ pub trait Platform: Send + Sync {
     async fn fetch_followed_channels(&self) -> anyhow::Result<Vec<ChannelEntry>>;
     async fn check_live_status(&self, channel_ids: &[String]) -> anyhow::Result<Vec<ChannelEntry>>;
     async fn refresh_token(&self) -> anyhow::Result<()>;
+
+    /// Enumerate a channel's full back catalog. Default returns NotSupported so platforms
+    /// can opt in incrementally. `since` filters to entries newer than the given instant
+    /// (best-effort — platforms that can't filter server-side may return more and the caller
+    /// must filter). `limit` caps the count returned.
+    async fn fetch_channel_vods(
+        &self,
+        _channel_id: &str,
+        _since: Option<DateTime<Utc>>,
+        _limit: Option<usize>,
+    ) -> anyhow::Result<Vec<VodEntry>> {
+        anyhow::bail!("catalog enumeration not supported for {}", self.kind())
+    }
 }

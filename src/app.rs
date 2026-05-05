@@ -216,8 +216,13 @@ pub struct AppState {
     pub log_auto_scroll: bool,
     pub log_path: PathBuf,
 
-    // Pending device-code auth (platform, verification_uri, user_code)
+    // Pending device-code auth (platform, verification_uri, user_code).
+    // `pending_auth` is the prompt currently shown; `auth_queue` buffers any
+    // additional prompts that arrive while one is already displayed, so
+    // concurrent device-code flows (Twitch + YouTube + Patreon on startup)
+    // surface one after another instead of clobbering each other.
     pub pending_auth: Option<(PlatformKind, String, String)>,
+    pub auth_queue: std::collections::VecDeque<(PlatformKind, String, String)>,
 
     // Sidebar display order: indices into app.channels in visual sort order
     pub sidebar_order: Vec<usize>,
@@ -382,6 +387,7 @@ impl AppState {
             log_auto_scroll: true,
             log_path: AppConfig::state_dir().join("strivo.log"),
             pending_auth: None,
+            auth_queue: std::collections::VecDeque::new(),
             sidebar_order: Vec::new(),
             scroll_offsets: HashMap::new(),
             tick_counter: 0,
@@ -846,7 +852,19 @@ impl AppState {
                 self.status_message = format!(
                     "{kind} auth: go to {verification_uri} and enter code: {user_code}"
                 );
-                self.pending_auth = Some((kind, verification_uri, user_code));
+                let entry = (kind, verification_uri, user_code);
+                // Deduplicate: a re-fire for the same platform replaces the
+                // previous code rather than stacking.
+                if matches!(&self.pending_auth, Some((p, _, _)) if *p == entry.0) {
+                    self.pending_auth = Some(entry);
+                } else {
+                    self.auth_queue.retain(|(p, _, _)| *p != entry.0);
+                    if self.pending_auth.is_none() {
+                        self.pending_auth = Some(entry);
+                    } else {
+                        self.auth_queue.push_back(entry);
+                    }
+                }
             }
             DaemonEvent::PlatformAuthenticated { kind } => {
                 match kind {
@@ -855,7 +873,10 @@ impl AppState {
                     PlatformKind::Patreon => self.patreon_connected = true,
                 }
                 self.status_message = format!("{kind} connected");
-                self.pending_auth = None;
+                if matches!(&self.pending_auth, Some((pending, _, _)) if *pending == kind) {
+                    self.pending_auth = self.auth_queue.pop_front();
+                }
+                self.auth_queue.retain(|(p, _, _)| *p != kind);
             }
             DaemonEvent::PatreonPostFound { creator_name, post_title } => {
                 self.status_message = format!("Patreon: {creator_name} posted '{post_title}'");
@@ -1352,6 +1373,7 @@ impl AppState {
                                 platform: ch.platform.to_string(),
                                 channel_id: ch.id.clone(),
                                 channel_name: ch.name.clone(),
+                                format: None,
                             },
                         );
                         self.status_message =
