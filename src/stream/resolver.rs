@@ -5,15 +5,38 @@ use crate::platform::PlatformKind;
 use crate::stream::StreamInfo;
 
 /// Resolve the best stream URL for a channel using streamlink (Twitch) or yt-dlp (YouTube).
+/// After resolution the URL is HEAD-checked so ffmpeg doesn't have to discover a stale
+/// manifest itself and surface a cryptic error.
 pub async fn resolve_stream_url(
     platform: PlatformKind,
     channel_name: &str,
     cookies_path: Option<&std::path::Path>,
 ) -> Result<StreamInfo> {
-    match platform {
+    let info = match platform {
         PlatformKind::Twitch => resolve_twitch(channel_name).await,
         PlatformKind::YouTube => resolve_youtube(channel_name, cookies_path).await,
         PlatformKind::Patreon => bail!("Patreon does not support live streams"),
+    }?;
+
+    if let Err(e) = validate_stream_url(&info.url).await {
+        bail!("resolved stream URL is not reachable: {e}");
+    }
+
+    Ok(info)
+}
+
+/// Fast HEAD check against the resolved stream URL. Surfaces stale HLS
+/// manifests and 403/404 conditions before ffmpeg gets to them.
+async fn validate_stream_url(url: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let resp = client.head(url).send().await?;
+    let status = resp.status();
+    if status.is_success() || status.is_redirection() {
+        Ok(())
+    } else {
+        bail!("HEAD returned {status}")
     }
 }
 
