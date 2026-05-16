@@ -622,6 +622,10 @@ impl Platform for YouTubePlatform {
         self.do_refresh_token().await
     }
 
+    async fn is_authenticated(&self) -> bool {
+        Self::is_authenticated(self).await
+    }
+
     async fn fetch_channel_vods(
         &self,
         channel_id: &str,

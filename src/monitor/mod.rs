@@ -63,17 +63,31 @@ impl ChannelMonitor {
         let poll_interval =
             std::time::Duration::from_secs(self.config.poll_interval_secs.max(15));
 
-        // Wait for first platform auth or timeout before initial poll
-        tokio::select! {
-            _ = self.auth_notify.notified() => {
-                tracing::info!("Platform authenticated, starting initial poll");
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-                tracing::warn!("No platform authenticated in 10s, polling anyway");
-            }
-            _ = self.cancel.cancelled() => {
-                tracing::info!("Monitor shutting down before first poll");
-                return;
+        // Wait for first platform auth or timeout before initial poll.
+        // If the timeout fires before any platform has authenticated we
+        // wait again — emitting an unauthenticated poll just produces a
+        // user-visible error and burns API budget for no signal.
+        loop {
+            tokio::select! {
+                _ = self.auth_notify.notified() => {
+                    tracing::info!("Platform authenticated, starting initial poll");
+                    break;
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    if self.any_platform_authenticated().await {
+                        tracing::info!("Timeout fired with credentials present; polling");
+                        break;
+                    }
+                    tracing::warn!(
+                        "No platform authenticated in 10s; waiting for auth_notify before first poll"
+                    );
+                    // loop back into the select; auth_notify is the only path
+                    // that can wake us now (plus cancel).
+                }
+                _ = self.cancel.cancelled() => {
+                    tracing::info!("Monitor shutting down before first poll");
+                    return;
+                }
             }
         }
 
@@ -109,6 +123,16 @@ impl ChannelMonitor {
                 }
             }
         }
+    }
+
+    async fn any_platform_authenticated(&self) -> bool {
+        for platform in &self.platforms {
+            let plat = platform.read().await;
+            if plat.is_authenticated().await {
+                return true;
+            }
+        }
+        false
     }
 
     async fn poll_all(&mut self) -> Result<()> {

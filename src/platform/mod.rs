@@ -63,6 +63,12 @@ pub trait Platform: Send + Sync {
     async fn check_live_status(&self, channel_ids: &[String]) -> anyhow::Result<Vec<ChannelEntry>>;
     async fn refresh_token(&self) -> anyhow::Result<()>;
 
+    /// True iff this platform has usable credentials in memory. The
+    /// monitor uses this to avoid issuing an initial poll before any
+    /// platform has actually authenticated (the 10 s timeout can race
+    /// authentication and produce an empty first poll).
+    async fn is_authenticated(&self) -> bool;
+
     /// Enumerate a channel's full back catalog. Default returns NotSupported so platforms
     /// can opt in incrementally. `since` filters to entries newer than the given instant
     /// (best-effort — platforms that can't filter server-side may return more and the caller
