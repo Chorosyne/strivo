@@ -270,6 +270,10 @@ pub struct AppState {
     // Platform diagnostics
     /// Per-platform error ring buffer (last 10 errors each).
     pub platform_errors: HashMap<PlatformKind, Vec<String>>,
+    /// Persisted set of recording UUIDs the user has played.
+    /// Loaded from `{state_dir}/watched.json` on startup; written on
+    /// transition to "watched" via `mark_watched()`.
+    pub watched_history: HashSet<Uuid>,
     /// Which platform debug overlay to show, if any.
     pub show_platform_debug: Option<PlatformKind>,
     /// Selected indicator index in StatusBar focus mode (among configured platforms).
@@ -417,6 +421,7 @@ impl AppState {
             search_filtered_channels: Vec::new(),
             search_filtered_recordings: Vec::new(),
             platform_errors: HashMap::new(),
+            watched_history: crate::recording::watch_history::load(),
             show_platform_debug: None,
             selected_indicator: 0,
             prev_pane: None,
@@ -832,7 +837,10 @@ impl AppState {
             DaemonEvent::StreamUrlResolved { channel_id, .. } => {
                 self.status_message = format!("Stream URL resolved for {channel_id}");
             }
-            DaemonEvent::RecordingStarted { job } => {
+            DaemonEvent::RecordingStarted { mut job } => {
+                if self.watched_history.contains(&job.id) {
+                    job.watched = true;
+                }
                 self.status_message = format!("Recording started: {}", job.channel_name);
                 self.recordings.insert(job.id, job);
                 self.rebuild_active_channels();
@@ -1500,10 +1508,12 @@ impl AppState {
                     if rec.state == RecordingState::Finished {
                         let job_id = rec.id;
                         let path = rec.output_path.clone();
-                        // Mark as watched
+                        // Mark as watched (in-memory + persisted).
                         if let Some(job) = self.recordings.get_mut(&job_id) {
                             job.watched = true;
                         }
+                        self.watched_history.insert(job_id);
+                        crate::recording::watch_history::save(&self.watched_history);
                         return Some(AppAction::PlayFile { path });
                     }
                 }

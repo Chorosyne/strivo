@@ -873,6 +873,12 @@ async fn run_client(args: cli::Args) -> Result<()> {
     {
         app_state.channels = channels;
         app_state.recordings = recordings;
+        // Apply persisted watch history to the initial snapshot.
+        for (id, job) in app_state.recordings.iter_mut() {
+            if app_state.watched_history.contains(id) {
+                job.watched = true;
+            }
+        }
         app_state.twitch_connected = twitch_connected;
         app_state.youtube_connected = youtube_connected;
         app_state.patreon_connected = patreon_connected;

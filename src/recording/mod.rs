@@ -4,6 +4,7 @@ pub mod job;
 pub mod persist;
 pub mod scan;
 pub mod schedule;
+pub mod watch_history;
 pub mod ytdlp;
 
 use anyhow::Result;
