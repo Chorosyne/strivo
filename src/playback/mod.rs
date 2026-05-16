@@ -96,21 +96,18 @@ impl MpvController {
     }
 
     /// Toggle play/pause
-    #[allow(dead_code)]
     pub async fn toggle_pause(&self) -> Result<()> {
         self.send_command(&["cycle", "pause"]).await?;
         Ok(())
     }
 
     /// Seek relative (seconds, can be negative)
-    #[allow(dead_code)]
     pub async fn seek(&self, seconds: f64) -> Result<()> {
         self.send_command(&["seek", &seconds.to_string(), "relative"]).await?;
         Ok(())
     }
 
     /// Get current playback position
-    #[allow(dead_code)]
     pub async fn get_position(&self) -> Result<f64> {
         let resp = self
             .send_command(&["get_property", "time-pos"])
@@ -122,9 +119,15 @@ impl MpvController {
     }
 
     /// Set volume (0-100)
-    #[allow(dead_code)]
     pub async fn set_volume(&self, volume: u32) -> Result<()> {
         self.send_command(&["set_property", "volume", &volume.to_string()])
+            .await?;
+        Ok(())
+    }
+
+    /// Set playback speed multiplier.
+    pub async fn set_speed(&self, speed: f64) -> Result<()> {
+        self.send_command(&["set_property", "speed", &speed.to_string()])
             .await?;
         Ok(())
     }

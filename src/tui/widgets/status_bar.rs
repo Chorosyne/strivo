@@ -184,6 +184,44 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState, registry: &PluginRe
         return;
     }
 
+    // Playback overlay takes priority over the hotkey strip while mpv
+    // is running. Shows pause icon + pos/duration + speed + volume +
+    // the abbreviated file name.
+    if let Some(ref pb) = app.playback {
+        let secs_to_mmss = |s: f64| -> String {
+            let s = s.max(0.0) as u64;
+            format!("{}:{:02}", s / 60, s % 60)
+        };
+        let pos = secs_to_mmss(pb.position_secs);
+        let dur = pb
+            .duration_secs
+            .map(secs_to_mmss)
+            .unwrap_or_else(|| "?".to_string());
+        let icon = if pb.is_paused { "⏸" } else { "▶" };
+        let mut label = pb.file_label.clone();
+        if label.len() > 30 {
+            label.truncate(27);
+            label.push('…');
+        }
+        let body = format!(
+            " {icon} {pos} / {dur}  {:.2}x  vol {}%  · {label}",
+            pb.speed, pb.volume
+        );
+        let pad = area.width.saturating_sub(body.chars().count() as u16 + 1) as usize;
+        let line = Line::from(vec![
+            Span::styled(
+                body,
+                Style::new()
+                    .fg(Theme::primary())
+                    .bg(bar_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(pad), bar_style),
+        ]);
+        frame.render_widget(Paragraph::new(line).style(bar_style), area);
+        return;
+    }
+
     // If a transient status message is live (set within the last ~5 s, per the
     // app-level auto-dismiss tick), render it in place of the hotkey bar so
     // one-shot feedback actually reaches the user.

@@ -181,6 +181,19 @@ pub enum ActivePane {
 /// blowing up memory.
 pub const EVENT_RING_CAP: usize = 100;
 
+/// Live playback snapshot displayed in the playback overlay. Polled from
+/// mpv every ~250 ms; values are best-effort and stale on the order of
+/// a frame.
+#[derive(Debug, Clone)]
+pub struct PlaybackState {
+    pub file_label: String,
+    pub position_secs: f64,
+    pub duration_secs: Option<f64>,
+    pub is_paused: bool,
+    pub volume: u32,
+    pub speed: f64,
+}
+
 /// Severity for a `UiEvent`. Mirrors `tracing::Level` so the live-tail
 /// layer can forward without translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +259,11 @@ pub struct AppState {
     pub recording_selections_set: HashSet<Uuid>,
     /// Schedule-pane cursor.
     pub selected_schedule: usize,
+
+    /// Playback-overlay state. `Some` iff mpv is actively playing a
+    /// file the TUI launched. Position / duration are polled every
+    /// ~250 ms by the TUI loop and rendered as a status-bar overlay.
+    pub playback: Option<PlaybackState>,
     pub transcode_mode: bool,
 
     // Playback
@@ -450,6 +468,7 @@ impl AppState {
             recording_selections_order: Vec::new(),
             recording_selections_set: HashSet::new(),
             selected_schedule: 0,
+            playback: None,
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -1836,6 +1855,42 @@ impl AppState {
                 self.recording_selections_order.clear();
                 self.recording_selections_set.clear();
             }
+            KeyCode::Char(' ') if self.playback.is_some() => {
+                if let Some(ref mut st) = self.playback {
+                    st.is_paused = !st.is_paused;
+                }
+                return Some(AppAction::MpvTogglePause);
+            }
+            KeyCode::Char(',') | KeyCode::Char('<') if self.playback.is_some() => {
+                if let Some(ref mut st) = self.playback {
+                    st.speed = (st.speed - 0.25).max(0.25);
+                    return Some(AppAction::MpvSetSpeed(st.speed));
+                }
+            }
+            KeyCode::Char('.') | KeyCode::Char('>') if self.playback.is_some() => {
+                if let Some(ref mut st) = self.playback {
+                    st.speed = (st.speed + 0.25).min(4.0);
+                    return Some(AppAction::MpvSetSpeed(st.speed));
+                }
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') if self.playback.is_some() => {
+                if let Some(ref mut st) = self.playback {
+                    st.volume = (st.volume + 5).min(150);
+                    return Some(AppAction::MpvSetVolume(st.volume));
+                }
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') if self.playback.is_some() => {
+                if let Some(ref mut st) = self.playback {
+                    st.volume = st.volume.saturating_sub(5);
+                    return Some(AppAction::MpvSetVolume(st.volume));
+                }
+            }
+            KeyCode::Char(']') if self.playback.is_some() => {
+                return Some(AppAction::MpvSeek(10.0));
+            }
+            KeyCode::Char('[') if self.playback.is_some() => {
+                return Some(AppAction::MpvSeek(-10.0));
+            }
             KeyCode::Char('D') => {
                 // Delete to trash. Defaults to the current row when no
                 // multi-select is active.
@@ -2302,6 +2357,12 @@ pub enum AppAction {
     OpenUrl {
         url: String,
     },
+    /// Playback control passthroughs — translated to MpvController IPC
+    /// calls in the TUI loop where mpv is owned.
+    MpvTogglePause,
+    MpvSeek(f64),
+    MpvSetVolume(u32),
+    MpvSetSpeed(f64),
 }
 
 /// Process plugin actions, applying state mutations to app and registry.

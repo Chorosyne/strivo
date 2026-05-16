@@ -149,6 +149,20 @@ async fn run_loop(
             app.watching_channel = None;
         }
 
+        // Playback overlay: clear if mpv exited; poll position ~every
+        // 250 ms while it's running.
+        if app.playback.is_some() {
+            if !mpv.is_running() {
+                app.playback = None;
+            } else if app.tick_counter % 15 == 0 {
+                if let Ok(pos) = mpv.get_position().await {
+                    if let Some(ref mut pb) = app.playback {
+                        pb.position_secs = pos;
+                    }
+                }
+            }
+        }
+
         if app.should_quit {
             break;
         }
@@ -390,12 +404,45 @@ async fn handle_action(
         }
         AppAction::PlayFile { path } => match mpv.play_file(&path).await {
             Ok(()) => {
+                let label = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_else(|| "stream")
+                    .to_string();
                 app.status_message = format!("Playing {}", path.display());
+                app.playback = Some(crate::app::PlaybackState {
+                    file_label: label,
+                    position_secs: 0.0,
+                    duration_secs: None,
+                    is_paused: false,
+                    volume: 100,
+                    speed: 1.0,
+                });
             }
             Err(e) => {
                 app.status_message = format!("mpv error: {e}");
             }
         },
+        AppAction::MpvTogglePause => {
+            if let Err(e) = mpv.toggle_pause().await {
+                tracing::warn!("mpv pause toggle failed: {e}");
+            }
+        }
+        AppAction::MpvSeek(delta) => {
+            if let Err(e) = mpv.seek(delta).await {
+                tracing::warn!("mpv seek failed: {e}");
+            }
+        }
+        AppAction::MpvSetVolume(v) => {
+            if let Err(e) = mpv.set_volume(v).await {
+                tracing::warn!("mpv volume failed: {e}");
+            }
+        }
+        AppAction::MpvSetSpeed(s) => {
+            if let Err(e) = mpv.set_speed(s).await {
+                tracing::warn!("mpv speed failed: {e}");
+            }
+        }
         AppAction::Notify { title, body } => {
             tokio::task::spawn_blocking(move || {
                 let _ = notify_rust::Notification::new()
