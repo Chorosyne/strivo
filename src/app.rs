@@ -238,6 +238,11 @@ pub struct AppState {
     /// finishes, deletes, and journal-replay reorderings instead of
     /// snapping to whatever index 0 happens to be after the mutation.
     pub selected_recording_id: Option<Uuid>,
+    /// Multi-select set (yazi-style: insertion-ordered, dedup via parallel set).
+    /// `v` toggles current row, `V` clears. Used by bulk delete (`D`) and
+    /// is the foundation for future bulk rename / move.
+    pub recording_selections_order: Vec<Uuid>,
+    pub recording_selections_set: HashSet<Uuid>,
     pub transcode_mode: bool,
 
     // Playback
@@ -439,6 +444,8 @@ impl AppState {
             active_recording_channels: HashSet::new(),
             selected_recording: 0,
             selected_recording_id: None,
+            recording_selections_order: Vec::new(),
+            recording_selections_set: HashSet::new(),
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -1739,6 +1746,87 @@ impl AppState {
                         return Some(AppAction::ProbeMedia { job_id, path });
                     }
                 }
+            }
+            KeyCode::Char('v') => {
+                // Toggle multi-select on the current row (insertion-ordered,
+                // dedup via parallel set — yazi pattern).
+                let recs = self.sorted_recordings();
+                if let Some(rec) = recs.get(self.selected_recording) {
+                    let id = rec.id;
+                    if self.recording_selections_set.remove(&id) {
+                        self.recording_selections_order.retain(|x| *x != id);
+                    } else {
+                        self.recording_selections_set.insert(id);
+                        self.recording_selections_order.push(id);
+                    }
+                }
+            }
+            KeyCode::Char('V') => {
+                self.recording_selections_order.clear();
+                self.recording_selections_set.clear();
+            }
+            KeyCode::Char('D') => {
+                // Delete to trash. Defaults to the current row when no
+                // multi-select is active.
+                let mut targets: Vec<Uuid> = if self.recording_selections_order.is_empty() {
+                    let recs = self.sorted_recordings();
+                    recs.get(self.selected_recording).map(|r| r.id).into_iter().collect()
+                } else {
+                    self.recording_selections_order.clone()
+                };
+                if targets.is_empty() {
+                    return None;
+                }
+                // Refuse to trash anything still being written.
+                targets.retain(|id| {
+                    self.recordings
+                        .get(id)
+                        .map(|j| {
+                            !matches!(
+                                j.state,
+                                RecordingState::Recording | RecordingState::ResolvingUrl
+                            )
+                        })
+                        .unwrap_or(false)
+                });
+
+                let mut trashed = 0usize;
+                let mut errors = 0usize;
+                for id in &targets {
+                    if let Some(job) = self.recordings.get(id) {
+                        match crate::recording::trash::move_to_trash(&job.output_path) {
+                            Ok(new_path) => {
+                                tracing::info!(
+                                    job_id = %id,
+                                    new_path = %new_path.display(),
+                                    "recording moved to trash"
+                                );
+                                trashed += 1;
+                            }
+                            Err(e) => {
+                                tracing::warn!(job_id = %id, error = %e, "trash failed");
+                                errors += 1;
+                            }
+                        }
+                    }
+                }
+                // Drop from in-memory state regardless of trash outcome —
+                // if the file move failed the user can manually clean up;
+                // the AppState entry pointing at a missing file is worse UX.
+                for id in &targets {
+                    self.recordings.remove(id);
+                }
+                self.recording_selections_order.clear();
+                self.recording_selections_set.clear();
+                self.rebuild_active_channels();
+                self.rebuild_sidebar_order();
+                self.reconcile_selected_recording();
+
+                self.status_message = if errors == 0 {
+                    format!("Trashed {trashed} recording(s)")
+                } else {
+                    format!("Trashed {trashed}, {errors} failed (see log)")
+                };
             }
             _ => {}
         }

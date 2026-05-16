@@ -165,8 +165,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
                 Style::new().fg(Theme::muted()),
             );
 
+            let marker = if app.recording_selections_set.contains(&rec.id) {
+                Span::styled(
+                    " ▌ ",
+                    Style::new()
+                        .fg(Theme::primary())
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("   ")
+            };
+
             items.push(ListItem::new(Line::from(vec![
-                Span::raw("   "),
+                marker,
                 state_prefix,
                 channel_name,
                 Span::styled(" — ", Style::new().fg(Theme::dim())),
