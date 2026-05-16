@@ -66,7 +66,10 @@ impl PluginRegistry {
 
     pub fn shutdown_all(&mut self) {
         for plugin in &mut self.plugins {
-            plugin.shutdown();
+            let name = plugin.name();
+            if let Err(e) = plugin.shutdown() {
+                tracing::error!(plugin = %name, error = ?e, "plugin shutdown failed");
+            }
         }
     }
 

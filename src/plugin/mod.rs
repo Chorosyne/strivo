@@ -107,8 +107,11 @@ pub trait Plugin: Send {
     /// Called once after registration.
     fn init(&mut self, ctx: &PluginContext) -> anyhow::Result<()>;
 
-    /// Called on shutdown.
-    fn shutdown(&mut self) {}
+    /// Called on shutdown. Errors are logged by the registry and do not
+    /// abort the shutdown of sibling plugins.
+    fn shutdown(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     /// Which daemon events this plugin wants to receive. None = all.
     fn event_filter(&self) -> Option<Vec<DaemonEventKind>> {
