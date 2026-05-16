@@ -229,6 +229,11 @@ pub struct AppState {
     pub recordings: HashMap<Uuid, RecordingJob>,
     pub active_recording_channels: HashSet<String>, // channel_ids with active recordings
     pub selected_recording: usize,
+    /// Sticky selection by recording ID. Mirrors the Sidebar
+    /// channel-id pattern so the highlight survives sort flips,
+    /// finishes, deletes, and journal-replay reorderings instead of
+    /// snapping to whatever index 0 happens to be after the mutation.
+    pub selected_recording_id: Option<Uuid>,
     pub transcode_mode: bool,
 
     // Playback
@@ -423,6 +428,7 @@ impl AppState {
             recordings: HashMap::new(),
             active_recording_channels: HashSet::new(),
             selected_recording: 0,
+            selected_recording_id: None,
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -703,6 +709,36 @@ impl AppState {
         recs
     }
 
+    /// Re-derive `selected_recording` from `selected_recording_id` after
+    /// any mutation to `recordings`. If the tracked ID is gone (deletion,
+    /// cleanup), the selection falls back to index 0 and the tracked ID
+    /// is updated to whatever sits there. Call after any insert/remove.
+    pub fn reconcile_selected_recording(&mut self) {
+        let ids: Vec<Uuid> = self.sorted_recordings().iter().map(|r| r.id).collect();
+        if ids.is_empty() {
+            self.selected_recording = 0;
+            self.selected_recording_id = None;
+            return;
+        }
+        if let Some(id) = self.selected_recording_id {
+            if let Some(idx) = ids.iter().position(|&i| i == id) {
+                self.selected_recording = idx;
+                return;
+            }
+        }
+        // ID is gone (or never tracked) — clamp to the current top.
+        let clamped = self.selected_recording.min(ids.len() - 1);
+        self.selected_recording = clamped;
+        self.selected_recording_id = ids.get(clamped).copied();
+    }
+
+    /// Update `selected_recording_id` to match the current index. Call
+    /// from key handlers that move the cursor.
+    pub fn remember_recording_selection(&mut self) {
+        let ids: Vec<Uuid> = self.sorted_recordings().iter().map(|r| r.id).collect();
+        self.selected_recording_id = ids.get(self.selected_recording).copied();
+    }
+
     /// Groups finished+active recordings by day label ("Today", "Yesterday", "March 12, 2026"), newest first
     pub fn recordings_by_day(&self) -> Vec<(String, Vec<&RecordingJob>)> {
         use chrono::Local;
@@ -954,6 +990,7 @@ impl AppState {
                 self.recordings.insert(job.id, job);
                 self.rebuild_active_channels();
                 self.rebuild_sidebar_order();
+                self.reconcile_selected_recording();
             }
             DaemonEvent::RecordingProgress {
                 job_id,
@@ -973,6 +1010,11 @@ impl AppState {
                 }
                 self.rebuild_active_channels();
                 self.rebuild_sidebar_order();
+                // Selection list is sorted by started_at so finishes don't
+                // reorder, but recording UUIDs that get removed elsewhere
+                // (e.g. future M1.3.b delete-to-trash) would; keep the
+                // index in sync regardless.
+                self.reconcile_selected_recording();
                 let active = self.active_recording_count();
                 self.status_message = format!("Recording finished ({active} active)");
             }
@@ -1576,6 +1618,7 @@ impl AppState {
             KeyCode::Char('j') | KeyCode::Down => {
                 if count > 0 {
                     self.selected_recording = (self.selected_recording + 1) % count;
+                    self.remember_recording_selection();
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -1585,16 +1628,19 @@ impl AppState {
                     } else {
                         self.selected_recording - 1
                     };
+                    self.remember_recording_selection();
                 }
             }
             KeyCode::Char('g') | KeyCode::Home => {
                 if count > 0 {
                     self.selected_recording = 0;
+                    self.remember_recording_selection();
                 }
             }
             KeyCode::Char('G') | KeyCode::End => {
                 if count > 0 {
                     self.selected_recording = count - 1;
+                    self.remember_recording_selection();
                 }
             }
             KeyCode::Char('s') => {

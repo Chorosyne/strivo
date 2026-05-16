@@ -884,6 +884,7 @@ async fn run_client(args: cli::Args) -> Result<()> {
         app_state.patreon_connected = patreon_connected;
         app_state.pending_auth = pending_auth;
         app_state.rebuild_sidebar_order();
+        app_state.reconcile_selected_recording();
     }
 
     // Channels for daemon communication. `daemon_tx` lives forever in
