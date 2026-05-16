@@ -362,6 +362,11 @@ pub struct AppState {
     pub platform_debug_opened_at: Option<std::time::Instant>,
     pub wizard_opened_at: Option<std::time::Instant>,
     pub stopping_opened_at: Option<std::time::Instant>,
+    pub event_log_opened_at: Option<std::time::Instant>,
+    /// `Some` iff the Shift+E event-log pop-over is visible.
+    pub show_event_log: bool,
+    /// Scroll offset within the event log (rows from top, newest-first).
+    pub event_log_scroll: usize,
 
     /// Last hotkey pressed + when — drives the hotkey-bar shimmer.
     pub last_hotkey: Option<char>,
@@ -389,6 +394,7 @@ pub enum OverlayKey {
     PlatformDebug,
     Wizard,
     Stopping,
+    EventLog,
 }
 
 /// Live state for the theme picker overlay. Preview is applied immediately
@@ -495,6 +501,9 @@ impl AppState {
             platform_debug_opened_at: None,
             wizard_opened_at: if first_run { Some(std::time::Instant::now()) } else { None },
             stopping_opened_at: None,
+            event_log_opened_at: None,
+            show_event_log: false,
+            event_log_scroll: 0,
             last_hotkey: None,
             last_hotkey_at: None,
             thumbnail_changed_at: HashMap::new(),
@@ -513,6 +522,7 @@ impl AppState {
             OverlayKey::PlatformDebug => self.platform_debug_opened_at,
             OverlayKey::Wizard => self.wizard_opened_at,
             OverlayKey::Stopping => self.stopping_opened_at,
+            OverlayKey::EventLog => self.event_log_opened_at,
         };
         let Some(at) = at else {
             return 1.0;
@@ -539,6 +549,7 @@ impl AppState {
             self.active_pane == ActivePane::Wizard || self.pending_auth.is_some();
         sync_open(&mut self.wizard_opened_at, wizard_live);
         sync_open(&mut self.stopping_opened_at, self.stop_all_deadline.is_some());
+        sync_open(&mut self.event_log_opened_at, self.show_event_log);
     }
 
     /// Seconds since the active pane last changed. Used by widget borders to
@@ -1262,6 +1273,40 @@ impl AppState {
             }
             KeyCode::Esc if self.show_help => {
                 self.show_help = false;
+                return None;
+            }
+            // Shift+E: toggle event-log pop-over.
+            KeyCode::Char('E')
+                if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) =>
+            {
+                self.show_event_log = !self.show_event_log;
+                self.event_log_scroll = 0;
+                return None;
+            }
+            _ if self.show_event_log => {
+                // Captures j/k/g/G/Esc while the overlay is up.
+                match key.code {
+                    KeyCode::Esc => self.show_event_log = false,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let max = self.event_ring.len().saturating_sub(1);
+                        if self.event_log_scroll < max {
+                            self.event_log_scroll += 1;
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        if self.event_log_scroll > 0 {
+                            self.event_log_scroll -= 1;
+                        }
+                    }
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        self.event_log_scroll = 0;
+                    }
+                    KeyCode::Char('G') | KeyCode::End => {
+                        self.event_log_scroll =
+                            self.event_ring.len().saturating_sub(1);
+                    }
+                    _ => {}
+                }
                 return None;
             }
             KeyCode::Char('F')

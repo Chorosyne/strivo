@@ -85,6 +85,15 @@ pub fn render(frame: &mut Frame, app: &mut AppState, registry: &PluginRegistry) 
         properties::render(frame, frame.area(), app, registry);
     }
 
+    if app.show_event_log {
+        crate::tui::widgets::event_log::render(
+            frame,
+            frame.area(),
+            app,
+            app.overlay_enter(crate::app::OverlayKey::EventLog, 0.18),
+        );
+    }
+
     if app.stop_all_deadline.is_some() {
         dialog::render_stopping(frame, frame.area(), app);
     }
