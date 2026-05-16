@@ -6,6 +6,35 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Parse a `Retry-After` (RFC 7231) or `Ratelimit-Reset` header from a
+/// response. Accepts seconds (e.g. `Retry-After: 30`) and HTTP-date
+/// forms. Returns `None` if the header is absent or unparseable; the
+/// caller decides on a default backoff.
+pub fn parse_retry_after(resp: &reqwest::Response) -> Option<Duration> {
+    if let Some(v) = resp.headers().get("Retry-After").and_then(|h| h.to_str().ok()) {
+        if let Ok(secs) = v.trim().parse::<u64>() {
+            return Some(Duration::from_secs(secs.min(300)));
+        }
+        if let Ok(when) = chrono::DateTime::parse_from_rfc2822(v.trim()) {
+            let delta = when.with_timezone(&Utc) - Utc::now();
+            if let Ok(secs) = delta.num_seconds().try_into() {
+                let secs: u64 = secs;
+                return Some(Duration::from_secs(secs.min(300)));
+            }
+        }
+    }
+    if let Some(v) = resp.headers().get("Ratelimit-Reset").and_then(|h| h.to_str().ok()) {
+        if let Ok(epoch) = v.trim().parse::<i64>() {
+            let now = chrono::Utc::now().timestamp();
+            let delta = epoch.saturating_sub(now);
+            if delta > 0 {
+                return Some(Duration::from_secs((delta as u64).min(300)));
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlatformKind {
     Twitch,

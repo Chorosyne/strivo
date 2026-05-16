@@ -291,33 +291,34 @@ impl YouTubePlatform {
     }
 
     async fn api_get<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
-        let token = self.access_token.read().await.clone();
-        let Some(token) = token else {
-            bail!("Not authenticated");
-        };
-
-        let resp = self
-            .client
-            .get(url)
-            .header("Authorization", format!("Bearer {token}"))
-            .send()
-            .await?;
-
-        if resp.status().as_u16() == 401 {
-            drop(resp);
-            self.do_refresh_token().await?;
-            let token = self.access_token.read().await.clone()
-                .ok_or_else(|| anyhow::anyhow!("No access token after refresh"))?;
+        for attempt in 0..3 {
+            let token = self.access_token.read().await.clone();
+            let Some(token) = token else {
+                bail!("Not authenticated");
+            };
             let resp = self
                 .client
                 .get(url)
                 .header("Authorization", format!("Bearer {token}"))
                 .send()
                 .await?;
-            Ok(resp.json().await?)
-        } else {
-            Ok(resp.json().await?)
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 {
+                drop(resp);
+                self.do_refresh_token().await?;
+                continue;
+            }
+            if status == 429 || status == 503 {
+                let backoff = crate::platform::parse_retry_after(&resp)
+                    .unwrap_or_else(|| std::time::Duration::from_secs(5 * (1 << attempt)));
+                tracing::warn!(url = %url, secs = backoff.as_secs(), "YouTube rate-limited; backing off");
+                drop(resp);
+                tokio::time::sleep(backoff).await;
+                continue;
+            }
+            return Ok(resp.json().await?);
         }
+        bail!("YouTube API exhausted retries for {url}")
     }
 
     /// Check RSS feed for recent videos from a channel (free, no quota)
