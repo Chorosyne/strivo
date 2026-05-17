@@ -282,6 +282,31 @@ pub fn settings_rows(app: &AppState) -> Vec<SettingsRow> {
         hint: Some("Enter: wizard"),
     });
 
+    rows.push(h("Plugins"));
+    if app.user_plugin_manifests.is_empty() {
+        rows.push(SettingsRow {
+            kind: K::Status { action: "plugin_dir_hint" },
+            label: "User plugins".into(),
+            value: "none discovered".into(),
+            hint: Some("drop a TOML in ~/.config/strivo/plugins/"),
+        });
+    } else {
+        for m in &app.user_plugin_manifests {
+            let value = match (&m.version, &m.activation_key) {
+                (Some(v), Some(k)) => format!("v{v} · {k}"),
+                (Some(v), None) => format!("v{v}"),
+                (None, Some(k)) => k.clone(),
+                _ => "discovered".into(),
+            };
+            rows.push(SettingsRow {
+                kind: K::Status { action: "plugin_manifest" },
+                label: m.name.clone(),
+                value,
+                hint: m.description.as_deref().map(|s| Box::leak(s.to_string().into_boxed_str()) as &'static str),
+            });
+        }
+    }
+
     rows.push(h("Maintenance"));
     rows.push(SettingsRow {
         kind: K::Status { action: "reset_defaults" },

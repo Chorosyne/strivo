@@ -57,6 +57,84 @@ pub struct PluginContext<'a> {
     pub cache_dir: PathBuf,
 }
 
+/// Plugin manifest schema (M4.4 — yazi audit §5 adapt).
+///
+/// User-discoverable description of a plugin. Dropped into
+/// `~/.config/strivo/plugins/<name>.toml` and scanned at startup by
+/// [`scan_user_plugins`]. Today the manifest is informational only —
+/// surfaced in the Settings tab so users can audit what's installed.
+/// Dynamic loading of out-of-tree Rust plugins (cdylib + libloading)
+/// is a separate piece of work tracked in the M4 polish bucket.
+///
+/// Example:
+///
+/// ```toml
+/// name = "scratchpad"
+/// version = "0.1.0"
+/// description = "Quick-notes scratchpad pinned to F2"
+/// activation_key = "F2"
+/// pane = "right"
+/// ```
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PluginManifest {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Suggested activation key, e.g. `F2` or `<C-x>`. The TUI keymap
+    /// table doesn't bind this automatically yet — see audit follow-up.
+    #[serde(default)]
+    pub activation_key: Option<String>,
+    /// Where the plugin would prefer to render: "right" (Detail pane
+    /// replacement), "overlay", or "statusbar".
+    #[serde(default)]
+    pub pane: Option<String>,
+    /// Path to a future dynamic library (cdylib). Recognized but not
+    /// loaded today; reserves the field shape.
+    #[serde(default)]
+    pub library_path: Option<std::path::PathBuf>,
+    /// Path the manifest was loaded from (set by `scan_user_plugins`).
+    #[serde(skip)]
+    pub manifest_path: Option<std::path::PathBuf>,
+}
+
+/// Scan a directory for `*.toml` plugin manifests. Each successfully
+/// parsed file becomes a [`PluginManifest`]; parse errors are logged
+/// and skipped so a broken manifest doesn't block startup.
+pub fn scan_user_plugins(dir: &std::path::Path) -> Vec<PluginManifest> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match toml::from_str::<PluginManifest>(&text) {
+            Ok(mut m) => {
+                m.manifest_path = Some(path.clone());
+                out.push(m);
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "plugin manifest parse failed");
+            }
+        }
+    }
+    out
+}
+
+/// Default directory `~/.config/strivo/plugins/` where user plugin
+/// manifests live. Created on first access only if a write would
+/// follow — scanning gracefully no-ops on a missing directory.
+pub fn user_plugin_dir() -> std::path::PathBuf {
+    crate::config::AppConfig::config_dir().join("plugins")
+}
+
 /// Fieldless mirror of DaemonEvent for event filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonEventKind {

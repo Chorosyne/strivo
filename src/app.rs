@@ -340,6 +340,11 @@ pub struct AppState {
     /// selection spawns a probe job through this; navigating to a
     /// different row cancels the previous probe and starts a fresh one.
     pub preview: crate::tui::preview::PreviewLock,
+
+    /// User-scanned plugin manifests (M4.4). Read once at startup from
+    /// `~/.config/strivo/plugins/*.toml`. Today informational only —
+    /// surfaced in the Settings tab so users can verify discovery.
+    pub user_plugin_manifests: Vec<crate::plugin::PluginManifest>,
     /// Recording-id → TaskId mapping so RecordingFinished can close the
     /// matching task without scanning the registry.
     pub task_by_recording: std::collections::HashMap<Uuid, crate::tasks::TaskId>,
@@ -573,6 +578,9 @@ impl AppState {
             tasks: crate::tasks::TaskRegistry::new(),
             task_by_recording: std::collections::HashMap::new(),
             preview: crate::tui::preview::PreviewLock::default(),
+            user_plugin_manifests: crate::plugin::scan_user_plugins(
+                &crate::plugin::user_plugin_dir(),
+            ),
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -2876,6 +2884,16 @@ impl AppState {
             "wizard_twitch" | "wizard_youtube" | "wizard_patreon" => {
                 self.status_message =
                     "Run `strivo` first-run wizard to re-auth this platform".into();
+            }
+            "plugin_dir_hint" => {
+                let dir = crate::plugin::user_plugin_dir();
+                self.status_message = format!(
+                    "Drop a manifest at {} — see docs/PLUGIN-MANIFEST.md",
+                    dir.display()
+                );
+            }
+            "plugin_manifest" => {
+                self.status_message = "Plugin manifests are informational today".into();
             }
             _ => self.status_message = format!("unknown action: {action}"),
         }
