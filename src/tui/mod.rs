@@ -95,8 +95,48 @@ async fn run_loop(
             }
         }
 
-        // Drain backend events
+        // Drain backend events — yazi audit §9 batched-drain pattern.
+        // try_recv() spins until the queue is empty so a burst of N
+        // events between renders costs one terminal.draw call, not N.
+        //
+        // RecordingProgress coalescing: when a recording produces
+        // bytes-per-second-frequency progress updates, intermediate
+        // values are visually wasted. Dedupe by job_id and keep only
+        // the freshest sample so the per-frame redraw work stays
+        // bounded even at high event rates.
+        let mut batch: Vec<AppEvent> = Vec::new();
         while let Ok(event) = rx.try_recv() {
+            batch.push(event);
+        }
+        if batch.len() > 1 {
+            let mut last_progress: std::collections::HashMap<uuid::Uuid, usize> =
+                std::collections::HashMap::new();
+            for (idx, ev) in batch.iter().enumerate() {
+                if let AppEvent::Daemon(crate::app::DaemonEvent::RecordingProgress {
+                    job_id, ..
+                }) = ev
+                {
+                    last_progress.insert(*job_id, idx);
+                }
+            }
+            // Keep only the latest progress index per job_id; everything
+            // else is preserved in original order.
+            let keep_indices: std::collections::HashSet<usize> =
+                last_progress.values().copied().collect();
+            let mut filtered = Vec::with_capacity(batch.len());
+            for (idx, ev) in batch.into_iter().enumerate() {
+                let is_progress = matches!(
+                    &ev,
+                    AppEvent::Daemon(crate::app::DaemonEvent::RecordingProgress { .. })
+                );
+                if !is_progress || keep_indices.contains(&idx) {
+                    filtered.push(ev);
+                }
+            }
+            batch = filtered;
+        }
+
+        for event in batch.drain(..) {
             // Check for channels updated to trigger thumbnail downloads
             if let AppEvent::Daemon(crate::app::DaemonEvent::ChannelsUpdated(ref channels)) = event {
                 spawn_thumbnail_downloads(channels, app, &internal_tx);
