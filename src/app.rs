@@ -444,6 +444,12 @@ fn sync_open(slot: &mut Option<std::time::Instant>, shown: bool) {
 
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
+        // Catch keymap-table duplicates at startup (M3 Phase 3 conflict
+        // check). Test suite already runs this, so production hits the
+        // same assertion vector — panic on first run is preferable to
+        // silent shadow-binding.
+        crate::tui::keymap::assert_no_conflicts();
+
         let first_run = config.twitch.is_none() && config.youtube.is_none();
         let initial_transcode = config.recording.transcode;
         Self {
@@ -1138,6 +1144,91 @@ impl AppState {
         None
     }
 
+    /// Translate a typed [`crate::tui::keymap::KeyAction`] into a state
+    /// mutation (or an [`AppAction`] for the TUI loop). Single source of
+    /// truth for what a global key does — when migrating per-pane keys
+    /// into the table (M3 follow-ups), variants land here.
+    fn apply_key_action(
+        &mut self,
+        action: crate::tui::keymap::KeyAction,
+    ) -> Option<AppAction> {
+        use crate::tui::keymap::KeyAction as A;
+        match action {
+            A::Quit if self.active_pane != ActivePane::Wizard => {
+                if self.active_recording_count() > 0 {
+                    self.quit_confirm = true;
+                    self.status_message = "Recordings active! Quit? (y/n)".to_string();
+                } else {
+                    self.should_quit = true;
+                }
+                None
+            }
+            A::Quit => None,
+            A::HelpToggle => {
+                self.show_help = !self.show_help;
+                None
+            }
+            A::HelpClose => {
+                self.show_help = false;
+                None
+            }
+            A::ThemePickerOpen => {
+                self.open_theme_picker();
+                None
+            }
+            A::EventLogToggle => {
+                self.show_event_log = !self.show_event_log;
+                self.event_log_scroll = 0;
+                None
+            }
+            A::EnterStatusBar => {
+                if self.active_pane != ActivePane::StatusBar {
+                    self.prev_pane = Some(self.active_pane.clone());
+                    self.active_pane = ActivePane::StatusBar;
+                    self.selected_indicator = 0;
+                }
+                None
+            }
+            A::EnterLogPane
+                if self.active_pane != ActivePane::Wizard
+                    && self.active_pane != ActivePane::Log =>
+            {
+                self.clear_search();
+                self.refresh_log();
+                self.active_pane = ActivePane::Log;
+                None
+            }
+            A::EnterLogPane => None,
+            A::EnterSchedulePane
+                if self.active_pane != ActivePane::Wizard
+                    && self.active_pane != ActivePane::Schedule =>
+            {
+                self.clear_search();
+                self.active_pane = ActivePane::Schedule;
+                self.selected_schedule = self
+                    .selected_schedule
+                    .min(self.config.schedule.len().saturating_sub(1));
+                None
+            }
+            A::EnterSchedulePane => None,
+            A::SearchStart
+                if matches!(
+                    self.active_pane,
+                    ActivePane::Sidebar | ActivePane::RecordingList | ActivePane::Detail
+                ) =>
+            {
+                self.search_active = true;
+                self.search_query.clear();
+                self.search_cursor = 0;
+                self.search_filtered_channels.clear();
+                self.search_filtered_recordings.clear();
+                None
+            }
+            A::SearchStart => None,
+            A::PluginActivate => None,
+        }
+    }
+
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<AppAction> {
         use crossterm::event::{KeyCode, KeyEventKind};
 
@@ -1271,105 +1362,53 @@ impl AppState {
             return None;
         }
 
-        // Global keys
-        match key.code {
-            // Ctrl+D: enter StatusBar diagnostic focus
-            KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                if self.active_pane != ActivePane::StatusBar {
-                    self.prev_pane = Some(self.active_pane.clone());
-                    self.active_pane = ActivePane::StatusBar;
-                    self.selected_indicator = 0;
+        // Help-overlay-only dismiss key (Esc) is handled out-of-band:
+        // the table dispatches on action codes, not modal toggles.
+        if self.show_help && matches!(key.code, KeyCode::Esc) {
+            self.show_help = false;
+            return None;
+        }
+
+        // Event-log overlay swallows its scroll keys before the table.
+        // Esc closes; arrow keys + j/k/g/G adjust scroll.
+        if self.show_event_log {
+            match key.code {
+                KeyCode::Esc => self.show_event_log = false,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let max = self.event_ring.len().saturating_sub(1);
+                    if self.event_log_scroll < max {
+                        self.event_log_scroll += 1;
+                    }
                 }
-                return None;
-            }
-            KeyCode::Char('q') if self.active_pane != ActivePane::Wizard => {
-                if self.active_recording_count() > 0 {
-                    self.quit_confirm = true;
-                    self.status_message =
-                        "Recordings active! Quit? (y/n)".to_string();
-                } else {
-                    self.should_quit = true;
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if self.event_log_scroll > 0 {
+                        self.event_log_scroll -= 1;
+                    }
                 }
-                return None;
-            }
-            KeyCode::Char('?') => {
-                self.show_help = !self.show_help;
-                return None;
-            }
-            // Ctrl+T: open theme picker overlay
-            KeyCode::Char('t') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                self.open_theme_picker();
-                return None;
-            }
-            KeyCode::Esc if self.show_help => {
-                self.show_help = false;
-                return None;
-            }
-            // Shift+E: toggle event-log pop-over.
-            KeyCode::Char('E')
-                if key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) =>
-            {
-                self.show_event_log = !self.show_event_log;
-                self.event_log_scroll = 0;
-                return None;
-            }
-            _ if self.show_event_log => {
-                // Captures j/k/g/G/Esc while the overlay is up.
-                match key.code {
-                    KeyCode::Esc => self.show_event_log = false,
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let max = self.event_ring.len().saturating_sub(1);
-                        if self.event_log_scroll < max {
-                            self.event_log_scroll += 1;
-                        }
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        if self.event_log_scroll > 0 {
-                            self.event_log_scroll -= 1;
-                        }
-                    }
-                    KeyCode::Char('g') | KeyCode::Home => {
-                        self.event_log_scroll = 0;
-                    }
-                    KeyCode::Char('G') | KeyCode::End => {
-                        self.event_log_scroll =
-                            self.event_ring.len().saturating_sub(1);
-                    }
-                    _ => {}
+                KeyCode::Char('g') | KeyCode::Home => {
+                    self.event_log_scroll = 0;
                 }
+                KeyCode::Char('G') | KeyCode::End => {
+                    self.event_log_scroll = self.event_ring.len().saturating_sub(1);
+                }
+                _ => {}
+            }
+            // Toggling Shift+E off while it's open still falls through
+            // to the table below — keep that behavior.
+            if !matches!(key.code, KeyCode::Char('E')) {
                 return None;
             }
-            KeyCode::Char('F')
-                if self.active_pane != ActivePane::Wizard
-                    && self.active_pane != ActivePane::Log =>
-            {
-                self.clear_search();
-                self.refresh_log();
-                self.active_pane = ActivePane::Log;
-                return None;
+        }
+
+        // Central dispatch — consult the keymap table. Layer is derived
+        // from active_pane, with Global as the fallback.
+        let layer = crate::tui::keymap::Layer::for_pane(&self.active_pane)
+            .unwrap_or(crate::tui::keymap::Layer::Global);
+        if let Some(action) = crate::tui::keymap::lookup(layer, &key) {
+            if let Some(app_action) = self.apply_key_action(action) {
+                return Some(app_action);
             }
-            KeyCode::Char('S')
-                if self.active_pane != ActivePane::Wizard
-                    && self.active_pane != ActivePane::Schedule =>
-            {
-                self.clear_search();
-                self.active_pane = ActivePane::Schedule;
-                self.selected_schedule = self
-                    .selected_schedule
-                    .min(self.config.schedule.len().saturating_sub(1));
-                return None;
-            }
-            KeyCode::Char('/') if matches!(self.active_pane, ActivePane::Sidebar | ActivePane::RecordingList | ActivePane::Detail) => {
-                self.search_active = true;
-                self.search_query.clear();
-                self.search_cursor = 0;
-                self.search_filtered_channels.clear();
-                self.search_filtered_recordings.clear();
-                return None;
-            }
-            // Plugin activation commands are handled by the caller which owns the registry.
-            // Return None here; the TUI event loop checks pane_for_command separately.
-            _ => {}
+            return None;
         }
 
         match self.active_pane {

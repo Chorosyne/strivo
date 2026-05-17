@@ -1,5 +1,6 @@
 pub mod anim;
 pub mod event;
+pub mod keymap;
 pub mod layout;
 pub mod log_bridge;
 pub mod theme;
