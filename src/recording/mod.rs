@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod chapters;
 pub mod ffmpeg;
+pub mod thumbnail;
 pub mod job;
 pub mod persist;
 pub mod scan;

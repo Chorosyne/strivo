@@ -72,6 +72,7 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
         Command::Theme { action } => handle_theme_command(action),
         Command::Doctor => handle_doctor(),
         Command::Chapter { file, every } => handle_chapter(file, *every),
+        Command::Thumbnail { file, seek } => handle_thumbnail(file, *seek).await,
         Command::Completions { shell } => handle_completions(*shell),
         Command::Man => handle_man(),
         Command::Pull { target, format, since, max, force, no_transcribe } => {
@@ -250,6 +251,20 @@ fn handle_theme_command(action: &ThemeAction) -> Result<()> {
             Ok(())
         }
     }
+}
+
+async fn handle_thumbnail(file: &std::path::Path, seek: f64) -> Result<()> {
+    use strivo_core::recording::thumbnail;
+    if !file.exists() {
+        anyhow::bail!("file does not exist: {}", file.display());
+    }
+    if let Some(cached) = thumbnail::cached(file) {
+        println!("cached: {}", cached.display());
+        return Ok(());
+    }
+    let path = thumbnail::extract(file, seek).await.context("extract thumbnail")?;
+    println!("wrote: {}", path.display());
+    Ok(())
 }
 
 fn handle_chapter(file: &std::path::Path, every: u64) -> Result<()> {

@@ -71,6 +71,15 @@ pub enum Command {
 
     /// Check that required external tools are installed
     Doctor,
+    /// Extract a first-frame thumbnail for a recording (M5.4 substrate).
+    Thumbnail {
+        /// MKV / mp4 file to thumbnail.
+        file: std::path::PathBuf,
+        /// Seek N seconds in before grabbing the frame so a black opening
+        /// frame doesn't dominate. Default: 10s.
+        #[arg(long, default_value = "10")]
+        seek: f64,
+    },
     /// Embed chapter markers into a recording (M5.3, requires mkvpropedit).
     Chapter {
         /// MKV file to chapter.
