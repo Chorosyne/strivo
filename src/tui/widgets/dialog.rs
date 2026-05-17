@@ -11,6 +11,41 @@ use crate::plugin::registry::PluginRegistry;
 use crate::recording::job::RecordingState;
 use crate::tui::theme::Theme;
 
+/// Render a `KeyPattern` as a help-overlay-friendly label.
+/// `<C-s>` / `<S-Tab>` / single-letter forms.
+fn format_pattern(p: &crate::tui::keymap::KeyPattern) -> String {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let mut out = String::new();
+    if p.modifiers.contains(KeyModifiers::CONTROL) {
+        out.push_str("Ctrl+");
+    }
+    if p.modifiers.contains(KeyModifiers::ALT) {
+        out.push_str("Alt+");
+    }
+    let shift_implicit = matches!(p.code, KeyCode::Char(c) if c.is_uppercase());
+    if p.modifiers.contains(KeyModifiers::SHIFT) && !shift_implicit {
+        out.push_str("Shift+");
+    }
+    match p.code {
+        KeyCode::Char(' ') => out.push_str("Space"),
+        KeyCode::Char(c) => out.push(c),
+        KeyCode::Tab => out.push_str("Tab"),
+        KeyCode::Enter => out.push_str("Enter"),
+        KeyCode::Esc => out.push_str("Esc"),
+        KeyCode::Up => out.push('↑'),
+        KeyCode::Down => out.push('↓'),
+        KeyCode::Left => out.push('←'),
+        KeyCode::Right => out.push('→'),
+        KeyCode::Home => out.push_str("Home"),
+        KeyCode::End => out.push_str("End"),
+        KeyCode::PageUp => out.push_str("PgUp"),
+        KeyCode::PageDown => out.push_str("PgDn"),
+        KeyCode::F(n) => out.push_str(&format!("F{n}")),
+        _ => out.push_str(&format!("{:?}", p.code)),
+    }
+    out
+}
+
 pub fn render_help(
     frame: &mut Frame,
     area: Rect,
@@ -44,16 +79,28 @@ pub fn render_help(
     let inner = block.inner(center);
     frame.render_widget(block, center);
 
-    let global_keys: Vec<(&str, &str)> = vec![
-        ("?", "Toggle this help"),
-        ("q", "Quit"),
-        ("/", "Search / filter"),
-        ("F", "Log viewer"),
+    // Global keys are auto-generated from the keymap table (M3.3). Any
+    // chord added in src/tui/keymap.rs shows up here automatically.
+    // Pane sections below stay hardcoded until M3.2 migrates each
+    // per-pane match arm into the table.
+    let table_global: Vec<(String, &'static str)> =
+        crate::tui::keymap::chords_for(crate::tui::keymap::Layer::Global)
+            .into_iter()
+            .filter(|c| c.layer == crate::tui::keymap::Layer::Global)
+            .map(|c| (format_pattern(&c.key), c.desc))
+            .collect();
+    let mut global_keys: Vec<(&str, &str)> = Vec::new();
+    let global_owned: Vec<(String, &'static str)> = table_global;
+    for (k, d) in &global_owned {
+        global_keys.push((k.as_str(), d));
+    }
+    // Hand-maintained extras that aren't (yet) in the table: F5 still
+    // lives in per-pane handlers, and Esc has overlay-dismiss semantics
+    // that are clearer as a separate line.
+    global_keys.extend([
         ("F5", "Refresh channels now"),
-        ("Ctrl+D", "Platform diagnostics"),
-        ("Ctrl+T", "Theme picker"),
         ("Esc", "Clear filter / go back"),
-    ];
+    ]);
 
     let sidebar_keys: Vec<(&str, &str)> = vec![
         ("j/k, ↑/↓", "Navigate channels"),
