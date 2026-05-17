@@ -140,6 +140,10 @@ pub enum KeyAction {
     PlaybackVolumeUp,
     PlaybackVolumeDown,
 
+    /// Toggle Visual mode (yazi audit §1). On the RecordingList this
+    /// makes j/k extend the multi-selection.
+    VisualModeToggle,
+
     // Schedule
     ScheduleAdd,
     ScheduleEditCron,
@@ -186,6 +190,7 @@ impl KeyAction {
             Self::TrashSelectedRecordings => "delete to trash",
             Self::RenameRecording => "rename recording",
             Self::MoveRecording => "move recording",
+            Self::VisualModeToggle => "visual mode (multi-select)",
             Self::PlaybackTogglePause => "play/pause",
             Self::PlaybackSeekForward => "seek +10s",
             Self::PlaybackSeekBack => "seek -10s",
@@ -242,6 +247,7 @@ impl KeyAction {
             "TrashSelectedRecordings" => Self::TrashSelectedRecordings,
             "RenameRecording" => Self::RenameRecording,
             "MoveRecording" => Self::MoveRecording,
+            "VisualModeToggle" => Self::VisualModeToggle,
             "PlaybackTogglePause" => Self::PlaybackTogglePause,
             "PlaybackSeekForward" => Self::PlaybackSeekForward,
             "PlaybackSeekBack" => Self::PlaybackSeekBack,
@@ -575,7 +581,8 @@ fn table() -> &'static [Chord] {
         c(Layer::RecordingList, KeyPattern::plain(Char('p')), KeyAction::PlayRecording,           "play"),
         c(Layer::RecordingList, KeyPattern::plain(Char('i')), KeyAction::ShowRecordingProperties, "properties"),
         c(Layer::RecordingList, KeyPattern::plain(Char('v')), KeyAction::ToggleRecordingSelect,   "toggle select"),
-        c(Layer::RecordingList, KeyPattern { code: Char('V'), modifiers: M::SHIFT }, KeyAction::ClearRecordingSelections, "clear selections"),
+        c(Layer::RecordingList, KeyPattern { code: Char('V'), modifiers: M::SHIFT }, KeyAction::VisualModeToggle, "visual mode"),
+        c(Layer::RecordingList, KeyPattern::ctrl('v'), KeyAction::ClearRecordingSelections, "clear selections"),
         c(Layer::RecordingList, KeyPattern { code: Char('D'), modifiers: M::SHIFT }, KeyAction::TrashSelectedRecordings,  "delete to trash"),
         c(Layer::RecordingList, KeyPattern { code: Char('R'), modifiers: M::SHIFT }, KeyAction::RenameRecording,          "rename"),
         c(Layer::RecordingList, KeyPattern { code: Char('M'), modifiers: M::SHIFT }, KeyAction::MoveRecording,            "move"),

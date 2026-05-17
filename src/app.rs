@@ -163,6 +163,27 @@ impl AppEvent {
     }
 }
 
+/// Input mode (yazi audit §1). Distinct from `ActivePane`. Visual mode
+/// is the home for multi-select on lists; Insert is reserved for
+/// future inline-edit contexts. `Normal` is the default for every pane
+/// except text input modals (which already swallow keys outright).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Visual,
+    Insert,
+}
+
+impl InputMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Normal => "NOR",
+            Self::Visual => "VIS",
+            Self::Insert => "INS",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivePane {
     Sidebar,
@@ -302,6 +323,11 @@ pub struct AppState {
     /// the caller routes the value based on `purpose`.
     pub text_input: Option<crate::tui::widgets::text_input::TextInputState>,
     pub text_input_opened_at: Option<std::time::Instant>,
+
+    /// Current input mode. Normal for every pane by default; Visual
+    /// enables multi-select on the RecordingList and is mirrored by
+    /// `recording_selections_*`. Insert is reserved.
+    pub input_mode: InputMode,
 
     /// Async task registry — yazi-grade tasks pane substrate (M4.1.a).
     /// Long-running ops (record, transcode, archive pull, crunchr) get a
@@ -538,6 +564,7 @@ impl AppState {
             playback: None,
             text_input: None,
             text_input_opened_at: None,
+            input_mode: InputMode::Normal,
             tasks: crate::tasks::TaskRegistry::new(),
             task_by_recording: std::collections::HashMap::new(),
             transcode_mode: initial_transcode,
@@ -1545,6 +1572,21 @@ impl AppState {
             }
             A::SearchStart => None,
             A::PluginActivate => None,
+            A::VisualModeToggle => {
+                self.input_mode = match self.input_mode {
+                    InputMode::Visual => InputMode::Normal,
+                    _ => {
+                        // Entering visual mode seeds the selection with
+                        // the current row so a Shift+V → D flow is a
+                        // single-row delete-to-trash without prior `v`.
+                        if matches!(self.active_pane, ActivePane::RecordingList) {
+                            self.recording_list_extend_selection();
+                        }
+                        InputMode::Visual
+                    }
+                };
+                None
+            }
             A::EnterSettings => {
                 self.active_pane = ActivePane::Settings;
                 None
@@ -2093,6 +2135,9 @@ impl AppState {
                 }
                 self.selected_recording = (self.selected_recording + 1) % n;
                 self.remember_recording_selection();
+                if self.input_mode == InputMode::Visual {
+                    self.recording_list_extend_selection();
+                }
             }
             ActivePane::Schedule => {
                 let n = self.config.schedule.len();
@@ -2132,6 +2177,9 @@ impl AppState {
                     self.selected_recording - 1
                 };
                 self.remember_recording_selection();
+                if self.input_mode == InputMode::Visual {
+                    self.recording_list_extend_selection();
+                }
             }
             ActivePane::Schedule => {
                 let n = self.config.schedule.len();
@@ -2221,6 +2269,14 @@ impl AppState {
     }
 
     fn pane_nav_back(&mut self) {
+        // Esc / h / Left: first clears Visual mode (yazi convention —
+        // selection persists; explicit Ctrl+v clears it). Then clears
+        // the search filter if active. Only then walks the pane back
+        // to Sidebar.
+        if self.input_mode == InputMode::Visual {
+            self.input_mode = InputMode::Normal;
+            return;
+        }
         if !self.search_query.is_empty() {
             self.clear_search();
             return;
@@ -2390,6 +2446,18 @@ impl AppState {
             self.recording_selections_order.retain(|x| *x != id);
         } else {
             self.recording_selections_set.insert(id);
+            self.recording_selections_order.push(id);
+        }
+    }
+
+    /// Add the current recording-list row to the selection (insertion-
+    /// order preserved, dedup). Called from Visual mode after every
+    /// j/k movement so the highlight tail follows the cursor.
+    fn recording_list_extend_selection(&mut self) {
+        let recs = self.sorted_recordings();
+        let Some(rec) = recs.get(self.selected_recording) else { return };
+        let id = rec.id;
+        if self.recording_selections_set.insert(id) {
             self.recording_selections_order.push(id);
         }
     }
