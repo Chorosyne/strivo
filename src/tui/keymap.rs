@@ -151,6 +151,9 @@ pub enum KeyAction {
     /// jump.
     MarkSetPrompt,
     MarkJumpPrompt,
+    /// Clipboard / open helpers (M4.6).
+    CopyToClipboard,
+    OpenInFolder,
 
     // Schedule
     ScheduleAdd,
@@ -202,6 +205,8 @@ impl KeyAction {
             Self::CommandPaletteOpen => "command palette",
             Self::MarkSetPrompt => "set mark",
             Self::MarkJumpPrompt => "jump to mark",
+            Self::CopyToClipboard => "copy to clipboard",
+            Self::OpenInFolder => "open folder",
             Self::PlaybackTogglePause => "play/pause",
             Self::PlaybackSeekForward => "seek +10s",
             Self::PlaybackSeekBack => "seek -10s",
@@ -262,6 +267,8 @@ impl KeyAction {
             "CommandPaletteOpen" => Self::CommandPaletteOpen,
             "MarkSetPrompt" => Self::MarkSetPrompt,
             "MarkJumpPrompt" => Self::MarkJumpPrompt,
+            "CopyToClipboard" => Self::CopyToClipboard,
+            "OpenInFolder" => Self::OpenInFolder,
             "PlaybackTogglePause" => Self::PlaybackTogglePause,
             "PlaybackSeekForward" => Self::PlaybackSeekForward,
             "PlaybackSeekBack" => Self::PlaybackSeekBack,
@@ -590,6 +597,7 @@ fn table() -> &'static [Chord] {
         c(Layer::Detail, KeyPattern::plain(Char('w')), KeyAction::WatchStream,               "watch in mpv"),
         c(Layer::Detail, KeyPattern::plain(Char('a')), KeyAction::ToggleAutoRecord,          "toggle auto-record"),
         c(Layer::Detail, KeyPattern::plain(Char('t')), KeyAction::ToggleTranscode,           "toggle transcode mode"),
+        c(Layer::Detail, KeyPattern::plain(Char('y')), KeyAction::CopyToClipboard,           "copy channel URL"),
     ];
 
     static REC_NAV: [Chord; 12] = nav_rows(Layer::RecordingList);
@@ -603,6 +611,8 @@ fn table() -> &'static [Chord] {
         c(Layer::RecordingList, KeyPattern { code: Char('D'), modifiers: M::SHIFT }, KeyAction::TrashSelectedRecordings,  "delete to trash"),
         c(Layer::RecordingList, KeyPattern { code: Char('R'), modifiers: M::SHIFT }, KeyAction::RenameRecording,          "rename"),
         c(Layer::RecordingList, KeyPattern { code: Char('M'), modifiers: M::SHIFT }, KeyAction::MoveRecording,            "move"),
+        c(Layer::RecordingList, KeyPattern::plain(Char('y')), KeyAction::CopyToClipboard,                                 "copy path"),
+        c(Layer::RecordingList, KeyPattern { code: Char('O'), modifiers: M::SHIFT }, KeyAction::OpenInFolder,             "open folder"),
         // Playback overlay keys (active only while playback.is_some()).
         c(Layer::RecordingList, KeyPattern::plain(Char(' ')), KeyAction::PlaybackTogglePause, "play/pause"),
         c(Layer::RecordingList, KeyPattern::plain(Char(']')), KeyAction::PlaybackSeekForward, "seek +10s"),

@@ -1254,6 +1254,22 @@ impl AppState {
                 self.reconcile_selected_recording();
                 let active = self.active_recording_count();
                 self.status_message = format!("Recording finished ({active} active)");
+                // M4.6: surface finished recordings as desktop
+                // notifications so users running the daemon in the
+                // background still see completion.
+                let finished_label = self
+                    .recordings
+                    .get(&job_id)
+                    .map(|j| j.channel_name.clone())
+                    .unwrap_or_else(|| job_id.to_string());
+                return Some(AppAction::Notify {
+                    title: match final_state {
+                        RecordingState::Finished => "Recording finished".into(),
+                        RecordingState::Failed => "Recording failed".into(),
+                        _ => "Recording ended".into(),
+                    },
+                    body: finished_label,
+                });
             }
             DaemonEvent::Notification { title, body } => {
                 return Some(AppAction::Notify { title, body });
@@ -1298,6 +1314,10 @@ impl AppState {
                 let mins = duration_secs / 60;
                 self.status_message =
                     format!("Schedule fired: {channel} ({mins} min)");
+                return Some(AppAction::Notify {
+                    title: "Scheduled recording".into(),
+                    body: format!("{channel} — {mins} min"),
+                });
             }
             DaemonEvent::Error(ref msg) => {
                 self.status_message = format!("Error: {msg}");
@@ -1668,6 +1688,48 @@ impl AppState {
                     "Jump to mark (single lowercase letter)",
                     "",
                 );
+                None
+            }
+            A::CopyToClipboard => {
+                let target: Option<String> = match self.active_pane {
+                    ActivePane::Detail => self.selected_channel().map(|ch| {
+                        match ch.platform {
+                            PlatformKind::Twitch => format!("https://twitch.tv/{}", ch.name),
+                            PlatformKind::YouTube => {
+                                if ch.id.starts_with("UC") {
+                                    format!("https://youtube.com/channel/{}", ch.id)
+                                } else {
+                                    format!("https://youtube.com/@{}", ch.name)
+                                }
+                            }
+                            PlatformKind::Patreon => format!("https://patreon.com/{}", ch.name),
+                        }
+                    }),
+                    ActivePane::RecordingList => {
+                        let recs = self.sorted_recordings();
+                        recs.get(self.selected_recording)
+                            .map(|r| r.output_path.display().to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(text) = target {
+                    match crate::tui::clipboard::copy(&text) {
+                        Ok(via) => self.status_message = format!("copied via {via}"),
+                        Err(e) => self.status_message = format!("copy failed: {e}"),
+                    }
+                }
+                None
+            }
+            A::OpenInFolder => {
+                if matches!(self.active_pane, ActivePane::RecordingList) {
+                    let recs = self.sorted_recordings();
+                    if let Some(rec) = recs.get(self.selected_recording) {
+                        if let Some(parent) = rec.output_path.parent() {
+                            let url = format!("file://{}", parent.display());
+                            return Some(AppAction::OpenUrl { url });
+                        }
+                    }
+                }
                 None
             }
             A::VisualModeToggle => {

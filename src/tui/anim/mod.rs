@@ -28,9 +28,17 @@ pub fn reduce_motion() -> bool {
         1 => false,
         2 => true,
         _ => {
-            let reduce = std::env::var("STRIVO_REDUCE_MOTION")
+            // STRIVO_REDUCE_MOTION (canonical) or NO_MOTION (M4.6, the
+            // generic env alias). Either set to a non-empty, non-"0"
+            // value disables animation. Caches the result on first
+            // call so the env lookup is a one-shot.
+            let strivo = std::env::var("STRIVO_REDUCE_MOTION")
                 .map(|v| !v.is_empty() && v != "0")
                 .unwrap_or(false);
+            let generic = std::env::var("NO_MOTION")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false);
+            let reduce = strivo || generic;
             REDUCE_MOTION.store(if reduce { 2 } else { 1 }, Ordering::Relaxed);
             reduce
         }

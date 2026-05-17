@@ -32,8 +32,16 @@ async fn main() -> Result<()> {
     }
 
     // Initialize theme + motion prefs from config (needed before TUI rendering).
+    // M4.6: NO_COLOR forces the monochrome theme regardless of config; the
+    // canonical opt-out lets users honor the cross-tool convention without
+    // editing their strivo config.
+    let no_color = std::env::var("NO_COLOR")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
     let theme_config = config::AppConfig::load(args.config.as_deref()).ok();
-    if let Some(cfg) = theme_config.as_ref() {
+    if no_color {
+        Theme::init("monochrome");
+    } else if let Some(cfg) = theme_config.as_ref() {
         Theme::init_with_overrides(cfg.theme.name(), cfg.theme.colors(), cfg.theme.ansi());
         // Config flag is an opt-in that layers on top of the env var — either
         // signal enables reduce-motion; neither needs to explicitly disable.

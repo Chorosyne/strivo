@@ -1,4 +1,5 @@
 pub mod anim;
+pub mod clipboard;
 pub mod event;
 pub mod keymap;
 pub mod layout;
