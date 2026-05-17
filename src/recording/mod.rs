@@ -100,6 +100,12 @@ struct ActiveRecording {
     retry_count: u32,
     cookies_path: Option<PathBuf>,
     from_start: bool,
+    /// All on-disk segments produced for this recording so far. Element 0
+    /// is always the original output path; subsequent retries append
+    /// `_partN.mkv` paths via `segments::segment_path`. On Finished the
+    /// orchestrator merges them back into the base path via mkvmerge
+    /// (M5.5).
+    segments: Vec<PathBuf>,
 }
 
 pub async fn run_manager(
@@ -152,6 +158,7 @@ pub async fn run_manager(
                             retry_count: 0,
                             cookies_path: cookies_path.clone(),
                             from_start,
+                            segments: vec![output_path.clone()],
                         });
 
                         let resolved_format = resolve_format(&config, &channel_id, platform);
@@ -258,6 +265,7 @@ pub async fn run_manager(
                             retry_count: 0,
                             cookies_path: cookies_path.clone(),
                             from_start: false,
+                            segments: vec![output_path.clone()],
                         });
 
                         let rtx = resolve_tx.clone();
@@ -325,26 +333,26 @@ pub async fn run_manager(
                                     rec.job.state = RecordingState::Finished;
                                     finished.push((*id, RecordingState::Finished, None));
                                 } else if !rec.from_start && rec.retry_count < 3 {
-                                    // Retry only for FFmpeg-based recordings
+                                    // M5.5 gap-resume: keep the prior segment on
+                                    // disk and write the next chunk to
+                                    // `<base>_partN.mkv`. After Finished the
+                                    // segments merge back into the base file.
                                     rec.retry_count += 1;
                                     let wait_secs = 2u64.pow(rec.retry_count);
                                     tracing::warn!(
-                                        "Recorder exited with {status}, retry {}/3 in {wait_secs}s for {}",
+                                        "Recorder exited with {status}, resume segment {}/3 in {wait_secs}s for {}",
                                         rec.retry_count,
                                         rec.job.channel_name
                                     );
                                     rec.job.state = RecordingState::ResolvingUrl;
                                     rec.process = None;
 
-                                    // Generate retry-specific output path to avoid overwriting
-                                    let retry_path = {
-                                        let orig = &rec.job.output_path;
-                                        let stem = orig.file_stem().unwrap_or_default().to_string_lossy();
-                                        let ext = orig.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
-                                        let parent = orig.parent().unwrap_or(orig);
-                                        parent.join(format!("{stem}_retry{}.{ext}", rec.retry_count))
-                                    };
-                                    rec.job.output_path = retry_path;
+                                    // Segment N path derives from the original
+                                    // base (segments[0]).
+                                    let base = rec.segments[0].clone();
+                                    let segment_path = segments::segment_path(&base, rec.retry_count + 1);
+                                    rec.segments.push(segment_path.clone());
+                                    rec.job.output_path = segment_path;
 
                                     // Re-resolve and restart
                                     let rtx = resolve_tx.clone();
@@ -389,8 +397,60 @@ pub async fn run_manager(
                     }
                 }
                 for (id, final_state, error) in finished {
-                    active.remove(&id);
-                    let _ = event_tx.send(AppEvent::recording_finished(id, final_state, error));
+                    let rec = active.remove(&id);
+                    // M5.5: if this recording produced multiple segments,
+                    // merge them back into the base path via mkvmerge before
+                    // emitting RecordingFinished. Single-segment recordings
+                    // (the common case) emit inline.
+                    let needs_merge = matches!(
+                        (final_state, rec.as_ref()),
+                        (RecordingState::Finished, Some(r)) if r.segments.len() > 1
+                    );
+                    if let (true, Some(r)) = (needs_merge, rec) {
+                        let etx = event_tx.clone();
+                        let job_id = id;
+                        let base = r.segments[0].clone();
+                        let segs = r.segments.clone();
+                        tokio::task::spawn_blocking(move || {
+                            // Output to a sibling temp path; mkvmerge refuses
+                            // to overwrite one of its own inputs.
+                            let parent = base.parent().unwrap_or(std::path::Path::new("."));
+                            let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
+                            let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("mkv");
+                            let temp = parent.join(format!(".{stem}.merging.{ext}"));
+                            let merged = match segments::merge_segments(&segs, &temp) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    tracing::warn!(job_id = %job_id, error = %e, "merge failed; keeping segments");
+                                    false
+                                }
+                            };
+                            let final_state = if merged {
+                                // Rename the merged temp over the base path,
+                                // then unlink the part files.
+                                if let Err(e) = std::fs::rename(&temp, &base) {
+                                    tracing::warn!(error = %e, "rename merged file failed");
+                                    let _ = std::fs::remove_file(&temp);
+                                    return etx.send(AppEvent::recording_finished(
+                                        job_id,
+                                        RecordingState::Finished,
+                                        Some(format!("merged segments preserved as {}", temp.display())),
+                                    ));
+                                }
+                                for s in segs.iter().skip(1) {
+                                    let _ = std::fs::remove_file(s);
+                                }
+                                tracing::info!(job_id = %job_id, "merged {} segments", segs.len());
+                                RecordingState::Finished
+                            } else {
+                                let _ = std::fs::remove_file(&temp);
+                                RecordingState::Finished
+                            };
+                            etx.send(AppEvent::recording_finished(job_id, final_state, None))
+                        });
+                    } else {
+                        let _ = event_tx.send(AppEvent::recording_finished(id, final_state, error));
+                    }
                 }
             }
         }
