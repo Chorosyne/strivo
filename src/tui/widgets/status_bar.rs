@@ -184,6 +184,44 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState, registry: &PluginRe
         return;
     }
 
+    // Async task tail — shown above the hotkey strip when at least one
+    // task is registered (active or recently-terminal). Falls back to
+    // the playback / status / hotkey strip when the registry is empty.
+    if !app.tasks.is_empty() {
+        let active = app.tasks.active();
+        let mut summary_parts: Vec<String> = Vec::new();
+        for t in app.tasks.iter().take(3) {
+            summary_parts.push(format!(
+                "{} {} {}",
+                t.kind.label(),
+                t.title,
+                t.progress.label()
+            ));
+        }
+        let summary = summary_parts.join(" · ");
+        let extra = if app.tasks.len() > 3 {
+            format!(" (+{})", app.tasks.len() - 3)
+        } else {
+            String::new()
+        };
+        let body = format!(" {active} active · {summary}{extra}");
+        let pad = area
+            .width
+            .saturating_sub(body.chars().count() as u16 + 1) as usize;
+        let line = Line::from(vec![
+            Span::styled(
+                body,
+                Style::new()
+                    .fg(Theme::secondary())
+                    .bg(bar_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(pad), bar_style),
+        ]);
+        frame.render_widget(Paragraph::new(line).style(bar_style), area);
+        return;
+    }
+
     // Playback overlay takes priority over the hotkey strip while mpv
     // is running. Shows pause icon + pos/duration + speed + volume +
     // the abbreviated file name.

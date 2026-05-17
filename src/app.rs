@@ -302,6 +302,16 @@ pub struct AppState {
     /// the caller routes the value based on `purpose`.
     pub text_input: Option<crate::tui::widgets::text_input::TextInputState>,
     pub text_input_opened_at: Option<std::time::Instant>,
+
+    /// Async task registry — yazi-grade tasks pane substrate (M4.1.a).
+    /// Long-running ops (record, transcode, archive pull, crunchr) get a
+    /// row here; status bar renders a summary tail when non-empty.
+    /// Recording-lifecycle DaemonEvents auto-populate; other workers
+    /// migrate to the registry in M4 follow-ups.
+    pub tasks: crate::tasks::TaskRegistry,
+    /// Recording-id → TaskId mapping so RecordingFinished can close the
+    /// matching task without scanning the registry.
+    pub task_by_recording: std::collections::HashMap<Uuid, crate::tasks::TaskId>,
     pub transcode_mode: bool,
 
     // Playback
@@ -528,6 +538,8 @@ impl AppState {
             playback: None,
             text_input: None,
             text_input_opened_at: None,
+            tasks: crate::tasks::TaskRegistry::new(),
+            task_by_recording: std::collections::HashMap::new(),
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -641,6 +653,10 @@ impl AppState {
         sync_open(&mut self.stopping_opened_at, self.stop_all_deadline.is_some());
         sync_open(&mut self.event_log_opened_at, self.show_event_log);
         sync_open(&mut self.text_input_opened_at, self.text_input.is_some());
+        // Drop terminal tasks 2 seconds after they enter the Done/Failed
+        // state — long enough for the user to read the result, short
+        // enough to keep the tail clean.
+        self.tasks.reap(std::time::Duration::from_secs(2));
     }
 
     /// Seconds since the active pane last changed. Used by widget borders to
@@ -1114,6 +1130,14 @@ impl AppState {
                     job.watched = true;
                 }
                 self.status_message = format!("Recording started: {}", job.channel_name);
+                // Register a Record task so the status-bar tail and the
+                // future tasks pane reflect ongoing work.
+                let task_id = self.tasks.start(
+                    crate::tasks::TaskKind::Record,
+                    job.channel_name.clone(),
+                    tokio_util::sync::CancellationToken::new(),
+                );
+                self.task_by_recording.insert(job.id, task_id);
                 self.recordings.insert(job.id, job);
                 self.rebuild_active_channels();
                 self.rebuild_sidebar_order();
@@ -1129,11 +1153,33 @@ impl AppState {
                     job.duration_secs = duration_secs;
                     job.state = RecordingState::Recording;
                 }
+                // Mirror progress onto the task entry so the status-bar
+                // tail surfaces "rec 1.2 GB" without polling.
+                if let Some(&task_id) = self.task_by_recording.get(&job_id) {
+                    self.tasks.set_progress(
+                        task_id,
+                        crate::tasks::Progress::Bytes {
+                            done: bytes_written,
+                            total: None,
+                        },
+                    );
+                }
             }
             DaemonEvent::RecordingFinished { job_id, final_state, error } => {
                 if let Some(job) = self.recordings.get_mut(&job_id) {
                     job.state = final_state;
-                    job.error = error;
+                    job.error = error.clone();
+                }
+                if let Some(task_id) = self.task_by_recording.remove(&job_id) {
+                    match final_state {
+                        RecordingState::Finished => self.tasks.complete(task_id),
+                        _ => {
+                            let err = error.clone().unwrap_or_else(|| {
+                                format!("ended in state {final_state:?}")
+                            });
+                            self.tasks.fail(task_id, err);
+                        }
+                    }
                 }
                 self.rebuild_active_channels();
                 self.rebuild_sidebar_order();

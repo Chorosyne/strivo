@@ -32,4 +32,5 @@ pub mod recording;
 pub mod search;
 pub mod state;
 pub mod stream;
+pub mod tasks;
 pub mod tui;
