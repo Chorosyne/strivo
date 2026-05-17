@@ -3,6 +3,7 @@ pub mod event;
 pub mod keymap;
 pub mod layout;
 pub mod log_bridge;
+pub mod preview;
 pub mod theme;
 pub mod widgets;
 

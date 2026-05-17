@@ -335,6 +335,11 @@ pub struct AppState {
     /// Recording-lifecycle DaemonEvents auto-populate; other workers
     /// migrate to the registry in M4 follow-ups.
     pub tasks: crate::tasks::TaskRegistry,
+
+    /// Lazy preview lock (M4.3 — yazi audit §6). RecordingList row
+    /// selection spawns a probe job through this; navigating to a
+    /// different row cancels the previous probe and starts a fresh one.
+    pub preview: crate::tui::preview::PreviewLock,
     /// Recording-id → TaskId mapping so RecordingFinished can close the
     /// matching task without scanning the registry.
     pub task_by_recording: std::collections::HashMap<Uuid, crate::tasks::TaskId>,
@@ -567,6 +572,7 @@ impl AppState {
             input_mode: InputMode::Normal,
             tasks: crate::tasks::TaskRegistry::new(),
             task_by_recording: std::collections::HashMap::new(),
+            preview: crate::tui::preview::PreviewLock::default(),
             transcode_mode: initial_transcode,
             watching_channel: None,
             twitch_connected: false,
@@ -901,6 +907,29 @@ impl AppState {
             self.state.selected_recording = self.selected_recording_id;
             self.state.save();
         }
+    }
+
+    /// Spawn a preview probe for the currently-selected recording, if
+    /// one isn't already cached. Called from RecordingList nav helpers
+    /// (yazi audit §6). Returns the AppAction the run loop should
+    /// execute (ProbeMedia). The PreviewLock cancels any prior probe so
+    /// rapid cursor movement doesn't pile up work.
+    pub fn maybe_spawn_recording_preview(&mut self) -> Option<AppAction> {
+        let recs = self.sorted_recordings();
+        let rec = recs.get(self.selected_recording)?;
+        let job_id = rec.id;
+        if self.media_info_cache.contains_key(&job_id) {
+            // Already cached — just refresh the lock key so a later
+            // late-completion knows it's still relevant.
+            let _ = self.preview.start(job_id.to_string());
+            return None;
+        }
+        if rec.state != RecordingState::Finished {
+            return None;
+        }
+        let path = rec.output_path.clone();
+        let _ = self.preview.start(job_id.to_string());
+        Some(AppAction::ProbeMedia { job_id, path })
     }
 
     /// Groups finished+active recordings by day label ("Today", "Yesterday", "March 12, 2026"), newest first
@@ -1658,18 +1687,30 @@ impl AppState {
             }
             A::NavDown => {
                 self.pane_nav_down();
+                if matches!(self.active_pane, ActivePane::RecordingList) {
+                    return self.maybe_spawn_recording_preview();
+                }
                 None
             }
             A::NavUp => {
                 self.pane_nav_up();
+                if matches!(self.active_pane, ActivePane::RecordingList) {
+                    return self.maybe_spawn_recording_preview();
+                }
                 None
             }
             A::NavTop => {
                 self.pane_nav_top();
+                if matches!(self.active_pane, ActivePane::RecordingList) {
+                    return self.maybe_spawn_recording_preview();
+                }
                 None
             }
             A::NavBottom => {
                 self.pane_nav_bottom();
+                if matches!(self.active_pane, ActivePane::RecordingList) {
+                    return self.maybe_spawn_recording_preview();
+                }
                 None
             }
             A::NavBack => {
