@@ -43,6 +43,10 @@ pub enum PluginAction {
     },
     /// Play a file in mpv.
     PlayFile(PathBuf),
+    /// Play a file in mpv starting at a position (seconds). M5.2 —
+    /// transcript-scoped seek: Enter on a Crunchr chunk hands the
+    /// chunk's start_sec along with the recording path.
+    PlayFileAt(PathBuf, f64),
     /// Request the host to update a plugin's config section and persist to disk.
     UpdateConfig {
         plugin_name: &'static str,

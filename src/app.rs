@@ -3378,6 +3378,11 @@ pub enum AppAction {
     PlayFile {
         path: PathBuf,
     },
+    /// Like PlayFile but seeks mpv to `start_secs` on launch (M5.2).
+    PlayFileAt {
+        path: PathBuf,
+        start_secs: f64,
+    },
     Notify {
         title: String,
         body: String,
@@ -3432,6 +3437,9 @@ pub fn process_plugin_actions(
             }
             crate::plugin::PluginAction::PlayFile(path) => {
                 result = Some(AppAction::PlayFile { path });
+            }
+            crate::plugin::PluginAction::PlayFileAt(path, start_secs) => {
+                result = Some(AppAction::PlayFileAt { path, start_secs });
             }
             crate::plugin::PluginAction::UpdateConfig { plugin_name, config_update } => {
                 match plugin_name {

@@ -64,6 +64,36 @@ impl MpvController {
         self.play(&path.to_string_lossy()).await
     }
 
+    /// Like play_file but passes `--start=<sec>` so mpv seeks on load
+    /// (M5.2 — transcript-scoped seek).
+    pub async fn play_file_at(&mut self, path: &Path, start_secs: f64) -> Result<()> {
+        // Kill existing instance if any
+        self.quit().await.ok();
+        let _ = std::fs::remove_file(&self.socket_path);
+        let child = Command::new("mpv")
+            .args([
+                &format!("--input-ipc-server={}", self.socket_path),
+                "--no-terminal",
+                "--force-window=yes",
+                "--keep-open=no",
+                &format!("--start={start_secs:.3}"),
+                &path.to_string_lossy(),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to launch mpv - is it installed?")?;
+        self.child = Some(child);
+        for _ in 0..20 {
+            if Path::new(&self.socket_path).exists() {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Ok(())
+    }
+
     /// Send a JSON IPC command to mpv
     async fn send_command(&self, command: &[&str]) -> Result<String> {
         let socket_path = Path::new(&self.socket_path);

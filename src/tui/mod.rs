@@ -213,6 +213,27 @@ async fn run_loop(
     Ok(())
 }
 
+fn seed_playback(app: &mut AppState, path: &std::path::Path, start_secs: f64) {
+    let label = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("stream")
+        .to_string();
+    app.status_message = if start_secs > 0.5 {
+        format!("Playing {} at {:.0}s", path.display(), start_secs)
+    } else {
+        format!("Playing {}", path.display())
+    };
+    app.playback = Some(crate::app::PlaybackState {
+        file_label: label,
+        position_secs: start_secs,
+        duration_secs: None,
+        is_paused: false,
+        volume: 100,
+        speed: 1.0,
+    });
+}
+
 fn spawn_thumbnail_downloads(
     channels: &[crate::platform::ChannelEntry],
     app: &AppState,
@@ -328,6 +349,9 @@ fn handle_plugin_action(
         }
         crate::plugin::PluginAction::PlayFile(_path) => {
             // PlayFile from plugin actions is handled via process_plugin_actions -> AppAction
+        }
+        crate::plugin::PluginAction::PlayFileAt(_path, _start) => {
+            // Same path: AppAction translation lives in process_plugin_actions.
         }
         crate::plugin::PluginAction::UpdateConfig { plugin_name, config_update } => {
             match plugin_name {
@@ -446,26 +470,15 @@ async fn handle_action(
             }
         }
         AppAction::PlayFile { path } => match mpv.play_file(&path).await {
-            Ok(()) => {
-                let label = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_else(|| "stream")
-                    .to_string();
-                app.status_message = format!("Playing {}", path.display());
-                app.playback = Some(crate::app::PlaybackState {
-                    file_label: label,
-                    position_secs: 0.0,
-                    duration_secs: None,
-                    is_paused: false,
-                    volume: 100,
-                    speed: 1.0,
-                });
-            }
-            Err(e) => {
-                app.status_message = format!("mpv error: {e}");
-            }
+            Ok(()) => seed_playback(app, &path, 0.0),
+            Err(e) => app.status_message = format!("mpv error: {e}"),
         },
+        AppAction::PlayFileAt { path, start_secs } => {
+            match mpv.play_file_at(&path, start_secs).await {
+                Ok(()) => seed_playback(app, &path, start_secs),
+                Err(e) => app.status_message = format!("mpv error: {e}"),
+            }
+        }
         AppAction::MpvTogglePause => {
             if let Err(e) = mpv.toggle_pause().await {
                 tracing::warn!("mpv pause toggle failed: {e}");
