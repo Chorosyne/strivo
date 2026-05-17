@@ -176,6 +176,38 @@ pub enum ActivePane {
     StatusBar,
 }
 
+impl ActivePane {
+    /// Stable label for persistence (`state.json.last_pane`). Plugin
+    /// panes are intentionally not round-tripped: the plugin registry
+    /// is built fresh each run and PaneId values aren't stable. Wizard
+    /// is also not persisted — first-run logic owns that.
+    pub fn label(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Sidebar => "sidebar",
+            Self::Detail => "detail",
+            Self::RecordingList => "recordings",
+            Self::Settings => "settings",
+            Self::Log => "log",
+            Self::Schedule => "schedule",
+            Self::StatusBar => "statusbar",
+            Self::Wizard | Self::Plugin(_) => return None,
+        })
+    }
+
+    pub fn from_label(s: &str) -> Option<Self> {
+        Some(match s {
+            "sidebar" => Self::Sidebar,
+            "detail" => Self::Detail,
+            "recordings" => Self::RecordingList,
+            "settings" => Self::Settings,
+            "log" => Self::Log,
+            "schedule" => Self::Schedule,
+            "statusbar" => Self::StatusBar,
+            _ => return None,
+        })
+    }
+}
+
 /// Cap for `AppState::event_ring`. Keeping the last 100 user-facing
 /// events covers a typical session of clicking through the TUI without
 /// blowing up memory.
@@ -348,10 +380,11 @@ pub struct AppState {
     // Platform diagnostics
     /// Per-platform error ring buffer (last 10 errors each).
     pub platform_errors: HashMap<PlatformKind, Vec<String>>,
-    /// Persisted set of recording UUIDs the user has played.
-    /// Loaded from `{state_dir}/watched.json` on startup; written on
-    /// transition to "watched" via `mark_watched()`.
-    pub watched_history: HashSet<Uuid>,
+    /// TUI-managed runtime state — watched flags, last selection, last
+    /// active pane. Persisted to `{state_dir}/state.json` (M2.1.b
+    /// persistence split). Distinct from `config.toml`, which holds
+    /// user-authored values.
+    pub state: crate::state::TuiState,
 
     /// In-memory ring of the last `EVENT_RING_CAP` user-facing events.
     /// Feeds the Shift+E event-log pop-over (M1.3.e) and is the
@@ -459,15 +492,23 @@ impl AppState {
 
         let first_run = config.twitch.is_none() && config.youtube.is_none();
         let initial_transcode = config.recording.transcode;
+        let tui_state = crate::state::TuiState::load();
+        let initial_recording_id = tui_state.selected_recording;
+        // Restore last pane unless we're in first-run mode.
+        let active_pane = if first_run {
+            ActivePane::Wizard
+        } else {
+            tui_state
+                .last_pane
+                .as_deref()
+                .and_then(ActivePane::from_label)
+                .unwrap_or(ActivePane::Sidebar)
+        };
         Self {
             config,
             channels: Vec::new(),
             selected_channel: 0,
-            active_pane: if first_run {
-                ActivePane::Wizard
-            } else {
-                ActivePane::Sidebar
-            },
+            active_pane,
             should_quit: false,
             quit_confirm: false,
             stop_all_deadline: None,
@@ -477,7 +518,7 @@ impl AppState {
             recordings: HashMap::new(),
             active_recording_channels: HashSet::new(),
             selected_recording: 0,
-            selected_recording_id: None,
+            selected_recording_id: initial_recording_id,
             recording_selections_order: Vec::new(),
             recording_selections_set: HashSet::new(),
             selected_schedule: 0,
@@ -525,7 +566,7 @@ impl AppState {
             search_filtered_channels: Vec::new(),
             search_filtered_recordings: Vec::new(),
             platform_errors: HashMap::new(),
-            watched_history: crate::recording::watch_history::load(),
+            state: tui_state,
             event_ring: std::collections::VecDeque::with_capacity(EVENT_RING_CAP),
             show_platform_debug: None,
             selected_indicator: 0,
@@ -612,6 +653,15 @@ impl AppState {
             self.pane_lost_focus = Some(self.prev_render_pane.clone());
             self.pane_focus_at = std::time::Instant::now();
             self.prev_render_pane = self.active_pane.clone();
+            // Persist last pane to state.json (skipping non-restorable
+            // panes like Wizard / Plugin).
+            if let Some(label) = self.active_pane.label() {
+                let stored = self.state.last_pane.as_deref();
+                if stored != Some(label) {
+                    self.state.last_pane = Some(label.to_string());
+                    self.state.save();
+                }
+            }
         } else if self
             .pane_lost_focus
             .is_some()
@@ -794,11 +844,17 @@ impl AppState {
         self.selected_recording_id = ids.get(clamped).copied();
     }
 
-    /// Update `selected_recording_id` to match the current index. Call
-    /// from key handlers that move the cursor.
+    /// Update `selected_recording_id` to match the current index and
+    /// persist it through TuiState. Call from key handlers that move
+    /// the cursor.
     pub fn remember_recording_selection(&mut self) {
         let ids: Vec<Uuid> = self.sorted_recordings().iter().map(|r| r.id).collect();
         self.selected_recording_id = ids.get(self.selected_recording).copied();
+        // Persist sparingly — only when the tracked ID actually changed.
+        if self.state.selected_recording != self.selected_recording_id {
+            self.state.selected_recording = self.selected_recording_id;
+            self.state.save();
+        }
     }
 
     /// Groups finished+active recordings by day label ("Today", "Yesterday", "March 12, 2026"), newest first
@@ -1051,7 +1107,7 @@ impl AppState {
                 self.status_message = format!("Stream URL resolved for {channel_id}");
             }
             DaemonEvent::RecordingStarted { mut job } => {
-                if self.watched_history.contains(&job.id) {
+                if self.state.watched.contains(&job.id) {
                     job.watched = true;
                 }
                 self.status_message = format!("Recording started: {}", job.channel_name);
@@ -2056,8 +2112,8 @@ impl AppState {
                         if let Some(job) = self.recordings.get_mut(&job_id) {
                             job.watched = true;
                         }
-                        self.watched_history.insert(job_id);
-                        crate::recording::watch_history::save(&self.watched_history);
+                        self.state.watched.insert(job_id);
+                        self.state.save();
                         return Some(AppAction::PlayFile { path });
                     }
                 }

@@ -5,7 +5,6 @@ pub mod persist;
 pub mod scan;
 pub mod schedule;
 pub mod trash;
-pub mod watch_history;
 pub mod ytdlp;
 
 use anyhow::Result;

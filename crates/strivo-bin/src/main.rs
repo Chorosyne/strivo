@@ -975,7 +975,7 @@ async fn run_client(args: cli::Args) -> Result<()> {
         app_state.recordings = recordings;
         // Apply persisted watch history to the initial snapshot.
         for (id, job) in app_state.recordings.iter_mut() {
-            if app_state.watched_history.contains(id) {
+            if app_state.state.watched.contains(id) {
                 job.watched = true;
             }
         }

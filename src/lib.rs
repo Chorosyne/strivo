@@ -30,5 +30,6 @@ pub mod playback;
 pub mod plugin;
 pub mod recording;
 pub mod search;
+pub mod state;
 pub mod stream;
 pub mod tui;
