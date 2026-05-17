@@ -125,7 +125,43 @@ pub fn scan_user_plugins(dir: &std::path::Path) -> Vec<PluginManifest> {
             }
         }
     }
+    audit_manifest_conflicts(&out);
     out
+}
+
+/// Walk loaded manifests and warn when an `activation_key` collides
+/// with the base keymap table (M4.follow.c). Surfaces the user-facing
+/// issue at startup rather than silently shadowing the binding —
+/// users who notice the warning in the log can pick a different key
+/// before they're confused at runtime.
+fn audit_manifest_conflicts(manifests: &[PluginManifest]) {
+    for m in manifests {
+        let Some(ref key_spec) = m.activation_key else {
+            continue;
+        };
+        let Some(pattern) = crate::tui::keymap::KeyPattern::parse(key_spec) else {
+            tracing::warn!(
+                plugin = %m.name,
+                key = %key_spec,
+                "plugin manifest activation_key unparseable (expected `q`, `<C-x>`, `F2`, …)"
+            );
+            continue;
+        };
+        // Walk the entire base table; collisions in any layer count.
+        let chords = crate::tui::keymap::all_chords();
+        for chord in chords {
+            if chord.key.code == pattern.code && chord.key.modifiers == pattern.modifiers {
+                tracing::warn!(
+                    plugin = %m.name,
+                    key = %key_spec,
+                    bound_to = ?chord.action,
+                    layer = ?chord.layer,
+                    "plugin manifest activation_key collides with built-in binding",
+                );
+                break;
+            }
+        }
+    }
 }
 
 /// Default directory `~/.config/strivo/plugins/` where user plugin
