@@ -244,6 +244,17 @@ fn handle_theme_command(action: &ThemeAction) -> Result<()> {
 }
 
 fn handle_doctor() -> Result<()> {
+    // Tool presence first, then platform credentials so the user sees
+    // both gates in one shot. Credential probes are async — gate the
+    // call behind a current-thread runtime so this stays a sync handler.
+    let creds_summary = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt.block_on(probe_platform_credentials()),
+        Err(e) => format!("(could not start runtime to test credentials: {e})"),
+    };
+
     let tools: &[(&str, &str)] = &[
         ("ffmpeg", "recording (required)"),
         ("mpv", "playback (required)"),
@@ -275,7 +286,96 @@ fn handle_doctor() -> Result<()> {
     } else {
         println!("All required tools present.");
     }
+
+    println!();
+    println!("Platform credentials");
+    println!("{}", "-".repeat(60));
+    print!("{creds_summary}");
     Ok(())
+}
+
+/// Test each configured platform's stored credentials by attempting a
+/// lightweight authenticated call. The wizard-credential-validation
+/// item — surfaces stale tokens immediately rather than waiting for the
+/// next monitor poll to fail.
+async fn probe_platform_credentials() -> String {
+    use strivo_core::config::AppConfig;
+    use strivo_core::platform::Platform;
+
+    let cfg = match AppConfig::load(None) {
+        Ok(c) => c,
+        Err(e) => return format!("  could not load config: {e}\n"),
+    };
+    let mut out = String::new();
+
+    if let Some(ref tw) = cfg.twitch {
+        let plat = strivo_core::platform::twitch::TwitchPlatform::new(
+            tw.client_id.clone(),
+            tw.client_secret.clone(),
+        );
+        match plat.load_stored_tokens().await {
+            Ok(true) => match plat.fetch_followed_channels().await {
+                Ok(channels) => {
+                    out.push_str(&format!(
+                        "  ok      twitch       {} followed channel(s)\n",
+                        channels.len()
+                    ));
+                }
+                Err(e) => out.push_str(&format!(
+                    "  STALE   twitch       call failed: {e}\n  hint: re-run the wizard or 'strivo config reset' the twitch keys\n"
+                )),
+            },
+            Ok(false) => out.push_str("  none    twitch       no stored token (run the wizard)\n"),
+            Err(e) => out.push_str(&format!("  ERROR   twitch       {e}\n")),
+        }
+    } else {
+        out.push_str("  skip    twitch       not configured\n");
+    }
+
+    if let Some(ref yt) = cfg.youtube {
+        let plat = strivo_core::platform::youtube::YouTubePlatform::new(
+            yt.client_id.clone(),
+            yt.client_secret.clone(),
+            yt.cookies_path.clone(),
+        );
+        match plat.load_stored_tokens().await {
+            Ok(true) => match plat.fetch_followed_channels().await {
+                Ok(channels) => out.push_str(&format!(
+                    "  ok      youtube      {} subscription(s)\n",
+                    channels.len()
+                )),
+                Err(e) => out.push_str(&format!(
+                    "  STALE   youtube      call failed: {e}\n  hint: re-auth or refresh the cookies file\n"
+                )),
+            },
+            Ok(false) => out.push_str("  none    youtube      no stored token (run the wizard)\n"),
+            Err(e) => out.push_str(&format!("  ERROR   youtube      {e}\n")),
+        }
+    } else {
+        out.push_str("  skip    youtube      not configured\n");
+    }
+
+    if let Some(ref pt) = cfg.patreon {
+        let plat = strivo_core::platform::patreon::PatreonClient::new(
+            pt.client_id.clone(),
+            pt.client_secret.clone(),
+        );
+        match plat.load_stored_tokens().await {
+            Ok(true) => match plat.fetch_pledged_creators().await {
+                Ok(creators) => out.push_str(&format!(
+                    "  ok      patreon      {} pledged creator(s)\n",
+                    creators.len()
+                )),
+                Err(e) => out.push_str(&format!("  STALE   patreon      call failed: {e}\n")),
+            },
+            Ok(false) => out.push_str("  none    patreon      no stored token\n"),
+            Err(e) => out.push_str(&format!("  ERROR   patreon      {e}\n")),
+        }
+    } else {
+        out.push_str("  skip    patreon      not configured\n");
+    }
+
+    out
 }
 
 fn handle_status() -> Result<()> {
