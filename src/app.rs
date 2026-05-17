@@ -1338,13 +1338,79 @@ impl AppState {
                     }
                 }
             }
-            P::SettingsString { key }
-            | P::SettingsInt { key }
-            | P::SettingsPath { key } => {
-                // Routed by the settings handler in M2 Phase 2; for now
-                // ignore so the modal stays generic.
-                tracing::debug!(key = %key, value = %value, "settings text input committed (no consumer yet)");
+            P::SettingsString { key } => self.apply_settings_string(key, value),
+            P::SettingsInt { key } => self.apply_settings_int(key, &value),
+            P::SettingsPath { key } => {
+                let expanded = shellexpand(&value);
+                self.apply_settings_string(key, expanded);
             }
+        }
+    }
+
+    /// Routes a committed string from the settings text-input modal to
+    /// the right config field. Saving is immediate so the file stays
+    /// in sync with the rendered value.
+    fn apply_settings_string(&mut self, key: &'static str, value: String) {
+        match key {
+            "recording_dir" => self.config.recording_dir = std::path::PathBuf::from(value),
+            "filename_template" => self.config.recording.filename_template = value,
+            "recording.format.format" => {
+                self.config.recording.format.format =
+                    if value.is_empty() { None } else { Some(value) };
+            }
+            "archiver.archive_dir" => {
+                self.config.archiver.archive_dir = std::path::PathBuf::from(value);
+            }
+            "archiver.format" => self.config.archiver.format = value,
+            "archiver.rate_limit" => self.config.archiver.rate_limit = value,
+            "crunchr.whisper_model" => {
+                self.config.crunchr.whisper_model =
+                    if value.is_empty() { None } else { Some(value) };
+            }
+            "crunchr.analysis.model" => self.config.crunchr.analysis.model = value,
+            _ => {
+                self.status_message = format!("unknown string setting: {key}");
+                return;
+            }
+        }
+        if let Err(e) = self.config.save(None) {
+            self.status_message = format!("Save failed: {e}");
+        } else {
+            self.status_message = format!("{key} updated");
+        }
+    }
+
+    /// Routes a committed integer string. Reports a parse error back
+    /// into the modal so the user can fix it without retyping.
+    fn apply_settings_int(&mut self, key: &'static str, raw: &str) {
+        let Ok(n) = raw.parse::<u64>() else {
+            // Re-open with the same value plus an error message.
+            if let Some(ref mut st) = self.text_input {
+                st.error = Some(format!("'{raw}' is not a positive integer"));
+                self.text_input.as_mut().unwrap().value = raw.to_string();
+                self.text_input.as_mut().unwrap().cursor = raw.chars().count();
+            }
+            return;
+        };
+        match key {
+            "poll_interval_secs" => self.config.poll_interval_secs = n.max(15),
+            "crunchr.whisper_timeout_secs" => self.config.crunchr.whisper_timeout_secs = n,
+            "archiver.concurrent_fragments" => {
+                self.config.archiver.concurrent_fragments = n.clamp(1, 16) as u32;
+            }
+            "recording.format.bitrate_kbps" => {
+                self.config.recording.format.bitrate_kbps =
+                    if n == 0 { None } else { Some(n as u32) };
+            }
+            _ => {
+                self.status_message = format!("unknown int setting: {key}");
+                return;
+            }
+        }
+        if let Err(e) = self.config.save(None) {
+            self.status_message = format!("Save failed: {e}");
+        } else {
+            self.status_message = format!("{key} updated");
         }
     }
 
@@ -2331,76 +2397,187 @@ impl AppState {
         key: crossterm::event::KeyEvent,
     ) -> Option<AppAction> {
         use crossterm::event::KeyCode;
+        use crate::tui::widgets::settings as sw;
 
-        const SETTINGS_COUNT: usize = 6;
+        let rows = sw::settings_rows(self);
+        let selectable = sw::selectable_indices(&rows);
+        let n = selectable.len();
+        if n == 0 {
+            return None;
+        }
+        let clamped = self.settings_selected.min(n - 1);
+        self.settings_selected = clamped;
+
         match key.code {
             KeyCode::Esc | KeyCode::Char('h') | KeyCode::Left => {
-                // Persist any config changes (e.g. theme) on pane exit
                 if let Err(e) = self.config.save(None) {
                     self.status_message = format!("Failed to save config: {e}");
                 }
                 self.active_pane = ActivePane::Sidebar;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.settings_selected = (self.settings_selected + 1) % SETTINGS_COUNT;
+                self.settings_selected = (clamped + 1) % n;
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.settings_selected = if self.settings_selected == 0 {
-                    SETTINGS_COUNT - 1
-                } else {
-                    self.settings_selected - 1
-                };
+                self.settings_selected = if clamped == 0 { n - 1 } else { clamped - 1 };
             }
-            KeyCode::Home => {
+            KeyCode::Home | KeyCode::Char('g') => {
                 self.settings_selected = 0;
             }
-            KeyCode::End => {
-                self.settings_selected = SETTINGS_COUNT - 1;
+            KeyCode::End | KeyCode::Char('G') => {
+                self.settings_selected = n - 1;
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                match self.settings_selected {
-                    2 => {
-                        // Transcode Mode — toggle, persist immediately.
-                        self.transcode_mode = !self.transcode_mode;
-                        self.config.recording.transcode = self.transcode_mode;
-                        if let Err(e) = self.config.save(None) {
-                            self.status_message = format!("Failed to save transcode toggle: {e}");
-                        } else {
-                            self.status_message = if self.transcode_mode {
-                                "Transcode mode: ON (NVENC) · saved".to_string()
-                            } else {
-                                "Transcode mode: OFF (passthrough) · saved".to_string()
-                            };
-                        }
-                    }
-                    3 => {
-                        // Theme — cycle through available themes
-                        let themes = crate::tui::theme::available_themes();
-                        if !themes.is_empty() {
-                            let current = crate::tui::theme::Theme::current_name();
-                            let idx = themes.iter().position(|t| *t == current).unwrap_or(0);
-                            let next = (idx + 1) % themes.len();
-                            crate::tui::theme::Theme::set_with_overrides(
-                                &themes[next],
-                                self.config.theme.colors(),
-                                self.config.theme.ansi(),
-                            );
-                            self.config.theme.set_name(themes[next].clone());
-                            self.status_message = format!("Theme: {}", themes[next]);
-                            // Config save deferred to pane exit (debounce).
-                        }
-                    }
-                    _ => {
-                        // Read-only rows — hint to edit config file
-                        let path = crate::config::AppConfig::config_path();
-                        self.status_message =
-                            format!("Edit {} to change this setting", path.display());
-                    }
+                let row_idx = selectable[clamped];
+                if let Some(row) = rows.get(row_idx).cloned() {
+                    self.apply_settings_row(&row);
                 }
             }
             _ => {}
         }
         None
+    }
+
+    /// Dispatch the Enter / Space action for a single settings row.
+    /// Bools toggle in place; cycles advance to the next option; ints,
+    /// paths, and strings open the text-input modal; status rows
+    /// trigger their named side action.
+    fn apply_settings_row(&mut self, row: &crate::tui::widgets::settings::SettingsRow) {
+        use crate::tui::widgets::settings::SettingsKind as K;
+        use crate::tui::widgets::text_input::TextInputPurpose as P;
+
+        match &row.kind {
+            K::Header => {}
+            K::Bool { key } => {
+                self.toggle_settings_bool(key);
+            }
+            K::Cycle { key } => {
+                self.cycle_settings_value(key);
+            }
+            K::Int { key } => {
+                self.open_text_input(
+                    P::SettingsInt { key },
+                    format!("Edit {}", row.label),
+                    row.value.clone(),
+                );
+            }
+            K::Path { key } => {
+                self.open_text_input(
+                    P::SettingsPath { key },
+                    format!("Edit {} (~ expands)", row.label),
+                    row.value.clone(),
+                );
+            }
+            K::String { key } => {
+                self.open_text_input(
+                    P::SettingsString { key },
+                    format!("Edit {}", row.label),
+                    row.value.clone(),
+                );
+            }
+            K::Status { action } => self.apply_settings_status_action(action),
+        }
+    }
+
+    fn toggle_settings_bool(&mut self, key: &str) {
+        match key {
+            "transcode" => {
+                self.config.recording.transcode = !self.config.recording.transcode;
+                self.transcode_mode = self.config.recording.transcode;
+            }
+            "archiver.enabled" => {
+                self.config.archiver.enabled = !self.config.archiver.enabled;
+            }
+            "crunchr.enabled" => {
+                self.config.crunchr.enabled = !self.config.crunchr.enabled;
+            }
+            "crunchr.analysis.enabled" => {
+                self.config.crunchr.analysis.enabled = !self.config.crunchr.analysis.enabled;
+            }
+            "ui.reduce_motion" => {
+                self.config.ui.reduce_motion = !self.config.ui.reduce_motion;
+                crate::tui::anim::set_reduce_motion(self.config.ui.reduce_motion);
+            }
+            "ui.verbose_status" => {
+                self.config.ui.verbose_status = !self.config.ui.verbose_status;
+            }
+            _ => {
+                self.status_message = format!("unknown bool setting: {key}");
+                return;
+            }
+        }
+        let _ = self.config.save(None);
+        self.status_message = format!("{key} toggled");
+    }
+
+    fn cycle_settings_value(&mut self, key: &str) {
+        match key {
+            "theme" => {
+                let themes = crate::tui::theme::available_themes();
+                if themes.is_empty() {
+                    return;
+                }
+                let current = crate::tui::theme::Theme::current_name();
+                let idx = themes.iter().position(|t| *t == current).unwrap_or(0);
+                let next = (idx + 1) % themes.len();
+                crate::tui::theme::Theme::set_with_overrides(
+                    &themes[next],
+                    self.config.theme.colors(),
+                    self.config.theme.ansi(),
+                );
+                self.config.theme.set_name(themes[next].clone());
+                self.status_message = format!("Theme: {}", themes[next]);
+            }
+            "recording.format.container" => {
+                self.config.recording.format.container = Some(cycle(
+                    &self.config.recording.format.container,
+                    &["mkv", "mp4"],
+                ));
+                let _ = self.config.save(None);
+            }
+            "recording.format.video_codec" => {
+                self.config.recording.format.video_codec = Some(cycle(
+                    &self.config.recording.format.video_codec,
+                    &["copy", "h264_nvenc", "libx264"],
+                ));
+                let _ = self.config.save(None);
+            }
+            "recording.format.audio_codec" => {
+                self.config.recording.format.audio_codec = Some(cycle(
+                    &self.config.recording.format.audio_codec,
+                    &["copy", "aac"],
+                ));
+                let _ = self.config.save(None);
+            }
+            _ => self.status_message = format!("unknown cycle setting: {key}"),
+        }
+    }
+
+    fn apply_settings_status_action(&mut self, action: &str) {
+        match action {
+            "reset_defaults" => {
+                self.config.reset_to_defaults();
+                self.transcode_mode = self.config.recording.transcode;
+                if let Err(e) = self.config.save(None) {
+                    self.status_message = format!("Reset: save failed: {e}");
+                } else {
+                    self.status_message =
+                        "All settings reset to defaults (credentials kept)".into();
+                }
+            }
+            "crunchr_modal" => {
+                // The Crunchr plugin owns its own modal; the keymap
+                // surfaces Ctrl+ activation via the plugin registry.
+                // From here we just hint the user.
+                self.status_message =
+                    "Open Crunchr pane and press the plugin config key".into();
+            }
+            "wizard_twitch" | "wizard_youtube" | "wizard_patreon" => {
+                self.status_message =
+                    "Run `strivo` first-run wizard to re-auth this platform".into();
+            }
+            _ => self.status_message = format!("unknown action: {action}"),
+        }
     }
 
     fn handle_log_key(
@@ -2653,6 +2830,18 @@ use crate::search::fuzzy_subsequence;
 /// Tilde-expand a leading `~` in a path string. The std lib doesn't
 /// expand `~` for `PathBuf::from`, so we do it explicitly for paths
 /// users type into the move-modal and future settings path editors.
+/// Cycle helper for settings enum rows. `current` is the existing
+/// value (None falls back to the first option); `options` is the
+/// allowlist. Returns the next option in the rotation.
+fn cycle(current: &Option<String>, options: &[&str]) -> String {
+    if options.is_empty() {
+        return current.clone().unwrap_or_default();
+    }
+    let cur = current.as_deref();
+    let idx = cur.and_then(|c| options.iter().position(|o| *o == c)).unwrap_or(0);
+    options[(idx + 1) % options.len()].to_string()
+}
+
 fn shellexpand(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
