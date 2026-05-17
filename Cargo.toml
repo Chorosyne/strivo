@@ -61,6 +61,11 @@ tokio-util = "0.7"
 cron = "0.15"
 rusqlite = { version = "0.33", features = ["bundled"] }
 
+# Dynamic plugin loading (M5 follow-up). libloading wraps dlopen/LoadLibrary
+# uniformly; consumers must compile against the exact same strivo-core build
+# as the host — see docs/PLUGIN-MANIFEST.md for the same-toolchain caveat.
+libloading = "0.8"
+
 [dev-dependencies]
 tempfile = "3"
 

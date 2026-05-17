@@ -1247,10 +1247,18 @@ async fn run_client(args: cli::Args) -> Result<()> {
         }
     });
 
-    // Register plugins
+    // Register plugins (first-party in-tree + dynamically-loaded
+    // cdylibs declared in user manifests).
     let mut registry = plugin::registry::PluginRegistry::new();
     registry.register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
     registry.register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
+    let manifests = strivo_core::plugin::scan_user_plugins(
+        &strivo_core::plugin::user_plugin_dir(),
+    );
+    let n = registry.load_dylibs_from_manifests(&manifests);
+    if n > 0 {
+        tracing::info!("loaded {n} dynamic plugin(s)");
+    }
     registry.init_all(&config_ref)?;
 
     // Run TUI with the event channel

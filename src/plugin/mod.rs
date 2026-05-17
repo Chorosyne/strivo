@@ -175,6 +175,66 @@ pub fn user_plugin_dir() -> std::path::PathBuf {
     crate::config::AppConfig::config_dir().join("plugins")
 }
 
+/// Symbol every dynamic plugin cdylib must export. The host calls it
+/// once and takes ownership of the returned `Box<dyn Plugin>`.
+///
+/// The signature is `unsafe extern "C" fn() -> *mut Box<dyn Plugin>`.
+/// We return `*mut Box<dyn Plugin>` (a thin pointer at the outer level
+/// — the inner `Box<dyn Plugin>` holds the fat pointer with the
+/// vtable). Plugin authors:
+///
+/// ```ignore
+/// #[no_mangle]
+/// pub extern "C" fn _strivo_plugin_register() -> *mut std::ffi::c_void {
+///     let plugin: Box<dyn strivo_core::plugin::Plugin> = Box::new(MyPlugin::new());
+///     Box::into_raw(Box::new(plugin)) as *mut std::ffi::c_void
+/// }
+/// ```
+pub const PLUGIN_REGISTER_SYMBOL: &[u8] = b"_strivo_plugin_register";
+
+/// Outcome of [`load_dylib_plugin`]. The caller must keep `library`
+/// alive at least as long as the boxed plugin — dlopen/LoadLibrary
+/// vtables live in the loaded image.
+pub struct LoadedDylibPlugin {
+    pub plugin: Box<dyn Plugin>,
+    pub library: libloading::Library,
+}
+
+/// Load a single dynamic plugin from `path` (a .so / .dylib / .dll).
+///
+/// SAFETY: Caller MUST guarantee the cdylib was compiled against the
+/// same strivo-core build as the host. Rust dyn-trait vtables are
+/// only deterministic under matching-toolchain, matching-deps
+/// compilation. Mismatch → undefined behavior.
+pub fn load_dylib_plugin(path: &std::path::Path) -> anyhow::Result<LoadedDylibPlugin> {
+    if !path.exists() {
+        anyhow::bail!("plugin library does not exist: {}", path.display());
+    }
+    // SAFETY: dlopen on an arbitrary path is unsafe by construction;
+    // we wrap it for the caller and document the matching-toolchain
+    // contract at the docs-comment level.
+    let library = unsafe {
+        libloading::Library::new(path)
+            .map_err(|e| anyhow::anyhow!("dlopen {}: {e}", path.display()))?
+    };
+    let plugin: Box<dyn Plugin> = unsafe {
+        let symbol: libloading::Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = library
+            .get(PLUGIN_REGISTER_SYMBOL)
+            .map_err(|e| anyhow::anyhow!(
+                "{} missing symbol {}: {e}",
+                path.display(),
+                std::str::from_utf8(PLUGIN_REGISTER_SYMBOL).unwrap_or("?"),
+            ))?;
+        let raw = symbol();
+        if raw.is_null() {
+            anyhow::bail!("{} register returned null", path.display());
+        }
+        let outer: Box<Box<dyn Plugin>> = Box::from_raw(raw as *mut Box<dyn Plugin>);
+        *outer
+    };
+    Ok(LoadedDylibPlugin { plugin, library })
+}
+
 /// Fieldless mirror of DaemonEvent for event filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonEventKind {

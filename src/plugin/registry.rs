@@ -16,6 +16,12 @@ pub struct PluginRegistry {
     /// O(1) lookup for plugin activation keybindings.
     command_map: HashMap<(KeyCode, KeyModifiers), PaneId>,
     active_plugin_pane: Option<PaneId>,
+    /// `libloading::Library` handles for dynamically-loaded plugins.
+    /// MUST outlive the corresponding `Box<dyn Plugin>` — the vtable
+    /// lives in the loaded image. Dropped together when the registry
+    /// drops, so order matters: plugins drop first (we own them in
+    /// `plugins`), then the libraries.
+    loaded_libraries: Vec<libloading::Library>,
 }
 
 impl Default for PluginRegistry {
@@ -25,6 +31,7 @@ impl Default for PluginRegistry {
             pane_map: HashMap::new(),
             command_map: HashMap::new(),
             active_plugin_pane: None,
+            loaded_libraries: Vec::new(),
         }
     }
 }
@@ -47,6 +54,66 @@ impl PluginRegistry {
             }
         }
         self.plugins.push(plugin);
+    }
+
+    /// Register a dynamically-loaded plugin. The library MUST outlive
+    /// the plugin — the registry holds the `libloading::Library` for
+    /// its lifetime to guarantee that.
+    pub fn register_dylib(&mut self, loaded: super::LoadedDylibPlugin) {
+        self.register(loaded.plugin);
+        // Library drops AFTER all plugins because we own them in
+        // separate Vecs and Rust drops fields in declaration order:
+        // `plugins` declared first → dropped first → vtable still
+        // resolvable. Then `loaded_libraries` drops.
+        self.loaded_libraries.push(loaded.library);
+    }
+
+    /// Scan and load every manifest in `manifests` whose `library_path`
+    /// is set. Manifests with no library_path are informational
+    /// (M4.4 surface) and skipped here. Returns the count of plugins
+    /// successfully loaded; failures are logged.
+    pub fn load_dylibs_from_manifests(
+        &mut self,
+        manifests: &[super::PluginManifest],
+    ) -> usize {
+        let mut loaded = 0;
+        for m in manifests {
+            let Some(ref lib_path) = m.library_path else {
+                continue;
+            };
+            // Expand a leading ~ if present (the manifest is human-
+            // edited; users naturally write paths that way).
+            let expanded = match lib_path.to_str() {
+                Some(s) if s.starts_with("~/") => {
+                    if let Some(home) = std::env::var_os("HOME") {
+                        std::path::PathBuf::from(home).join(&s[2..])
+                    } else {
+                        lib_path.clone()
+                    }
+                }
+                _ => lib_path.clone(),
+            };
+            match super::load_dylib_plugin(&expanded) {
+                Ok(plugin) => {
+                    tracing::info!(
+                        plugin = %m.name,
+                        path = %expanded.display(),
+                        "dynamic plugin loaded",
+                    );
+                    self.register_dylib(plugin);
+                    loaded += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %m.name,
+                        path = %expanded.display(),
+                        error = %e,
+                        "dynamic plugin load failed",
+                    );
+                }
+            }
+        }
+        loaded
     }
 
     pub fn init_all(&mut self, config: &AppConfig) -> anyhow::Result<()> {

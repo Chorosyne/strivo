@@ -1,14 +1,9 @@
-# Plugin Manifest Format (M4.4)
+# Plugin Manifest Format (M4.4 + dynamic loader follow-up)
 
 Yazi-inspired (see YAZI-AUDIT.md §5). Drop a TOML file at
 `~/.config/strivo/plugins/<slug>.toml` and StriVo will discover it on
-startup and list it in the Settings tab.
-
-Today the manifests are **informational only** — they don't dynamically
-load Rust code. The runtime loader (cdylib + `libloading`) is on the
-M4 polish-bucket list; this schema lands first so existing first-party
-plugins can advertise the same metadata and so the user has a stable
-discovery surface to write against.
+startup, list it in the Settings tab, and — if `library_path` is set —
+dlopen the named cdylib at daemon launch.
 
 ## Fields
 
@@ -18,7 +13,7 @@ version        = "0.1.0"
 description    = "Quick-notes scratchpad pinned to F2"
 activation_key = "F2"                 # yazi syntax: "F2", "<C-x>", single char
 pane           = "right"              # "right" | "overlay" | "statusbar"
-library_path   = "~/scratchpad.so"    # reserved; cdylib path for future loader
+library_path   = "~/scratchpad.so"    # cdylib loaded via libloading
 ```
 
 All fields except `name` are optional. Unknown fields are ignored (so
@@ -34,20 +29,113 @@ manifests).
   description as the hint.
 - Files without a `.toml` extension are ignored.
 - Missing directory: silently no-ops. Drop a manifest in to enable.
+- If `library_path` is present, the daemon dlopens the library at
+  startup, calls the registration symbol, and registers the returned
+  `Box<dyn Plugin>` alongside the first-party plugins (Crunchr,
+  Archiver).
+
+## Writing a dynamic plugin
+
+Your plugin is a regular Cargo crate compiled as `cdylib`:
+
+```toml
+# Cargo.toml
+[package]
+name = "strivo-scratchpad"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+strivo-core = { path = "/path/to/strivo" }  # SAME build as host
+anyhow = "1"
+```
+
+Implement the `strivo_core::plugin::Plugin` trait, then export the
+registration symbol:
+
+```rust
+use strivo_core::plugin::{Plugin, /* … */};
+
+pub struct Scratchpad { /* … */ }
+
+impl Plugin for Scratchpad { /* … */ }
+
+/// MUST be named exactly `_strivo_plugin_register` and have this
+/// signature. Returns ownership to the host via a leaked
+/// `Box<Box<dyn Plugin>>`.
+#[no_mangle]
+pub extern "C" fn _strivo_plugin_register() -> *mut std::ffi::c_void {
+    let plugin: Box<dyn Plugin> = Box::new(Scratchpad::new());
+    Box::into_raw(Box::new(plugin)) as *mut std::ffi::c_void
+}
+```
+
+Build with `cargo build --release`; the resulting
+`target/release/libstrivo_scratchpad.so` (or `.dylib` / `.dll`) is
+what you point `library_path` at.
+
+## Critical caveat: same-toolchain only
+
+Rust's `dyn Trait` vtable layout is **not stable across compilation
+units that don't share an exact dependency closure**. That means your
+plugin cdylib MUST be compiled with:
+
+- The same `rustc` version as the StriVo host binary.
+- The exact same `strivo-core` build (same git revision / same path
+  dep / same Cargo.lock entries).
+- The same set of feature flags on every transitively-used crate.
+
+Violating this is undefined behavior — at best you get cryptic
+crashes inside the registry, at worst silent memory corruption.
+
+In practice this means **plugins are not portable binaries**. Ship
+them as source or as an installer that compiles from source against
+the user's StriVo build.
+
+The pragmatic alternative (`abi_stable` or `stabby` for true ABI-
+stable plugins) is tracked as a future hardening item; the current
+loader is sufficient for in-organization plugins and for
+experimenters.
 
 ## Limits
 
-- **No dynamic loading yet.** A manifest doesn't run code. The
-  `library_path` field is reserved.
-- **Activation keys are advisory.** The keymap table doesn't bind
-  manifest activation keys automatically — wire them through the
-  plugin trait once the dynamic loader is in.
+- **`activation_key` is advisory.** The keymap table doesn't bind
+  manifest activation keys automatically — the plugin still wires
+  its activation via `Plugin::commands()`. Collisions log a warning
+  at startup (`audit_manifest_conflicts`).
 - **First-party plugins** (Crunchr, Archiver) compile in via the path
-  dep and don't need manifests; they will gain optional manifests in
-  the same pass that introduces dynamic loading so the surface is
-  uniform.
+  dep and don't need manifests.
+- **No hot reload.** Plugins load once at daemon start.
+
+## Loading sequence
+
+```
+daemon::run()
+ └─ scan_user_plugins(user_plugin_dir())
+     ├─ audit_manifest_conflicts(&manifests)
+     └─ PluginRegistry::load_dylibs_from_manifests(&manifests)
+         └─ for each manifest with library_path:
+             ├─ libloading::Library::new(path)
+             ├─ library.get(b"_strivo_plugin_register")
+             ├─ symbol() → *mut c_void
+             ├─ cast back to Box<Box<dyn Plugin>>, unwrap one layer
+             ├─ registry.register_dylib(LoadedDylibPlugin {
+             │       plugin,
+             │       library,        // kept alive in loaded_libraries
+             │   })
+             └─ registry.init_all() runs all plugin::init() hooks
+```
+
+Failures (missing file, missing symbol, registration returns null)
+log a warning and skip the entry; the other plugins keep loading.
 
 ## Companion docs
 
 - `YAZI-AUDIT.md` §5 — original audit + scope decision (no Lua).
 - `ROADMAP.md` M4 Phase 4 — plugin manifest + discovery item.
+- `src/plugin/mod.rs` — `Plugin` trait, `load_dylib_plugin`,
+  `PLUGIN_REGISTER_SYMBOL`.
+- `src/plugin/registry.rs` — `register_dylib`,
+  `load_dylibs_from_manifests`.
