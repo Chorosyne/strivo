@@ -169,10 +169,66 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
         ),
     ];
 
-    frame.render_widget(
-        Paragraph::new(info_lines).wrap(Wrap { trim: false }),
-        info_area,
-    );
+    // Split the info column: top = metadata, bottom = recent recordings
+    // for this channel. Reflowing the otherwise-blank lower half makes the
+    // detail pane feel dense without adding a new pane. Threshold height
+    // ensures we don't squeeze the metadata when the terminal is short.
+    if info_area.height >= 12 {
+        let [meta_area, recent_area] =
+            Layout::vertical([Constraint::Length(7), Constraint::Fill(1)]).areas(info_area);
+
+        frame.render_widget(
+            Paragraph::new(info_lines).wrap(Wrap { trim: false }),
+            meta_area,
+        );
+
+        let mut recent_lines: Vec<Line> = Vec::new();
+        recent_lines.push(Line::from(Span::styled(
+            "Recent recordings",
+            Style::new()
+                .fg(Theme::secondary())
+                .add_modifier(Modifier::BOLD),
+        )));
+        let mut recs: Vec<&crate::recording::job::RecordingJob> = app
+            .recordings
+            .values()
+            .filter(|r| r.channel_id == channel.id || r.channel_name == channel.display_name)
+            .collect();
+        recs.sort_by_key(|r| std::cmp::Reverse(r.started_at));
+        if recs.is_empty() {
+            recent_lines.push(Line::from(Span::styled(
+                "  no recordings yet",
+                Style::new().fg(Theme::muted()),
+            )));
+        } else {
+            let cap = (recent_area.height.saturating_sub(1)).min(5) as usize;
+            for rec in recs.iter().take(cap) {
+                let when = rec.started_at.format("%m-%d %H:%M").to_string();
+                let dur = rec.format_duration();
+                let title = rec
+                    .stream_title
+                    .as_deref()
+                    .unwrap_or("(no title)")
+                    .chars()
+                    .take(40)
+                    .collect::<String>();
+                recent_lines.push(Line::from(vec![
+                    Span::styled(format!("  {when} "), Style::new().fg(Theme::dim())),
+                    Span::styled(format!("{dur:>6}  "), Style::new().fg(Theme::muted())),
+                    Span::styled(title, Style::new().fg(Theme::fg())),
+                ]));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(recent_lines).wrap(Wrap { trim: false }),
+            recent_area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(info_lines).wrap(Wrap { trim: false }),
+            info_area,
+        );
+    }
 
     // Render thumbnail with rounded border. C6.1 — when the thumbnail
     // protocol was refreshed recently, ramp the border color from primary
