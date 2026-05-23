@@ -106,6 +106,23 @@ pub enum Command {
         #[arg(long, default_value = "10")]
         every: u64,
     },
+    /// Resolve the Twitch live-from-start (Rewind) Usher master playlist
+    /// URL for a channel that is currently broadcasting. Useful for
+    /// validating the GQL/Usher recon before plumbing it into the
+    /// recording flow. Prints the resolved URL; pipe it to ffmpeg with
+    /// `-i` to verify it pulls broadcast from t=0.
+    TwitchRewind {
+        /// Channel login (lowercase, no @ prefix), e.g. `xqc`.
+        channel: String,
+        /// Optionally save the first N seconds of broadcast to this path
+        /// via ffmpeg, end-to-end smoke test.
+        #[arg(long)]
+        sample_secs: Option<u32>,
+        /// When `--sample-secs` is set, the output file path. Defaults to
+        /// `./rewind-sample-<channel>.mkv`.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
     /// Print shell completion script to stdout
     Completions {
         /// Shell to generate completions for
@@ -183,8 +200,11 @@ pub enum LogAction {
     Clear,
     /// Tail the log file (live, Ctrl-C to stop)
     Tail {
-        /// Number of lines to show initially
-        #[arg(short, long, default_value = "50")]
+        /// Number of lines to show initially.
+        // `-n` matches GNU `tail -n`; the natural `-l` is already taken by
+        // the global `--log-level` flag, and clap's debug assertions reject
+        // duplicate shorts when generating completions / the manpage.
+        #[arg(short = 'n', long, default_value = "50")]
         lines: usize,
     },
 }

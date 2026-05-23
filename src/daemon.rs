@@ -270,8 +270,9 @@ pub async fn run() -> Result<()> {
     let rec_config = config.clone();
     let rec_tx = event_tx.clone();
     let rec_cancel = cancel.clone();
+    let rec_twitch = twitch_handle.clone();
     tokio::spawn(async move {
-        crate::recording::run_manager(rec_config, recording_rx, rec_tx, rec_cancel).await;
+        crate::recording::run_manager(rec_config, rec_twitch, recording_rx, rec_tx, rec_cancel).await;
     });
 
     // Spawn channel monitor

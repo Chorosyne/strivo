@@ -161,6 +161,32 @@ impl TwitchPlatform {
         Ok(resp.status().is_success())
     }
 
+    /// Resolve a channel login (e.g. "xqc") to its numeric user_id via
+    /// helix `/users?login=…`. Requires either a stored user OAuth token
+    /// or a valid app token in `access_token`.
+    pub async fn lookup_channel_id_by_login(&self, login: &str) -> Result<String> {
+        let token = self
+            .access_token
+            .read()
+            .await
+            .clone()
+            .context("no twitch access_token loaded; authenticate first")?;
+        let resp: UsersResponse = self
+            .client
+            .get(format!("{TWITCH_API_URL}/users?login={login}"))
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Client-Id", &self.client_id)
+            .send()
+            .await?
+            .json()
+            .await?;
+        resp.data
+            .into_iter()
+            .find(|u| u.login.eq_ignore_ascii_case(login))
+            .map(|u| u.id)
+            .with_context(|| format!("no such twitch channel: {login}"))
+    }
+
     async fn fetch_user_id(&self) -> Result<()> {
         let token = self.access_token.read().await.clone();
         let Some(token) = token else {

@@ -70,11 +70,14 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
         Command::Log { action } => handle_log_command(action).await,
         Command::Search { query } => handle_search(query, config_path),
         Command::Theme { action } => handle_theme_command(action),
-        Command::Doctor => handle_doctor(),
+        Command::Doctor => handle_doctor().await,
         Command::Chapter { file, every } => handle_chapter(file, *every),
         Command::Import { source } => handle_import(source, config_path),
         Command::Merge { output, sources } => handle_merge(output, sources),
         Command::Thumbnail { file, seek } => handle_thumbnail(file, *seek).await,
+        Command::TwitchRewind { channel, sample_secs, out } => {
+            handle_twitch_rewind(channel, *sample_secs, out.clone(), config_path).await
+        }
         Command::Completions { shell } => handle_completions(*shell),
         Command::Man => handle_man(),
         Command::Pull {
@@ -362,6 +365,77 @@ fn handle_merge(output: &std::path::Path, sources: &[std::path::PathBuf]) -> Res
     Ok(())
 }
 
+/// Debug subcommand: resolve the Twitch rewind master playlist for a live
+/// channel and optionally smoke-test it by pulling a few seconds with
+/// ffmpeg. Verifies the GQL → Usher → segment chain end-to-end.
+async fn handle_twitch_rewind(
+    channel: &str,
+    sample_secs: Option<u32>,
+    out: Option<std::path::PathBuf>,
+    config_path: Option<&std::path::Path>,
+) -> Result<()> {
+    use std::sync::Arc;
+    use strivo_core::stream::twitch_rewind::RewindResolver;
+    use tokio::sync::RwLock;
+
+    let config = config::AppConfig::load(config_path).context("load config")?;
+    let tw_cfg = config
+        .twitch
+        .clone()
+        .context("twitch section missing in config")?;
+    let tw = strivo_core::platform::twitch::TwitchPlatform::new(
+        tw_cfg.client_id.clone(),
+        tw_cfg.client_secret.clone(),
+    );
+    tw.load_stored_tokens()
+        .await
+        .context("load twitch tokens (run `strivo` once to authenticate)")?;
+
+    let channel_id = tw
+        .lookup_channel_id_by_login(channel)
+        .await
+        .context("lookup channel id")?;
+    println!("channel_id = {channel_id}");
+
+    let token = strivo_core::config::credentials::get_secret("twitch_access_token")
+        .ok()
+        .flatten();
+    let tw_arc = Arc::new(RwLock::new(tw));
+    let resolver = RewindResolver::new(tw_arc, token);
+    let stream = match resolver.resolve(&channel_id).await {
+        Ok(s) => s,
+        Err(e) => anyhow::bail!("rewind resolve failed: {e}"),
+    };
+    println!("video_id = {}", stream.video_id);
+    if let Some(t) = stream.broadcast_started_at {
+        println!("broadcast_started_at = {t}");
+    }
+    println!("master_url = {}", stream.master_url);
+
+    if let Some(secs) = sample_secs {
+        let out_path = out.unwrap_or_else(|| {
+            std::path::PathBuf::from(format!("./rewind-sample-{channel}.mkv"))
+        });
+        println!("\nffmpeg smoke test: pulling first {secs}s into {}...", out_path.display());
+        let status = tokio::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "warning", "-y", "-t"])
+            .arg(secs.to_string())
+            .args(["-i"])
+            .arg(&stream.master_url)
+            .args(["-c", "copy"])
+            .arg(&out_path)
+            .status()
+            .await
+            .context("spawn ffmpeg")?;
+        if !status.success() {
+            anyhow::bail!("ffmpeg exited with {status}");
+        }
+        let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+        println!("ok — wrote {} bytes to {}", size, out_path.display());
+    }
+    Ok(())
+}
+
 async fn handle_thumbnail(file: &std::path::Path, seek: f64) -> Result<()> {
     use strivo_core::recording::thumbnail;
     if !file.exists() {
@@ -410,17 +484,13 @@ fn handle_chapter(file: &std::path::Path, every: u64) -> Result<()> {
     Ok(())
 }
 
-fn handle_doctor() -> Result<()> {
+async fn handle_doctor() -> Result<()> {
     // Tool presence first, then platform credentials so the user sees
-    // both gates in one shot. Credential probes are async — gate the
-    // call behind a current-thread runtime so this stays a sync handler.
-    let creds_summary = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt.block_on(probe_platform_credentials()),
-        Err(e) => format!("(could not start runtime to test credentials: {e})"),
-    };
+    // both gates in one shot. We're already inside the #[tokio::main]
+    // runtime, so the credential probes are awaited directly — spinning
+    // a nested current-thread runtime here panics with "Cannot start a
+    // runtime from within a runtime".
+    let creds_summary = probe_platform_credentials().await;
 
     let tools: &[(&str, &str)] = &[
         ("ffmpeg", "recording (required)"),
@@ -1362,6 +1432,7 @@ async fn run_tui(args: cli::Args) -> Result<()> {
     let auth_notify = Arc::new(tokio::sync::Notify::new());
 
     let mut platforms: Vec<Arc<RwLock<dyn Platform>>> = Vec::new();
+    let mut twitch_handle: Option<Arc<RwLock<platform::twitch::TwitchPlatform>>> = None;
 
     if let Some(ref twitch_config) = config.twitch {
         let mut twitch = platform::twitch::TwitchPlatform::new(
@@ -1371,6 +1442,7 @@ async fn run_tui(args: cli::Args) -> Result<()> {
         twitch.set_event_tx(event_tx.clone());
         let twitch = Arc::new(RwLock::new(twitch));
         platforms.push(twitch.clone() as Arc<RwLock<dyn Platform>>);
+        twitch_handle = Some(twitch.clone());
 
         let tx = event_tx.clone();
         let notify = auth_notify.clone();
@@ -1462,8 +1534,9 @@ async fn run_tui(args: cli::Args) -> Result<()> {
     let rec_config = config.clone();
     let rec_tx = event_tx.clone();
     let rec_cancel = cancel.clone();
+    let rec_twitch = twitch_handle.clone();
     tokio::spawn(async move {
-        recording::run_manager(rec_config, recording_rx, rec_tx, rec_cancel).await;
+        recording::run_manager(rec_config, rec_twitch, recording_rx, rec_tx, rec_cancel).await;
     });
 
     let standalone_poll_notify: Option<Arc<tokio::sync::Notify>> = if !platforms.is_empty() {

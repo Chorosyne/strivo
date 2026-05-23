@@ -122,6 +122,7 @@ struct ActiveRecording {
 
 pub async fn run_manager(
     config: AppConfig,
+    twitch: Option<std::sync::Arc<tokio::sync::RwLock<crate::platform::twitch::TwitchPlatform>>>,
     mut cmd_rx: mpsc::UnboundedReceiver<RecordingCommand>,
     event_tx: mpsc::UnboundedSender<AppEvent>,
     cancel: CancellationToken,
@@ -196,36 +197,82 @@ pub async fn run_manager(
                             });
                         } else {
                             // Normal path: resolve URL then spawn FFmpeg.
-                            // For Twitch, from_start engages ffmpeg's
-                            // -live_start_index — start at the first
-                            // segment of the HLS DVR window (typically
-                            // ~5min back).
+                            // For Twitch + from_start, try the rewind path
+                            // first (helix → GQL → Usher /vod/v2 — starts
+                            // at broadcast t=0); on failure fall back to
+                            // streamlink + ffmpeg `-live_start_index` which
+                            // lands at the ~5min HLS DVR window start.
                             let rtx = resolve_tx.clone();
                             let etx = event_tx.clone();
                             let fmt = resolved_format.clone();
+                            let twitch_handle = twitch.clone();
+                            let twitch_live_from_start = config.recording.twitch_live_from_start;
+                            let twitch_id = channel_id.clone();
                             tokio::spawn(async move {
-                                match resolver::resolve_stream_url(platform, &channel_name, cookies_path.as_deref()).await {
-                                    Ok(stream_info) => {
-                                        let _ = etx.send(AppEvent::stream_url_resolved(
-                                            channel_id.clone(),
-                                            stream_info.url.clone(),
-                                        ));
-                                        match FfmpegBuilder::new(stream_info.url, output_path)
-                                            .transcode(transcode)
-                                            .format(fmt)
-                                            .from_start(from_start)
-                                            .build()
-                                        {
-                                            Ok(process) => {
-                                                let _ = rtx.send((job_id, Ok(RecorderProcess::Ffmpeg(process))));
-                                            }
-                                            Err(e) => {
-                                                let _ = rtx.send((job_id, Err(format!("FFmpeg failed: {e}"))));
-                                            }
+                                let rewind_url = if from_start
+                                    && platform == PlatformKind::Twitch
+                                    && twitch_live_from_start
+                                {
+                                    twitch_handle.as_ref().and_then(|tw| {
+                                        let tw = tw.clone();
+                                        Some((tw, twitch_id.clone()))
+                                    })
+                                } else {
+                                    None
+                                };
+
+                                let mut resolved_url: Option<String> = None;
+                                if let Some((tw, cid)) = rewind_url {
+                                    let oauth = crate::config::credentials::get_secret("twitch_access_token")
+                                        .ok()
+                                        .flatten();
+                                    let r = crate::stream::twitch_rewind::RewindResolver::new(tw, oauth);
+                                    match r.resolve(&cid).await {
+                                        Ok(s) => {
+                                            tracing::info!(
+                                                channel = %channel_name,
+                                                video_id = %s.video_id,
+                                                "twitch rewind: pulling from broadcast t=0"
+                                            );
+                                            resolved_url = Some(s.master_url);
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                channel = %channel_name,
+                                                error = %e,
+                                                "twitch rewind failed; falling back to streamlink + live DVR"
+                                            );
                                         }
                                     }
+                                }
+
+                                let stream_url = if let Some(u) = resolved_url {
+                                    u
+                                } else {
+                                    match resolver::resolve_stream_url(platform, &channel_name, cookies_path.as_deref()).await {
+                                        Ok(info) => info.url,
+                                        Err(e) => {
+                                            let _ = rtx.send((job_id, Err(format!("Resolve failed: {e}"))));
+                                            return;
+                                        }
+                                    }
+                                };
+
+                                let _ = etx.send(AppEvent::stream_url_resolved(
+                                    channel_id.clone(),
+                                    stream_url.clone(),
+                                ));
+                                match FfmpegBuilder::new(stream_url, output_path)
+                                    .transcode(transcode)
+                                    .format(fmt)
+                                    .from_start(from_start)
+                                    .build()
+                                {
+                                    Ok(process) => {
+                                        let _ = rtx.send((job_id, Ok(RecorderProcess::Ffmpeg(process))));
+                                    }
                                     Err(e) => {
-                                        let _ = rtx.send((job_id, Err(format!("Resolve failed: {e}"))));
+                                        let _ = rtx.send((job_id, Err(format!("FFmpeg failed: {e}"))));
                                     }
                                 }
                             });
