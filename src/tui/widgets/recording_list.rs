@@ -40,21 +40,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let day_groups = app.recordings_by_day();
 
     if day_groups.is_empty() {
-        let items = vec![
-            ListItem::new(Line::raw("")),
-            ListItem::new(Line::styled(
-                "  No recordings yet",
-                Style::new().fg(Theme::muted()),
-            )),
-            ListItem::new(Line::raw("")),
-            ListItem::new(Line::from(vec![
-                Span::raw("  Press "),
-                Span::styled("r", Theme::key_hint()),
-                Span::raw(" on a live channel to start recording"),
-            ])),
-        ];
-        let list = List::new(items).block(block);
-        frame.render_widget(list, area);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        crate::tui::widgets::empty_state::render(
+            frame,
+            inner,
+            &crate::tui::widgets::empty_state::EmptyState {
+                glyph: "●",
+                title: "No recordings yet",
+                tip: "Recordings appear here once a stream is captured.",
+                hints: &[
+                    crate::tui::widgets::empty_state::KeyHint {
+                        key: "r",
+                        action: "Record live channel",
+                    },
+                    crate::tui::widgets::empty_state::KeyHint {
+                        key: "t",
+                        action: "Toggle auto-record",
+                    },
+                ],
+            },
+        );
         return;
     }
 

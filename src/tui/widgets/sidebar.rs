@@ -46,10 +46,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
         });
 
     if app.channels.is_empty() {
-        let placeholder = List::new(vec![ListItem::new("  No channels")])
-            .block(block)
-            .style(Style::new().fg(Theme::muted()));
-        frame.render_widget(placeholder, area);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        crate::tui::widgets::empty_state::render(
+            frame,
+            inner,
+            &crate::tui::widgets::empty_state::EmptyState {
+                glyph: "◉",
+                title: "No channels yet",
+                tip: "Add your first stream to start monitoring.",
+                hints: &[
+                    crate::tui::widgets::empty_state::KeyHint {
+                        key: "a",
+                        action: "Add channel",
+                    },
+                    crate::tui::widgets::empty_state::KeyHint {
+                        key: "?",
+                        action: "Help",
+                    },
+                ],
+            },
+        );
         return;
     }
 

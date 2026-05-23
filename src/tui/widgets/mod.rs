@@ -1,5 +1,6 @@
 pub mod channel_detail;
 pub mod dialog;
+pub mod empty_state;
 pub mod event_log;
 pub mod highlight;
 pub mod log_viewer;
