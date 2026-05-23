@@ -35,6 +35,22 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
+async fn spa_shell() -> Response {
+    match Assets::get("spa.html") {
+        Some(content) => (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            content.data.into_owned(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/assets/{*path}", get(asset))
+    Router::new()
+        .route("/assets/{*path}", get(asset))
+        // W4 MVP — SPA shell served at /. The askama templates remain
+        // mounted by their own routers (legacy htmx surface); the SPA
+        // is a parallel entry point at the bare root.
+        .route("/app", get(spa_shell))
 }
