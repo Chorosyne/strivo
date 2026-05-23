@@ -43,38 +43,74 @@ async fn validate_stream_url(url: &str) -> Result<()> {
 async fn resolve_twitch(channel_name: &str) -> Result<StreamInfo> {
     let url = format!("https://twitch.tv/{channel_name}");
 
-    // Try streamlink first
+    let token = crate::config::credentials::get_secret("twitch_access_token")
+        .ok()
+        .flatten();
+
+    match run_streamlink(&url, token.as_deref()).await {
+        Ok(info) => Ok(info),
+        Err(StreamlinkErr::Unauthorized) if token.is_some() => {
+            // Stored OAuth token is stale — Twitch's playlist endpoint
+            // refuses the request entirely. Retry without it; public
+            // streams resolve fine unauthenticated.
+            tracing::warn!(
+                "Twitch OAuth token rejected as Unauthorized; retrying streamlink without it. \
+                 Re-authenticate to restore access to sub-only streams."
+            );
+            match run_streamlink(&url, None).await {
+                Ok(info) => Ok(info),
+                Err(StreamlinkErr::Failed(s)) => bail!("streamlink failed for {channel_name}: {s}"),
+                Err(StreamlinkErr::Unauthorized) => {
+                    bail!("streamlink failed for {channel_name}: Unauthorized (no token)")
+                }
+                Err(StreamlinkErr::NotFound) => resolve_with_ytdlp(&url, None).await,
+            }
+        }
+        Err(StreamlinkErr::Failed(s)) => bail!("streamlink failed for {channel_name}: {s}"),
+        Err(StreamlinkErr::Unauthorized) => {
+            bail!("streamlink failed for {channel_name}: Unauthorized")
+        }
+        Err(StreamlinkErr::NotFound) => resolve_with_ytdlp(&url, None).await,
+    }
+}
+
+enum StreamlinkErr {
+    Unauthorized,
+    Failed(String),
+    NotFound,
+}
+
+async fn run_streamlink(url: &str, oauth_token: Option<&str>) -> Result<StreamInfo, StreamlinkErr> {
     let mut cmd = Command::new("streamlink");
     cmd.args(["--stream-url", "--twitch-disable-ads"]);
-
-    // Pass OAuth token for sub-only streams and premium features
-    if let Ok(Some(token)) = crate::config::credentials::get_secret("twitch_access_token") {
+    if let Some(token) = oauth_token {
         cmd.arg(format!("--twitch-api-header=Authorization=OAuth {token}"));
     }
+    cmd.args([url, "best"]);
 
-    cmd.args([&url, "best"]);
-    let output = cmd.output().await;
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(_) => return Err(StreamlinkErr::NotFound),
+    };
 
-    match output {
-        Ok(output) if output.status.success() => {
-            let stream_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if stream_url.is_empty() {
-                bail!("streamlink returned empty URL for {channel_name}");
-            }
-            Ok(StreamInfo {
-                url: stream_url,
-                quality: "best".to_string(),
-                is_live: true,
-            })
+    if output.status.success() {
+        let stream_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stream_url.is_empty() {
+            return Err(StreamlinkErr::Failed("empty URL".into()));
         }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("streamlink failed for {channel_name}: {stderr}");
-        }
-        Err(_) => {
-            // Fallback to yt-dlp
-            resolve_with_ytdlp(&url, None).await
-        }
+        return Ok(StreamInfo {
+            url: stream_url,
+            quality: "best".to_string(),
+            is_live: true,
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("unauthorized") || lower.contains("token is invalid") {
+        Err(StreamlinkErr::Unauthorized)
+    } else {
+        Err(StreamlinkErr::Failed(stderr.trim().to_string()))
     }
 }
 
