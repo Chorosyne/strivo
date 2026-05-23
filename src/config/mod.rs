@@ -99,6 +99,20 @@ pub struct CrunchrConfig {
     /// Tandem mode: auto-trigger for recordings from these playlists.
     #[serde(default)]
     pub tandem_playlists: Vec<String>,
+
+    /// Soft budget for paid transcription/analysis backends, in cents
+    /// per month. 0 disables the warning. Crunchr surfaces a status
+    /// chip when spend ≥80% and refuses pre-submission of jobs that
+    /// would tip spend over budget unless --force-spend is passed.
+    /// (C2.) Backwards-compatible default keeps the warning off so
+    /// existing configs upgrade silently.
+    #[serde(default)]
+    pub budget_cents_per_month: u64,
+
+    /// Active preset name from the user's preset library (C1). When
+    /// empty, the historical `backend` field path is used.
+    #[serde(default)]
+    pub active_preset: Option<String>,
 }
 
 impl Default for CrunchrConfig {
@@ -116,6 +130,8 @@ impl Default for CrunchrConfig {
             analysis: CrunchrAnalysisConfig::default(),
             tandem_channels: Vec::new(),
             tandem_playlists: Vec::new(),
+            budget_cents_per_month: 0,
+            active_preset: None,
         }
     }
 }
