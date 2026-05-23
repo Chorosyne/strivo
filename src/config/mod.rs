@@ -58,7 +58,9 @@ pub struct CrunchrConfig {
     #[serde(default = "default_crunchr_backend")]
     pub backend: String,
 
-    /// Env var name for the transcription API key (e.g., "MISTRAL_API_KEY").
+    /// Env var name for the transcription API key.
+    /// Defaults: `OPENROUTER_API_KEY` for `voxtral-openrouter` (default backend),
+    /// `MISTRAL_API_KEY` for `voxtral-api`.
     #[serde(default)]
     pub api_key_env: Option<String>,
 
@@ -74,6 +76,17 @@ pub struct CrunchrConfig {
     /// Max seconds for whisper subprocess before timeout.
     #[serde(default = "default_whisper_timeout")]
     pub whisper_timeout_secs: u64,
+
+    /// When true, request speaker diarization. Only honoured by backends that
+    /// can produce speaker labels (`voxtral-api`, `whisperx-local`). Enables
+    /// the Speaker Editor modal.
+    #[serde(default)]
+    pub diarize: bool,
+
+    /// When true, mux the generated `.vtt` subtitles back into the recording's
+    /// `.mkv` via `mkvmerge` after a transcription job finishes.
+    #[serde(default = "default_embed_subs")]
+    pub embed_subs: bool,
 
     #[serde(default)]
     pub analysis: CrunchrAnalysisConfig,
@@ -98,6 +111,8 @@ impl Default for CrunchrConfig {
             endpoint: None,
             whisper_model: None,
             whisper_timeout_secs: default_whisper_timeout(),
+            diarize: false,
+            embed_subs: default_embed_subs(),
             analysis: CrunchrAnalysisConfig::default(),
             tandem_channels: Vec::new(),
             tandem_playlists: Vec::new(),
@@ -130,11 +145,15 @@ impl Default for CrunchrAnalysisConfig {
 }
 
 fn default_crunchr_backend() -> String {
-    "whisper-cli".to_string()
+    "voxtral-openrouter".to_string()
 }
 
 fn default_whisper_timeout() -> u64 {
     7200
+}
+
+fn default_embed_subs() -> bool {
+    true
 }
 
 fn default_analysis_model() -> String {
@@ -233,6 +252,53 @@ pub struct RecordingConfig {
     /// Default format/bitrate selection. Per-channel `format` overrides this.
     #[serde(default)]
     pub format: RecordingFormat,
+
+    /// On Twitch recordings, post-process the finished file to drop black
+    /// segments left behind when streamlink suppresses ad breaks.
+    #[serde(default)]
+    pub auto_trim_ads: bool,
+
+    /// Minimum contiguous black duration (seconds) to consider an ad break.
+    /// Shorter blackouts (fades, transitions) are preserved.
+    #[serde(default = "default_ad_min_secs")]
+    pub ad_min_secs: f64,
+
+    /// After a Twitch live recording ends, query the helix /videos endpoint
+    /// for the just-finalized archive VOD and download it alongside the
+    /// live capture. Saves to `<base>_vod.<ext>`. Useful because the live
+    /// HLS pull misses the first ~5 minutes plus any ad-break gaps; the
+    /// VOD captures the full broadcast.
+    #[serde(default = "default_auto_vod_backfill")]
+    pub auto_vod_backfill: bool,
+
+    /// Seconds to wait after the live ends before polling for the VOD —
+    /// Twitch takes a few minutes to finalize the archive.
+    #[serde(default = "default_vod_backfill_delay_secs")]
+    pub vod_backfill_delay_secs: u64,
+
+    /// For Twitch + from_start recordings, attempt the live-from-start
+    /// rewind path (helix → GQL → Usher /vod/v2) before falling back to
+    /// the standard streamlink live-edge pull. When the streamer has
+    /// "Always publish VODs" enabled, this lands at broadcast t=0
+    /// instead of the ~5min HLS DVR window.
+    #[serde(default = "default_twitch_live_from_start")]
+    pub twitch_live_from_start: bool,
+}
+
+fn default_ad_min_secs() -> f64 {
+    8.0
+}
+
+fn default_auto_vod_backfill() -> bool {
+    true
+}
+
+fn default_vod_backfill_delay_secs() -> u64 {
+    300
+}
+
+fn default_twitch_live_from_start() -> bool {
+    true
 }
 
 impl Default for RecordingConfig {
@@ -241,6 +307,11 @@ impl Default for RecordingConfig {
             transcode: false,
             filename_template: default_filename_template(),
             format: RecordingFormat::default(),
+            auto_trim_ads: false,
+            ad_min_secs: default_ad_min_secs(),
+            auto_vod_backfill: default_auto_vod_backfill(),
+            vod_backfill_delay_secs: default_vod_backfill_delay_secs(),
+            twitch_live_from_start: default_twitch_live_from_start(),
         }
     }
 }

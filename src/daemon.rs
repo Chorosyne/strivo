@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, RwLock};
@@ -173,6 +173,7 @@ pub async fn run() -> Result<()> {
 
     // Initialize platforms
     let mut platforms: Vec<Arc<RwLock<dyn Platform>>> = Vec::new();
+    let mut twitch_handle: Option<Arc<RwLock<crate::platform::twitch::TwitchPlatform>>> = None;
 
     if let Some(ref twitch_config) = config.twitch {
         let mut twitch = crate::platform::twitch::TwitchPlatform::new(
@@ -182,6 +183,7 @@ pub async fn run() -> Result<()> {
         twitch.set_event_tx(event_tx.clone());
         let twitch = Arc::new(RwLock::new(twitch));
         platforms.push(twitch.clone() as Arc<RwLock<dyn Platform>>);
+        twitch_handle = Some(twitch.clone());
 
         let tx = event_tx.clone();
         let notify = auth_notify.clone();
@@ -365,11 +367,14 @@ pub async fn run() -> Result<()> {
 
     #[cfg(unix)]
     {
+        // Register the SIGTERM handler synchronously so a registration failure
+        // surfaces as a startup error rather than panicking inside a spawned
+        // task and silently losing graceful-shutdown.
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("failed to register SIGTERM handler")?;
         let cancel_term = cancel.clone();
         tokio::spawn(async move {
-            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("Failed to register SIGTERM");
-            sig.recv().await;
+            sigterm.recv().await;
             tracing::info!("Received SIGTERM, shutting down");
             cancel_term.cancel();
         });
@@ -412,6 +417,38 @@ pub async fn run() -> Result<()> {
                     state.apply(de);
                     // Fan out to all connected clients
                     let _ = broadcast_tx.send(de.clone());
+
+                    // Auto VOD backfill: when a Twitch live recording
+                    // ends cleanly, schedule a delayed download of the
+                    // archive VOD so we get the first ~5 minutes the
+                    // HLS pull missed.
+                    if config.recording.auto_vod_backfill {
+                        if let DaemonEvent::RecordingFinished {
+                            job_id, final_state, ..
+                        } = de
+                        {
+                            if *final_state == crate::recording::job::RecordingState::Finished {
+                                if let (Some(job), Some(twitch)) =
+                                    (state.recordings.get(job_id), twitch_handle.as_ref())
+                                {
+                                    if job.platform == PlatformKind::Twitch {
+                                        crate::recording::vod_backfill::spawn(
+                                            crate::recording::vod_backfill::BackfillRequest {
+                                                channel_id: job.channel_id.clone(),
+                                                channel_name: job.channel_name.clone(),
+                                                started_at: job.started_at,
+                                                live_output_path: job.output_path.clone(),
+                                                stream_title: job.stream_title.clone(),
+                                                delay_secs: config.recording.vod_backfill_delay_secs,
+                                            },
+                                            twitch.clone(),
+                                            recording_tx.clone(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // Persist recording lifecycle for crash-recovery audit.
                     if let Some(ref db) = persist_db {
@@ -555,13 +592,31 @@ async fn persist_event(
     use crate::recording::job::RecordingState;
     use crate::recording::persist::PersistedJob;
 
+    // Encode a RecordingJob to JSON for the journal. Serialization is not
+    // expected to fail for our types, but if it does we record a structured
+    // error marker so the persisted row remains diagnostically useful rather
+    // than silently empty.
+    fn encode_job(job: &RecordingJob) -> String {
+        match serde_json::to_string(job) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(job_id = %job.id, "daemon: failed to serialize recording job for journal: {e}");
+                format!(
+                    r#"{{"_serialize_error":"{}","job_id":"{}"}}"#,
+                    e.to_string().replace('"', "'"),
+                    job.id
+                )
+            }
+        }
+    }
+
     let snapshot =
         |job_id: &Uuid, state: RecordingState, error: Option<String>| -> Option<PersistedJob> {
             let job = recordings.get(job_id)?;
             Some(PersistedJob {
                 id: job.id.to_string(),
                 kind: "Recording".to_string(),
-                payload: serde_json::to_string(job).unwrap_or_default(),
+                payload: encode_job(job),
                 state: format!("{state:?}").to_lowercase(),
                 attempts: 0,
                 last_error: error,
@@ -574,7 +629,7 @@ async fn persist_event(
             let pj = PersistedJob {
                 id: job.id.to_string(),
                 kind: "Recording".to_string(),
-                payload: serde_json::to_string(job).unwrap_or_default(),
+                payload: encode_job(job),
                 state: "running".to_string(),
                 attempts: 0,
                 last_error: None,
