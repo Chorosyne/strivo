@@ -11,17 +11,7 @@ use crate::platform::PlatformKind;
 use crate::recording::job::RecordingState;
 use crate::tui::theme::Theme;
 
-/// 10-frame braille spinner. Advances every 80 ms off the frame clock so the
-/// animation speed is independent of render cadence.
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-fn spinner_frame(elapsed_secs: f32) -> &'static str {
-    if crate::tui::anim::reduce_motion() {
-        return "⟳";
-    }
-    let idx = ((elapsed_secs / 0.08) as usize) % SPINNER_FRAMES.len();
-    SPINNER_FRAMES[idx]
-}
+use crate::tui::anim::glyphs::spinner_frame;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
     if app.recording_list_view == RecordingListView::Grid {

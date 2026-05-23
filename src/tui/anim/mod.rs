@@ -10,6 +10,7 @@
 
 pub mod clock;
 pub mod easing;
+pub mod glyphs;
 pub mod tween;
 
 pub use clock::FrameClock;
