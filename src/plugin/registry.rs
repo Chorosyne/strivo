@@ -232,6 +232,29 @@ impl PluginRegistry {
         out
     }
 
+    /// Same data as [`properties_sections`] but grouped by plugin name, so the
+    /// renderer can prepend a chip-style header per source. Plugins that
+    /// contribute nothing are filtered out. Preserves registration order
+    /// (first-party plugins registered first will sort first; third-party
+    /// follow).
+    pub fn properties_sections_grouped(
+        &self,
+        job_id: uuid::Uuid,
+        app: &AppState,
+    ) -> Vec<(String, Vec<ratatui::text::Line<'static>>)> {
+        self.plugins
+            .iter()
+            .filter_map(|plugin| {
+                let lines = plugin.properties_section(job_id, app);
+                if lines.is_empty() {
+                    None
+                } else {
+                    Some((plugin.name().to_string(), lines))
+                }
+            })
+            .collect()
+    }
+
     /// Look up a plugin by name for downcasting via `as_any()`.
     pub fn plugin_ref(&self, name: &str) -> Option<&dyn Plugin> {
         self.plugins

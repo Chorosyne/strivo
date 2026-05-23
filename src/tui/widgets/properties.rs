@@ -145,8 +145,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState, registry: &PluginRe
         ));
     }
 
-    // Plugin-contributed sections (e.g., Crunchr transcript info).
-    lines.extend(registry.properties_sections(job_id, app));
+    // Plugin-contributed sections. Each plugin gets a chip-style header
+    // (e.g. `[crunchr]`) so the source is legible at a glance, separated
+    // from built-in sections by a blank line.
+    for (plugin_name, plugin_lines) in registry.properties_sections_grouped(job_id, app) {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!(" {plugin_name} "),
+                Style::new()
+                    .fg(Theme::bg())
+                    .bg(Theme::secondary())
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.extend(plugin_lines);
+    }
 
     // Footer
     lines.push(Line::raw(""));
