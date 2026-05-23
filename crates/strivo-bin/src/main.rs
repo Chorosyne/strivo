@@ -1379,6 +1379,7 @@ async fn run_client(args: cli::Args) -> Result<()> {
     registry.register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
     registry.register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
     registry.register(Box::new(strivo_plugins::insights::InsightsPlugin::new()));
+    registry.register(Box::new(strivo_plugins::editor::EditorPlugin::new()));
     let manifests = strivo_core::plugin::scan_user_plugins(&strivo_core::plugin::user_plugin_dir());
     let n = registry.load_dylibs_from_manifests(&manifests);
     if n > 0 {
@@ -1591,6 +1592,7 @@ async fn run_tui(args: cli::Args) -> Result<()> {
     registry.register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
     registry.register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
     registry.register(Box::new(strivo_plugins::insights::InsightsPlugin::new()));
+    registry.register(Box::new(strivo_plugins::editor::EditorPlugin::new()));
     registry.init_all(&config)?;
 
     tui::run(app_state, registry, event_rx, recording_tx).await?;
