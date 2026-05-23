@@ -118,6 +118,26 @@ async fn run_loop(
             if let Some(action) = app.handle_event(evt) {
                 handle_action(action, app, recording_tx, mpv, &internal_tx).await;
             }
+
+            // M2 — drain pending plugin-verb dispatches. The actions
+            // popup stashes one of these when the user picks a
+            // plugin-contributed verb; we route to the plugin's
+            // on_verb here (the only place with both AppState + the
+            // PluginRegistry handle in scope), then feed any returned
+            // PluginActions back through the existing dispatcher.
+            if let Some(pending) = app.pending_plugin_verb.take() {
+                let returned = registry.dispatch_verb(
+                    pending.plugin,
+                    pending.verb,
+                    &pending.selection,
+                    app,
+                );
+                if let Some(action) =
+                    process_plugin_actions(returned, app, registry)
+                {
+                    handle_action(action, app, recording_tx, mpv, &internal_tx).await;
+                }
+            }
         }
 
         // Drain backend events — yazi audit §9 batched-drain pattern.

@@ -471,6 +471,21 @@ pub trait Plugin: Send {
         Vec::new()
     }
 
+    /// Handle an item-scoped verb dispatched from the actions popup
+    /// (D5+X5). `verb` is the `PluginCommand.name` the user picked.
+    /// `selection` lists the recording UUIDs the verb should act on —
+    /// either the multi-select set (if non-empty) or the cursor row.
+    /// Default impl ignores; plugins that registered Item-scoped
+    /// commands override. (M2.)
+    fn on_verb(
+        &mut self,
+        _verb: &str,
+        _selection: &[uuid::Uuid],
+        _app: &AppState,
+    ) -> Vec<PluginAction> {
+        Vec::new()
+    }
+
     /// Commands this plugin contributes (for help overlay and keybinding dispatch).
     fn commands(&self) -> Vec<PluginCommand> {
         Vec::new()

@@ -227,6 +227,22 @@ impl PluginRegistry {
         Vec::new()
     }
 
+    /// Dispatch an actions-popup verb to its owning plugin. (M2.)
+    pub fn dispatch_verb(
+        &mut self,
+        plugin_name: &str,
+        verb: &str,
+        selection: &[uuid::Uuid],
+        app: &AppState,
+    ) -> Vec<PluginAction> {
+        for plugin in &mut self.plugins {
+            if plugin.name() == plugin_name {
+                return plugin.on_verb(verb, selection, app);
+            }
+        }
+        Vec::new()
+    }
+
     /// Render the active plugin pane.
     pub fn render_active_pane(&self, frame: &mut Frame, area: Rect, app: &AppState) {
         if let Some(pane_id) = self.active_plugin_pane {

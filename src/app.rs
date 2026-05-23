@@ -582,6 +582,12 @@ pub struct AppState {
     /// DAG overlay visibility (X6 + C1 phase 2 wiring).
     pub show_dag_overlay: bool,
     pub dag_overlay_opened_at: Option<std::time::Instant>,
+    /// Pending plugin-verb dispatch (M2). The actions popup stashes
+    /// here when the user picks a plugin-contributed verb; the host
+    /// loop drains it via `PluginRegistry::dispatch_verb` on the next
+    /// tick. Stash + drain rather than direct call because the
+    /// AppState handler doesn't own the registry.
+    pub pending_plugin_verb: Option<PendingPluginVerb>,
     /// Replayable session command log — every successfully-dispatched
     /// [`crate::tui::keymap::KeyAction`] is appended here so `/save-preset`
     /// can snapshot the user's recent verbs (X3, plan §6). Capped at 256
@@ -625,6 +631,14 @@ pub enum OverlayKey {
     ActionsPopup,
     /// DAG overlay (X6).
     DagOverlay,
+}
+
+/// One queued plugin-verb dispatch waiting for the host loop. (M2.)
+#[derive(Debug, Clone)]
+pub struct PendingPluginVerb {
+    pub plugin: &'static str,
+    pub verb: &'static str,
+    pub selection: Vec<Uuid>,
 }
 
 /// Actions-popup overlay state. (D5.)
@@ -875,6 +889,7 @@ impl AppState {
             actions_popup_opened_at: None,
             show_dag_overlay: false,
             dag_overlay_opened_at: None,
+            pending_plugin_verb: None,
             event_log_scroll: 0,
             last_hotkey: None,
             last_hotkey_at: None,
@@ -3330,12 +3345,23 @@ impl AppState {
                         return self.apply_key_action(a);
                     }
                     Some(ActionDispatch::PluginVerb { plugin, verb }) => {
-                        // The plugin's own on_key handles the verb's
-                        // semantics; for the MVP we surface the
-                        // intent in the status bar and let the user
-                        // continue inside the plugin pane. A future
-                        // commit threads the verb through a
-                        // dedicated PluginAction route.
+                        // M2 — stash for the host loop to drain on the
+                        // next tick. The loop has the PluginRegistry
+                        // handle and routes through registry.dispatch_verb;
+                        // returned PluginActions are processed inline.
+                        // Selection is the multi-set when non-empty,
+                        // else the cursor row.
+                        let selection: Vec<uuid::Uuid> =
+                            if !self.recording_selections_set.is_empty() {
+                                self.recording_selections_order.clone()
+                            } else {
+                                self.selected_recording_id.into_iter().collect()
+                            };
+                        self.pending_plugin_verb = Some(PendingPluginVerb {
+                            plugin,
+                            verb,
+                            selection,
+                        });
                         self.status_message = format!("→ {plugin}: {verb}");
                     }
                     None => {}
