@@ -233,6 +233,69 @@ impl KeyAction {
         }
     }
 
+    /// Inverse of [`from_name`]. Returns the variant identifier as a
+    /// `&'static str` for the command palette + future TOML serialization.
+    /// Kept in lock-step with `from_name` so the round-trip is total
+    /// (verified by the `name_roundtrip` test below).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Quit => "Quit",
+            Self::HelpToggle => "HelpToggle",
+            Self::HelpClose => "HelpClose",
+            Self::ThemePickerOpen => "ThemePickerOpen",
+            Self::EventLogToggle => "EventLogToggle",
+            Self::PluginBrowserToggle => "PluginBrowserToggle",
+            Self::EnterStatusBar => "EnterStatusBar",
+            Self::EnterLogPane => "EnterLogPane",
+            Self::EnterSchedulePane => "EnterSchedulePane",
+            Self::EnterSettings => "EnterSettings",
+            Self::EnterRecordingList => "EnterRecordingList",
+            Self::SearchStart => "SearchStart",
+            Self::PluginActivate => "PluginActivate",
+            Self::NavDown => "NavDown",
+            Self::NavUp => "NavUp",
+            Self::NavTop => "NavTop",
+            Self::NavBottom => "NavBottom",
+            Self::NavBack => "NavBack",
+            Self::NavActivate => "NavActivate",
+            Self::ToggleAutoRecord => "ToggleAutoRecord",
+            Self::StartRecording => "StartRecording",
+            Self::StartRecordingFromStart => "StartRecordingFromStart",
+            Self::WatchStream => "WatchStream",
+            Self::ToggleTranscode => "ToggleTranscode",
+            Self::StopRecording => "StopRecording",
+            Self::PlayRecording => "PlayRecording",
+            Self::ShowRecordingProperties => "ShowRecordingProperties",
+            Self::ToggleRecordingSelect => "ToggleRecordingSelect",
+            Self::ClearRecordingSelections => "ClearRecordingSelections",
+            Self::TrashSelectedRecordings => "TrashSelectedRecordings",
+            Self::RenameRecording => "RenameRecording",
+            Self::MoveRecording => "MoveRecording",
+            Self::VisualModeToggle => "VisualModeToggle",
+            Self::CommandPaletteOpen => "CommandPaletteOpen",
+            Self::MarkSetPrompt => "MarkSetPrompt",
+            Self::MarkJumpPrompt => "MarkJumpPrompt",
+            Self::CopyToClipboard => "CopyToClipboard",
+            Self::OpenInFolder => "OpenInFolder",
+            Self::UndoLast => "UndoLast",
+            Self::ToggleRecordingListView => "ToggleRecordingListView",
+            Self::PlaybackTogglePause => "PlaybackTogglePause",
+            Self::PlaybackSeekForward => "PlaybackSeekForward",
+            Self::PlaybackSeekBack => "PlaybackSeekBack",
+            Self::PlaybackSpeedUp => "PlaybackSpeedUp",
+            Self::PlaybackSpeedDown => "PlaybackSpeedDown",
+            Self::PlaybackVolumeUp => "PlaybackVolumeUp",
+            Self::PlaybackVolumeDown => "PlaybackVolumeDown",
+            Self::ScheduleAdd => "ScheduleAdd",
+            Self::ScheduleEditCron => "ScheduleEditCron",
+            Self::ScheduleEditDuration => "ScheduleEditDuration",
+            Self::ScheduleDelete => "ScheduleDelete",
+            Self::LogScrollPageDown => "LogScrollPageDown",
+            Self::LogScrollPageUp => "LogScrollPageUp",
+            Self::LogClear => "LogClear",
+        }
+    }
+
     /// Parse an action name from the user remap file. Matches the
     /// variant identifier as written in code so the TOML stays close
     /// to the source. Unknown names return `None` and the loader logs
@@ -1108,6 +1171,22 @@ pub fn assert_no_conflicts() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_roundtrip_through_from_name() {
+        // Every chord's action must round-trip through name → from_name.
+        // Guards against drift between the two tables when new variants
+        // get added in one without the other.
+        for chord in all_chords() {
+            let n = chord.action.name();
+            assert_eq!(
+                KeyAction::from_name(n),
+                Some(chord.action),
+                "from_name({n:?}) did not yield {:?}",
+                chord.action
+            );
+        }
+    }
 
     #[test]
     fn lookup_global_quit() {

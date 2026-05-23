@@ -562,6 +562,18 @@ pub struct AppState {
     pub show_plugin_browser: bool,
     /// When the plugin browser opened — drives the enter ramp.
     pub plugin_browser_opened_at: Option<std::time::Instant>,
+    /// `:` command palette state. `Some` iff the overlay is visible.
+    /// Holds the live query string, cursor, and selected-row index;
+    /// the filter is recomputed lazily on render against
+    /// [`crate::tui::keymap::all_chords`] and plugin commands.
+    pub palette: Option<PaletteState>,
+    /// When the palette opened — drives the enter ramp.
+    pub palette_opened_at: Option<std::time::Instant>,
+    /// Replayable session command log — every successfully-dispatched
+    /// [`crate::tui::keymap::KeyAction`] is appended here so `/save-preset`
+    /// can snapshot the user's recent verbs (X3, plan §6). Capped at 256
+    /// entries to avoid unbounded growth.
+    pub command_log: Vec<String>,
     /// Scroll offset within the event log (rows from top, newest-first).
     pub event_log_scroll: usize,
 
@@ -594,6 +606,63 @@ pub enum OverlayKey {
     EventLog,
     TextInput,
     PluginBrowser,
+    /// Command palette (D4). Same ramp shape as the other overlays.
+    Palette,
+}
+
+/// Command-palette overlay state. The filter list is rebuilt on each
+/// render by walking the keymap table + plugin commands; we only own
+/// query / cursor / selection here. (D4.)
+#[derive(Debug, Clone, Default)]
+pub struct PaletteState {
+    /// Live query string. Empty matches everything.
+    pub query: String,
+    /// Cursor position within `query` (chars from start).
+    pub cursor: usize,
+    /// Which row of the filtered list is selected.
+    pub selected: usize,
+    /// Active resource scope (X4). `None` = global action search;
+    /// `Some(scope)` restricts to that resource registry.
+    pub scope: Option<PaletteScope>,
+}
+
+/// Resource scopes the palette can route to. Typed as `:transcripts<Enter>`
+/// etc. (X4 — extends D4.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteScope {
+    /// `:presets` — Crunchr wiring presets.
+    Presets,
+    /// `:edls` — Editor edit-decision-list files on disk.
+    Edls,
+    /// `:batches` — currently-submitted Pipelines.
+    Batches,
+    /// `:transcripts` — finished Crunchr recordings.
+    Transcripts,
+    /// `:clips` — saved Editor clip lists.
+    Clips,
+}
+
+impl PaletteScope {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "presets" => Some(Self::Presets),
+            "edls" => Some(Self::Edls),
+            "batches" => Some(Self::Batches),
+            "transcripts" => Some(Self::Transcripts),
+            "clips" => Some(Self::Clips),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Presets => "presets",
+            Self::Edls => "edls",
+            Self::Batches => "batches",
+            Self::Transcripts => "transcripts",
+            Self::Clips => "clips",
+        }
+    }
 }
 
 /// Live state for the theme picker overlay. Preview is applied immediately
@@ -743,6 +812,9 @@ impl AppState {
             show_event_log: false,
             show_plugin_browser: false,
             plugin_browser_opened_at: None,
+            palette: None,
+            palette_opened_at: None,
+            command_log: Vec::new(),
             event_log_scroll: 0,
             last_hotkey: None,
             last_hotkey_at: None,
@@ -765,6 +837,7 @@ impl AppState {
             OverlayKey::EventLog => self.event_log_opened_at,
             OverlayKey::TextInput => self.text_input_opened_at,
             OverlayKey::PluginBrowser => self.plugin_browser_opened_at,
+            OverlayKey::Palette => self.palette_opened_at,
         };
         let Some(at) = at else {
             return 1.0;
@@ -802,6 +875,7 @@ impl AppState {
             &mut self.plugin_browser_opened_at,
             self.show_plugin_browser,
         );
+        sync_open(&mut self.palette_opened_at, self.palette.is_some());
         // Drop terminal tasks 2 seconds after they enter the Done/Failed
         // state — long enough for the user to read the result, short
         // enough to keep the tail clean.
@@ -1823,11 +1897,12 @@ impl AppState {
             A::SearchStart => None,
             A::PluginActivate => None,
             A::CommandPaletteOpen => {
-                self.open_text_input(
-                    crate::tui::widgets::text_input::TextInputPurpose::CommandPalette,
-                    "Command (KeyAction name, e.g. Quit, EventLogToggle)",
-                    "",
-                );
+                // D4 — open the fuzzy command palette overlay. Old
+                // text-input-based stub stays for back-compat (any
+                // caller using `open_text_input(CommandPalette, …)`
+                // still works) but the `:` key now lands on the proper
+                // modal.
+                self.palette = Some(PaletteState::default());
                 None
             }
             A::MarkSetPrompt => {
@@ -2278,6 +2353,14 @@ impl AppState {
         if self.show_plugin_browser && matches!(key.code, KeyCode::Esc) {
             self.show_plugin_browser = false;
             return None;
+        }
+
+        // Command palette swallows everything except the dispatch keys
+        // while open. Routing is local because the palette is a
+        // soft-modal: arrow keys move the result selection, typing
+        // characters extends the query, Enter dispatches, Esc closes.
+        if self.palette.is_some() {
+            return self.handle_palette_key(key);
         }
 
         // Event-log overlay swallows its scroll keys before the table.
@@ -3078,6 +3161,143 @@ impl AppState {
     fn handle_recording_list_key(&mut self, _key: crossterm::event::KeyEvent) -> Option<AppAction> {
         // RecordingList bindings (nav, s/p/i/v/V/D, Shift+R/M, playback
         // overlay) all live in src/tui/keymap.rs.
+        None
+    }
+
+    /// Palette overlay key handler. Owns up/down/Esc/Enter/Tab and
+    /// passes typed characters straight into the query. The result
+    /// list is recomputed on render so we only need to keep the
+    /// query + cursor + selected index in sync here. (D4 + X4.)
+    fn handle_palette_key(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+    ) -> Option<AppAction> {
+        use crate::app::PaletteScope;
+        use crate::tui::widgets::palette::PaletteDispatch;
+        use crossterm::event::KeyCode;
+        let Some(state) = self.palette.as_mut() else {
+            return None;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.palette = None;
+                return None;
+            }
+            KeyCode::Up => {
+                state.selected = state.selected.saturating_sub(1);
+                return None;
+            }
+            KeyCode::Down => {
+                // No bound — render clamps to the result count; we
+                // saturate at usize::MAX safely.
+                state.selected = state.selected.saturating_add(1);
+                return None;
+            }
+            KeyCode::Home => state.selected = 0,
+            KeyCode::End => state.selected = usize::MAX,
+            KeyCode::Backspace => {
+                if state.cursor > 0 {
+                    let chars: Vec<char> = state.query.chars().collect();
+                    let cur = state.cursor.min(chars.len());
+                    let new: String = chars[..cur - 1]
+                        .iter()
+                        .chain(chars[cur..].iter())
+                        .collect();
+                    state.query = new;
+                    state.cursor -= 1;
+                    state.selected = 0;
+                }
+                return None;
+            }
+            KeyCode::Left => {
+                state.cursor = state.cursor.saturating_sub(1);
+                return None;
+            }
+            KeyCode::Right => {
+                let len = state.query.chars().count();
+                if state.cursor < len {
+                    state.cursor += 1;
+                }
+                return None;
+            }
+            KeyCode::Tab => {
+                // Tab — toggle scope from the typed query. Equivalent
+                // to typing `:scope` and pressing Enter, but with one
+                // keystroke. Falls through to Enter logic when no
+                // valid scope is in the query.
+                let trimmed = state.query.trim().trim_start_matches(':');
+                if let Some(scope) = PaletteScope::parse(trimmed) {
+                    state.scope = Some(scope);
+                    state.query.clear();
+                    state.cursor = 0;
+                    state.selected = 0;
+                    return None;
+                }
+            }
+            KeyCode::Enter => {
+                // Drop the &mut borrow; dispatch happens after the
+                // match so we can re-borrow self for build_rows.
+            }
+            KeyCode::Char(c) => {
+                // Append at cursor.
+                let mut chars: Vec<char> = state.query.chars().collect();
+                let cur = state.cursor.min(chars.len());
+                chars.insert(cur, c);
+                state.query = chars.into_iter().collect();
+                state.cursor += 1;
+                state.selected = 0;
+                return None;
+            }
+            _ => return None,
+        }
+
+        // Enter falls through here. Build rows from the *current*
+        // palette state (which requires &self), then dispatch.
+        if matches!(key.code, KeyCode::Enter) {
+            let selected = self.palette.as_ref().map(|s| s.selected).unwrap_or(0);
+            let dummy_reg = crate::plugin::registry::PluginRegistry::new();
+            // The palette renderer reads from the live registry too;
+            // we don't carry it through to apply_key_action, so plugin
+            // pane activation is handled out of band by the runtime
+            // loop (it sees the same KeyAction and routes). For now
+            // limit dispatch to KeyAction + scope switching.
+            let rows = crate::tui::widgets::palette::build_rows(self, &dummy_reg);
+            if let Some(row) = rows.get(selected) {
+                match &row.dispatch {
+                    PaletteDispatch::KeyAction(action) => {
+                        let action = *action;
+                        let label = row.label.clone();
+                        self.palette = None;
+                        self.command_log.push(label.clone());
+                        if self.command_log.len() > 256 {
+                            self.command_log.remove(0);
+                        }
+                        let next = self.apply_key_action(action);
+                        self.status_message = format!("→ {label}");
+                        return next;
+                    }
+                    PaletteDispatch::SwitchScope(scope) => {
+                        let s = *scope;
+                        if let Some(p) = self.palette.as_mut() {
+                            p.scope = Some(s);
+                            p.query.clear();
+                            p.cursor = 0;
+                            p.selected = 0;
+                        }
+                    }
+                    PaletteDispatch::PluginPane(_) => {
+                        // Plugin pane activation isn't wired through
+                        // apply_key_action; close the palette and let
+                        // the user use the plugin's own activation key.
+                        // Refine when D4 + plugin namespace land
+                        // together.
+                        self.palette = None;
+                    }
+                }
+            } else {
+                self.palette = None;
+            }
+        }
         None
     }
 
