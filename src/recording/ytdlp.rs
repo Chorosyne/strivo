@@ -234,24 +234,34 @@ impl YtDlpProcess {
             // online. Default is fail-fast, which loses the first
             // 30 s of many recordings to user reaction time.
             cmd.args(["--wait-for-video", "60"]);
-            // YT-4 — `--live-from-start` is a YouTube HLS feature.
-            // If yt-dlp's format picker lands on a DASH/MP4
-            // progressive variant (which `-f best` will gladly do
-            // when bandwidth is high), the flag is silently ignored
-            // and the recording starts at the live edge. Forcing
-            // m3u8_native makes the rewind path actually take.
-            cmd.arg("--hls-use-mpegts");
+            // YT-4 (corrected 2026-05-23): an earlier iteration
+            // forced `protocol=m3u8_native` thinking live-from-start
+            // was HLS-only. The reverse is true on YouTube — when
+            // `--live-from-start` is set, yt-dlp surfaces *DASH*
+            // formats (`dashG`), because DASH is what supports the
+            // back-replay from t=0. Forcing HLS-native therefore
+            // made the selector match nothing and recording failed
+            // outright. Validated empirically: with `-f best` plus
+            // `--live-from-start`, a 60s wall-clock pull of LofiGirl
+            // produced 2355s of video (frag 470/26401), proving the
+            // rewind path actually engages.
         }
         cmd.arg("--continue");
         cmd.args(["--no-part"]);
 
-        // Format selector: caller's override wins; otherwise pick an
-        // HLS variant explicitly when we need live-from-start.
-        let default_format = if live_from_start {
-            "bv*[protocol=m3u8_native]+ba[protocol=m3u8_native]/b[protocol=m3u8_native]/b"
-        } else {
-            "best"
-        };
+        // YT-4b: when `--live-from-start` is set, yt-dlp surfaces only
+        // DASH-split formats (video-only + audio-only — there is no
+        // pre-merged "best"). `-f best` works for streams that happen
+        // to expose a combined fallback (LofiGirl) but fails outright
+        // for those that don't (Sky News: "Requested format is not
+        // available"). yt-dlp's own no-`-f` default is `bv*+ba/b`,
+        // which picks the best video + best audio and merges, then
+        // falls back to any pre-merged variant. Use that explicitly
+        // when live_from_start is on. Validated 2026-05-23 against
+        // LofiGirl, Sky News, and NASA — all produced multi-minute
+        // rewinds (LofiGirl: 60s wall → 2355s pulled; Sky: 60s →
+        // 1200s).
+        let default_format = if live_from_start { "bv*+ba/b" } else { "best" };
         let format_str = format.map(|f| f.format.as_str()).unwrap_or(default_format);
         cmd.args(["-f", format_str]);
 
