@@ -134,6 +134,16 @@ impl PluginRegistry {
         loaded
     }
 
+    /// Number of plugins registered. (W2 phase 2.)
+    pub fn len(&self) -> usize {
+        self.plugins.len()
+    }
+
+    /// Whether any plugins are registered. (W2 phase 2.)
+    pub fn is_empty(&self) -> bool {
+        self.plugins.is_empty()
+    }
+
     pub fn init_all(&mut self, config: &AppConfig) -> anyhow::Result<()> {
         let base_data = AppConfig::data_dir();
         let base_cache = AppConfig::cache_dir();

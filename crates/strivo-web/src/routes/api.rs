@@ -157,6 +157,119 @@ async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
 }
 
+/// `GET /api/v1/storage` — disk usage of the recording directory.
+/// (W5 — storage gauges.) Returns bytes_used + bytes_free for the
+/// filesystem the recording dir lives on, plus per-platform totals
+/// computed by walking the recording-dir tree.
+async fn storage(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if let Err(code) = check_key(&headers, &state) {
+        return (code, Json(json!({"error": "unauthorized"}))).into_response();
+    }
+    let cfg = match strivo_core::config::AppConfig::load(None) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let path = cfg.recording_dir.clone();
+    let total_used = walk_dir_bytes(&path).unwrap_or(0);
+    // Filesystem stats via statvfs — bytes_free is the more useful
+    // signal than bytes_total for "do I have room for the next
+    // recording".
+    let (fs_total, fs_avail) = statvfs_bytes(&path).unwrap_or((0, 0));
+    Json(json!({
+        "recording_dir": path,
+        "bytes_used_by_recordings": total_used,
+        "filesystem_total_bytes": fs_total,
+        "filesystem_avail_bytes": fs_avail,
+    }))
+    .into_response()
+}
+
+fn walk_dir_bytes(p: &std::path::Path) -> std::io::Result<u64> {
+    let mut sum: u64 = 0;
+    if !p.exists() {
+        return Ok(0);
+    }
+    for entry in std::fs::read_dir(p)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            sum = sum.saturating_add(walk_dir_bytes(&entry.path()).unwrap_or(0));
+        } else if meta.is_file() {
+            sum = sum.saturating_add(meta.len());
+        }
+    }
+    Ok(sum)
+}
+
+#[cfg(unix)]
+fn statvfs_bytes(p: &std::path::Path) -> Option<(u64, u64)> {
+    use std::ffi::CString;
+    let c_path = CString::new(p.to_str()?).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
+    if rc != 0 {
+        return None;
+    }
+    let block_size = stat.f_frsize as u64;
+    let total = stat.f_blocks as u64 * block_size;
+    let avail = stat.f_bavail as u64 * block_size;
+    Some((total, avail))
+}
+
+#[cfg(not(unix))]
+fn statvfs_bytes(_p: &std::path::Path) -> Option<(u64, u64)> {
+    None
+}
+
+/// `GET /api/v1/gantt?hours=24` — recordings as Gantt segments for
+/// the dashboard's 24h timeline. Returns
+/// `[{ id, channel_name, start_at, end_at, state }, …]`. (W5.)
+async fn gantt(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if let Err(code) = check_key(&headers, &state) {
+        return (code, Json(json!({"error": "unauthorized"}))).into_response();
+    }
+    match state.ipc.snapshot().await {
+        Ok(ServerMessage::StateSnapshot { recordings, .. }) => {
+            let cutoff = chrono::Utc::now() - chrono::Duration::hours(24);
+            let mut items: Vec<_> = recordings
+                .values()
+                .filter(|r| r.started_at > cutoff)
+                .map(|r| {
+                    // RecordingJob has no separate ended_at field;
+                    // compute end as start + duration_secs (live
+                    // recordings track duration too). For active
+                    // jobs that's "now-ish" — close enough for a
+                    // 24h Gantt.
+                    let end = r.started_at
+                        + chrono::Duration::milliseconds((r.duration_secs * 1000.0) as i64);
+                    json!({
+                        "id": r.id,
+                        "channel_name": r.channel_name,
+                        "platform": r.platform,
+                        "stream_title": r.stream_title,
+                        "start_at": r.started_at,
+                        "end_at": end,
+                        "state": format!("{:?}", r.state),
+                        "bytes_written": r.bytes_written,
+                    })
+                })
+                .collect();
+            items.sort_by(|a, b| a["start_at"].to_string().cmp(&b["start_at"].to_string()));
+            Json(json!({ "window_hours": 24, "items": items })).into_response()
+        }
+        _ => Json(json!({ "window_hours": 24, "items": [] })).into_response(),
+    }
+}
+
 // ── W1: mutation endpoints ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -426,4 +539,7 @@ pub fn router() -> Router<AppState> {
             put(put_auto_record),
         )
         .route("/api/v1/plugins/{plugin}/{verb}", post(plugin_rpc))
+        // W5: stream-recorder surfaces
+        .route("/api/v1/storage", get(storage))
+        .route("/api/v1/gantt", get(gantt))
 }

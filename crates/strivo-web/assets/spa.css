@@ -156,6 +156,69 @@ input[type="password"]:focus {
   font-size: 0.75rem;
   font-family: var(--mono);
 }
+.storage-pill {
+  background: var(--overlay);
+  color: var(--muted);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+/* W6 — visible focus ring on every interactive element. The browser
+ * default is often inadequate against our dark theme. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* W6 — keyboard help overlay (? key). */
+.kbd-help {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.kbd-help.open { display: flex; }
+.kbd-help .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem 2rem;
+  width: 480px;
+  max-width: 92vw;
+}
+.kbd-help h2 {
+  margin: 0 0 1rem 0;
+  color: var(--primary);
+  font-size: 1.25rem;
+}
+.kbd-help dl {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+.kbd-help dt {
+  font-family: var(--mono);
+  background: var(--overlay);
+  color: var(--secondary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 0.75rem;
+}
+.kbd-help dd {
+  margin: 0;
+  color: var(--fg);
+  font-size: 0.875rem;
+  align-self: center;
+}
 
 .leftrail {
   grid-area: leftrail;

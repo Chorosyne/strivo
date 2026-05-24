@@ -41,6 +41,13 @@ const API = {
     }),
   pollNow: () => API._fetch("/poll_now", { method: "POST" }),
   health: () => API._fetch("/health"),
+  storage: () => API._fetch("/storage"),
+  gantt: () => API._fetch("/gantt"),
+  pluginRpc: (plugin, verb, body) =>
+    API._fetch(`/plugins/${encodeURIComponent(plugin)}/${encodeURIComponent(verb)}`, {
+      method: "POST",
+      body,
+    }),
   login: (apiKey) =>
     API._fetch("/auth/login", { method: "POST", body: { api_key: apiKey } }),
   logout: () => API._fetch("/auth/logout", { method: "POST" }),
@@ -105,7 +112,17 @@ function summarizeEvent(event) {
 }
 
 // ── Hash router ──────────────────────────────────────────────────────
-const ROUTES = ["library", "recordings", "schedule", "settings", "system", "login"];
+const ROUTES = [
+  "library",
+  "recordings",
+  "schedule",
+  "pipelines",
+  "plugins",
+  "activity",
+  "settings",
+  "system",
+  "login",
+];
 
 function currentRoute() {
   const hash = window.location.hash.replace(/^#\/?/, "") || "library";
@@ -148,6 +165,15 @@ async function render() {
     case "schedule":
       renderStub("Schedule", "Calendar view — webui parity follow-up.");
       break;
+    case "pipelines":
+      renderPipelines();
+      break;
+    case "plugins":
+      renderPlugins();
+      break;
+    case "activity":
+      renderActivityPage();
+      break;
     case "settings":
       renderStub("Settings", "Settings page — webui parity follow-up.");
       break;
@@ -160,29 +186,44 @@ async function render() {
 function chrome(content) {
   return `
     <div class="chrome">
-      <header class="topbar">
+      <header class="topbar" role="banner">
         <span class="brand">StriVo</span>
-        <span id="live-pill" class="live-pill" style="display: none"></span>
+        <span id="live-pill" class="live-pill" style="display: none"
+              aria-label="Live recording count"></span>
+        <span id="storage-pill" class="storage-pill" style="display: none"
+              aria-label="Storage usage"></span>
         <span class="spacer"></span>
-        <button id="activity-toggle" title="Activity feed">⌘ Activity</button>
-        <button id="poll-now" title="Poke channel monitor">↻ Poll</button>
-        <button id="logout" title="Logout">⏻</button>
+        <button id="activity-toggle" title="Toggle activity feed (a)"
+                aria-label="Toggle activity rail">⌘ Activity</button>
+        <button id="poll-now" title="Poke channel monitor (p)"
+                aria-label="Trigger immediate channel poll">↻ Poll</button>
+        <button id="logout" title="Logout"
+                aria-label="Sign out">⏻</button>
       </header>
-      <nav class="leftrail">
-        <a href="#/library" data-route="library">
-          <span class="glyph">▣</span> Library
+      <nav class="leftrail" aria-label="Main navigation">
+        <a href="#/library" data-route="library" data-key="l">
+          <span class="glyph" aria-hidden="true">▣</span> Library
         </a>
-        <a href="#/recordings" data-route="recordings">
-          <span class="glyph">📁</span> Recordings
+        <a href="#/recordings" data-route="recordings" data-key="r">
+          <span class="glyph" aria-hidden="true">📁</span> Recordings
         </a>
-        <a href="#/schedule" data-route="schedule">
-          <span class="glyph">📅</span> Schedule
+        <a href="#/schedule" data-route="schedule" data-key="s">
+          <span class="glyph" aria-hidden="true">📅</span> Schedule
         </a>
-        <a href="#/settings" data-route="settings">
-          <span class="glyph">⚙</span> Settings
+        <a href="#/pipelines" data-route="pipelines" data-key="d">
+          <span class="glyph" aria-hidden="true">🔁</span> Pipelines
         </a>
-        <a href="#/system" data-route="system">
-          <span class="glyph">🛠</span> System
+        <a href="#/plugins" data-route="plugins" data-key="g">
+          <span class="glyph" aria-hidden="true">🧩</span> Plugins
+        </a>
+        <a href="#/activity" data-route="activity" data-key="i">
+          <span class="glyph" aria-hidden="true">⚡</span> Activity
+        </a>
+        <a href="#/settings" data-route="settings" data-key="c">
+          <span class="glyph" aria-hidden="true">⚙</span> Settings
+        </a>
+        <a href="#/system" data-route="system" data-key="y">
+          <span class="glyph" aria-hidden="true">🛠</span> System
         </a>
       </nav>
       <main class="content" id="content">${content}</main>
@@ -222,6 +263,25 @@ function setupChromeHandlers() {
   document.getElementById("activity-close")?.addEventListener("click", () => {
     document.getElementById("activity-rail")?.classList.remove("open");
   });
+  // W5 — refresh the topbar storage pill on every chrome mount.
+  refreshStoragePill();
+}
+
+// Storage pill refresh — debounced to once per chrome render.
+async function refreshStoragePill() {
+  const pill = document.getElementById("storage-pill");
+  if (!pill) return;
+  try {
+    const s = await API.storage();
+    const used = s.bytes_used_by_recordings || 0;
+    const avail = s.filesystem_avail_bytes || 0;
+    if (avail > 0 || used > 0) {
+      pill.textContent = `💾 ${formatBytes(used)} used · ${formatBytes(avail)} free`;
+      pill.style.display = "";
+    }
+  } catch (_) {
+    pill.style.display = "none";
+  }
 }
 
 function renderActivityRail() {
@@ -304,10 +364,20 @@ async function renderLibrary() {
   `
     : "";
 
+  // W5 — 24h Gantt strip just below the LIVE NOW pane.
+  let ganttHtml = "";
+  try {
+    const g = await API.gantt();
+    ganttHtml = renderGantt(g.items || []);
+  } catch (_) {
+    /* Gantt is decorative; silent fail. */
+  }
+
   root.innerHTML = chrome(`
     <h1 class="page-title">Library</h1>
     <p class="page-subtitle">${channels.length} channels monitored</p>
     ${liveStrip}
+    ${ganttHtml}
     <div class="channel-grid">
       ${offline.map(channelCard).join("") ||
         '<div class="empty">No offline channels yet</div>'}
@@ -483,6 +553,175 @@ function stateClassName(s) {
   return "";
 }
 
+// ── Gantt strip (W5 — last 24h of recordings as horizontal bars) ──────
+function renderGantt(items) {
+  if (items.length === 0) return "";
+  // Bucket by channel for the vertical axis; horizontal axis is the
+  // last 24 hours.
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+  const start = now - windowMs;
+  const byChannel = new Map();
+  for (const it of items) {
+    const ch = it.channel_name || "(unknown)";
+    if (!byChannel.has(ch)) byChannel.set(ch, []);
+    byChannel.get(ch).push(it);
+  }
+  const channels = [...byChannel.keys()];
+  if (channels.length === 0) return "";
+  const rowH = 22;
+  const totalH = channels.length * rowH + 24;
+  // SVG width is responsive via 100%; bars use percentage coordinates.
+  const bars = channels
+    .map((ch, i) => {
+      const y = i * rowH + 20;
+      const chBars = byChannel
+        .get(ch)
+        .map((it) => {
+          const s = new Date(it.start_at).getTime();
+          const e = new Date(it.end_at).getTime();
+          const xPct = Math.max(0, ((s - start) / windowMs) * 100);
+          const wPct = Math.max(0.3, Math.min(100 - xPct, ((e - s) / windowMs) * 100));
+          const stateColor =
+            it.state.toLowerCase().includes("record")
+              ? "var(--recording)"
+              : it.state.toLowerCase().includes("finish")
+              ? "var(--live)"
+              : it.state.toLowerCase().includes("fail")
+              ? "var(--secondary)"
+              : "var(--muted)";
+          return `<rect x="${xPct}%" y="${y + 3}" width="${wPct}%" height="14"
+                     fill="${stateColor}" rx="2"
+                     data-title="${escape(it.stream_title || ch)} · ${formatBytes(it.bytes_written || 0)}"></rect>`;
+        })
+        .join("");
+      return `
+        <text x="0" y="${y + 14}" fill="var(--muted)" font-size="11" font-family="ui-monospace, monospace">
+          ${escape(ch.slice(0, 18))}
+        </text>
+        ${chBars}
+      `;
+    })
+    .join("");
+  // Vertical "now" marker at the right edge (100%).
+  const nowMarker = `<line x1="100%" x2="100%" y1="20" y2="${totalH - 4}" stroke="var(--primary)" stroke-width="2" stroke-dasharray="2 2"/>`;
+  return `
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 2rem;">
+      <h2 style="margin: 0 0 0.5rem 0; font-size: 0.875rem; color: var(--muted);">
+        24h timeline · ${items.length} recording${items.length === 1 ? "" : "s"}
+      </h2>
+      <svg viewBox="0 0 100 ${totalH}" preserveAspectRatio="none"
+           style="width: 100%; height: ${totalH}px; padding-left: 120px; box-sizing: border-box;"
+           role="img" aria-label="24-hour recording timeline">
+        ${bars}
+        ${nowMarker}
+      </svg>
+      <div style="display: flex; justify-content: space-between; color: var(--dim); font-size: 0.75rem; padding-left: 120px;">
+        <span>24h ago</span><span>12h</span><span>now</span>
+      </div>
+    </div>
+  `;
+}
+
+// ── Pipelines (W5 — read PluginRpc dispatch state from daemon) ────────
+async function renderPipelines() {
+  root.removeAttribute("aria-busy");
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Pipelines</h1>
+    <p class="page-subtitle">
+      Cross-plugin DAG mirror — Ctrl+G overlay equivalent.
+    </p>
+    <div class="empty" role="status">
+      <div class="glyph" aria-hidden="true">🔁</div>
+      Daemon pipeline registry is empty.<br>
+      Pipelines appear here when plugins submit them via <code>PluginAction::SubmitPipeline</code>.<br>
+      <small>(Daemon plugins load at startup but verb dispatch over IPC is W2-phase-3.)</small>
+    </div>
+  `);
+  setupChromeHandlers();
+}
+
+// ── Plugins (W5 — mirror the TUI's Shift+P browser) ────────────────────
+async function renderPlugins() {
+  root.removeAttribute("aria-busy");
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Plugins</h1>
+    <p class="page-subtitle">
+      Loaded first-party plugins. Verbs hit <code>POST /api/v1/plugins/&lt;plugin&gt;/&lt;verb&gt;</code>.
+    </p>
+    <div class="channel-grid">
+      ${pluginCard("crunchr", "Crunchr", "Transcription + analysis", ["Re-transcribe", "Show transcript"])}
+      ${pluginCard("archiver", "Archiver", "Back-catalog VOD pulls", ["Re-archive channel"])}
+      ${pluginCard("editor", "Editor", "Lossless transcript-as-timeline clipper", [])}
+      ${pluginCard("insights", "Insights", "Word freq / speakers / topics", [])}
+    </div>
+    <div class="empty" style="margin-top: 2rem; font-size: 0.875rem;">
+      Verb dispatch is W2-phase-3 — buttons here POST to the daemon, which logs the request
+      and returns 202. Full dispatch lands when the daemon AppState wrapper does.
+    </div>
+  `);
+  setupChromeHandlers();
+  document.querySelectorAll("[data-action=plugin-verb]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        const r = await API.pluginRpc(btn.dataset.plugin, btn.dataset.verb, {
+          selection: [],
+        });
+        alert(`Dispatched: ${btn.dataset.plugin}: ${btn.dataset.verb}\n${r.note || ""}`);
+      } catch (e) {
+        alert(`Plugin RPC failed: ${e.message}`);
+      }
+    });
+  });
+}
+
+function pluginCard(slug, name, desc, verbs) {
+  const verbButtons = verbs
+    .map(
+      (v) => `
+    <button data-action="plugin-verb" data-plugin="${slug}" data-verb="${escape(v)}">${escape(v)}</button>
+  `,
+    )
+    .join("");
+  return `
+    <div class="channel-card">
+      <div class="row">
+        <span class="platform-icon" style="background: var(--secondary); color: var(--bg);">
+          ${escape(slug.toUpperCase())}
+        </span>
+        <span class="name">${escape(name)}</span>
+        <span class="status">ready</span>
+      </div>
+      <div class="stream-title">${escape(desc)}</div>
+      <div class="actions">${verbButtons || '<span style="color: var(--muted); font-size: 0.75rem">no item-scoped verbs</span>'}</div>
+    </div>
+  `;
+}
+
+// ── Activity (W5 — full-page version of the right-rail tail) ───────────
+function renderActivityPage() {
+  root.removeAttribute("aria-busy");
+  const items = activityLog.length
+    ? activityLog
+        .map(
+          (e) => `
+      <div class="activity-event" style="border-bottom-color: var(--border);">
+        <span class="kind">${escape(e.kind)}</span>
+        <span class="timestamp">${e.at.toLocaleString()}</span>
+        <div class="summary">${escape(e.summary)}</div>
+      </div>
+    `,
+        )
+        .join("")
+    : `<div class="empty"><div class="glyph">⚡</div>No events yet. Things appear here as the daemon emits them.</div>`;
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Activity</h1>
+    <p class="page-subtitle">Last ${activityLog.length} events (live).</p>
+    <div style="max-width: 720px;">${items}</div>
+  `);
+  setupChromeHandlers();
+}
+
 // ── Stub routes ──────────────────────────────────────────────────────
 function renderStub(title, msg) {
   root.removeAttribute("aria-busy");
@@ -530,6 +769,89 @@ function formatBytes(n) {
   return n + " B";
 }
 
+// ── W6 keyboard shortcuts ────────────────────────────────────────────
+// Linear-/GitHub-style: prefix `g` then route letter to jump (gl/gr/gs
+// etc.), `?` to open the help overlay, `Esc` to close, `a` to toggle
+// the activity rail, `p` to trigger Poll.
+let prefixActive = false;
+let prefixTimer = null;
+
+document.addEventListener("keydown", (e) => {
+  // Don't intercept while typing in an input.
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  if (e.key === "?") {
+    e.preventDefault();
+    document.getElementById("kbd-help")?.classList.add("open");
+    return;
+  }
+  if (e.key === "Escape") {
+    document.getElementById("kbd-help")?.classList.remove("open");
+    document.getElementById("activity-rail")?.classList.remove("open");
+    return;
+  }
+  if (e.key === "a") {
+    e.preventDefault();
+    document.getElementById("activity-rail")?.classList.toggle("open");
+    renderActivityRail();
+    return;
+  }
+  if (e.key === "p") {
+    e.preventDefault();
+    API.pollNow().catch(() => {});
+    return;
+  }
+  if (e.key === "g" && !prefixActive) {
+    prefixActive = true;
+    prefixTimer = setTimeout(() => (prefixActive = false), 1000);
+    return;
+  }
+  if (prefixActive) {
+    clearTimeout(prefixTimer);
+    prefixActive = false;
+    const link = document.querySelector(`.leftrail a[data-key="${e.key}"]`);
+    if (link) {
+      e.preventDefault();
+      const r = link.dataset.route;
+      route(r);
+    }
+  }
+});
+
+function injectKeyboardHelp() {
+  if (document.getElementById("kbd-help")) return;
+  const div = document.createElement("div");
+  div.id = "kbd-help";
+  div.className = "kbd-help";
+  div.setAttribute("role", "dialog");
+  div.setAttribute("aria-label", "Keyboard shortcuts");
+  div.innerHTML = `
+    <div class="card">
+      <h2>Keyboard shortcuts</h2>
+      <dl>
+        <dt>?</dt><dd>This help</dd>
+        <dt>g l</dt><dd>Library</dd>
+        <dt>g r</dt><dd>Recordings</dd>
+        <dt>g s</dt><dd>Schedule</dd>
+        <dt>g d</dt><dd>Pipelines (DAG)</dd>
+        <dt>g g</dt><dd>Plugins</dd>
+        <dt>g i</dt><dd>Activity feed (page)</dd>
+        <dt>g c</dt><dd>Settings</dd>
+        <dt>g y</dt><dd>System</dd>
+        <dt>a</dt><dd>Toggle activity rail</dd>
+        <dt>p</dt><dd>Poke channel monitor</dd>
+        <dt>Esc</dt><dd>Close overlay</dd>
+      </dl>
+    </div>
+  `;
+  div.addEventListener("click", (e) => {
+    if (e.target === div) div.classList.remove("open");
+  });
+  document.body.appendChild(div);
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────
 events.on(pushActivity);
 events.on((event) => {
@@ -552,4 +874,5 @@ events.on((event) => {
   }
 });
 events.start();
+injectKeyboardHelp();
 render();

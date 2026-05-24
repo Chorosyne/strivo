@@ -101,7 +101,43 @@ impl DaemonState {
     }
 }
 
+/// Daemon-side plugin host. (W2 phase 2.)
+///
+/// The daemon used to ignore plugins entirely — they were a TUI / bin
+/// concern. With the webui's PluginRpc surface, plugins need to be
+/// alive inside the daemon process too so their DB hooks, status_line
+/// contributions, and (eventually) verb dispatchers have somewhere to
+/// run.
+///
+/// Verb dispatch over IPC is a phase-3 follow-up — it requires a
+/// minimal "DaemonAppState" wrapper for plugins to read recordings
+/// from, since the full AppState is TUI-scoped. Today the daemon
+/// loads + initializes plugins, runs their event hooks, and logs any
+/// PluginRpc requests. The wire contract is stable; only the
+/// dispatcher body changes.
+pub struct DaemonPluginHost {
+    pub registry: crate::plugin::registry::PluginRegistry,
+}
+
+impl DaemonPluginHost {
+    pub fn new() -> Self {
+        Self {
+            registry: crate::plugin::registry::PluginRegistry::new(),
+        }
+    }
+}
+
+impl Default for DaemonPluginHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub async fn run() -> Result<()> {
+    run_with_plugins(DaemonPluginHost::new()).await
+}
+
+pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
     // Initialize logging
     let state_dir = AppConfig::state_dir();
     std::fs::create_dir_all(&state_dir)?;
@@ -133,6 +169,29 @@ pub async fn run() -> Result<()> {
     // Load config
     let config = AppConfig::load(None)?;
     tracing::info!("Config loaded");
+
+    // W2 phase 2 — init plugins inside the daemon process. Plugins
+    // are registered by the caller (strivo-bin's Command::Daemon
+    // arm) via DaemonPluginHost.registry; init_all opens their
+    // DBs, sets up tandem state, etc. Verb dispatch is still
+    // logging-only until the AppState wrapper lands (W2-phase-3).
+    let mut host = host;
+    if !host.registry.is_empty() {
+        match host.registry.init_all(&config) {
+            Ok(()) => {
+                tracing::info!(
+                    plugin_count = host.registry.len(),
+                    "daemon: plugin host initialized"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "daemon: plugin host init failed; continuing without plugin features"
+                );
+            }
+        }
+    }
 
     // Open the persistence db (jobs / catalog / crunchr_queue) and recover any
     // jobs that were marked running when the daemon last died. Recovery is

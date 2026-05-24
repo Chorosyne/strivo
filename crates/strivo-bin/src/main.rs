@@ -62,7 +62,21 @@ async fn main() -> Result<()> {
 
 async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) -> Result<()> {
     match cmd {
-        Command::Daemon => daemon::run().await,
+        Command::Daemon => {
+            // W2 phase 2 — register first-party plugins so they
+            // boot inside the daemon process (init_all opens DBs,
+            // status_line + properties_section work for the webui).
+            let mut host = strivo_core::daemon::DaemonPluginHost::new();
+            host.registry
+                .register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
+            host.registry
+                .register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
+            host.registry
+                .register(Box::new(strivo_plugins::insights::InsightsPlugin::new()));
+            host.registry
+                .register(Box::new(strivo_plugins::editor::EditorPlugin::new()));
+            daemon::run_with_plugins(host).await
+        }
         Command::Enable => handle_enable().await,
         Command::Disable => handle_disable().await,
         Command::Status => handle_status(),
