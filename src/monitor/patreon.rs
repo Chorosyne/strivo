@@ -94,14 +94,31 @@ impl PatreonMonitor {
                 .fetch_posts(&creator.campaign_id, since.as_ref())
                 .await?;
 
+            // Per-creator opt-in to auto-download (task #70). The
+            // monitor previously unconditionally pulled every new post
+            // it saw; now creators with no auto_pull_creators entry
+            // get a notification only, and the user manually triggers
+            // pull from the right pane (task #69). Default opt-out
+            // matches the "pull at will" stance and prevents surprise
+            // downloads from large back-catalogs.
+            let auto_pull = self
+                .config
+                .auto_pull_creators
+                .iter()
+                .any(|e| e.campaign_id == creator.campaign_id);
+
             for post in &posts {
                 let Some(ref embed_url) = post.embed_url else {
                     continue;
                 };
 
-                tracing::info!("Patreon new video post: {} - {}", creator.name, post.title);
+                tracing::info!(
+                    auto_pull = auto_pull,
+                    "Patreon new video post: {} - {}",
+                    creator.name,
+                    post.title
+                );
 
-                // Send notification
                 let _ = self
                     .event_tx
                     .send(AppEvent::Daemon(DaemonEvent::PatreonPostFound {
@@ -113,7 +130,10 @@ impl PatreonMonitor {
                     post.title.clone(),
                 ));
 
-                // Trigger download
+                if !auto_pull {
+                    continue;
+                }
+
                 let output_path = crate::recording::build_output_path(
                     &self.config,
                     &creator.name,

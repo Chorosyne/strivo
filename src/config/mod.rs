@@ -31,6 +31,14 @@ pub struct AppConfig {
     #[serde(default)]
     pub auto_record_channels: Vec<AutoRecordEntry>,
 
+    /// Patreon creators whose new video posts should be auto-downloaded
+    /// when the monitor sees them. Empty by default — the user has to
+    /// opt in per creator (sidebar toggle); the monitor only refreshes
+    /// the post cache for unlisted creators. Mirrors the
+    /// auto_record_channels shape so the same UX patterns apply.
+    #[serde(default)]
+    pub auto_pull_creators: Vec<AutoPullEntry>,
+
     #[serde(default)]
     pub schedule: Vec<ScheduleEntry>,
 
@@ -450,6 +458,17 @@ pub struct AutoRecordEntry {
     pub format: Option<RecordingFormat>,
 }
 
+/// Per-creator opt-in to Patreon auto-download. Identifying by
+/// campaign_id rather than the creator name because creators rename
+/// themselves. creator_name is kept around purely for UI display when
+/// the monitor hasn't yet refreshed pledged_creators.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoPullEntry {
+    pub campaign_id: String,
+    #[serde(default)]
+    pub creator_name: String,
+}
+
 /// Schedule-based recording entry.
 /// Uses cron syntax for time-based recordings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -576,6 +595,7 @@ impl Default for AppConfig {
             theme: ThemeRef::default(),
             ui: UiConfig::default(),
             auto_record_channels: Vec::new(),
+            auto_pull_creators: Vec::new(),
             schedule: Vec::new(),
             crunchr: CrunchrConfig::default(),
             archiver: ArchiverConfig::default(),
