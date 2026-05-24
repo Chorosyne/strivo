@@ -27,15 +27,30 @@ pub async fn resolve_live_video_id(
     channel_live_url: &str,
     cookies_path: Option<&std::path::Path>,
 ) -> Result<String> {
+    Ok(resolve_live_fields(channel_live_url, cookies_path).await?.video_id)
+}
+
+#[derive(Debug, Clone)]
+pub struct LiveFields {
+    pub video_id: String,
+    pub title: Option<String>,
+}
+
+/// One round-trip that returns both the video id and the broadcast title.
+/// Used so the host can build a semantic filename (`{channel}_{date}_{title}.mkv`)
+/// before yt-dlp ever opens the manifest — previously the host fell back to
+/// "stream" when the monitor hadn't polled the channel yet.
+pub async fn resolve_live_fields(
+    channel_live_url: &str,
+    cookies_path: Option<&std::path::Path>,
+) -> Result<LiveFields> {
     let mut cmd = Command::new("yt-dlp");
     cmd.args([
         "--print",
-        "id",
+        "%(id)s\t%(title)s",
         "--no-warnings",
         "--no-download",
         "--no-playlist",
-        // Cap network work — if the channel isn't live, error out
-        // quickly so the caller can fall back to the original URL.
         "--socket-timeout",
         "20",
     ]);
@@ -71,18 +86,24 @@ pub async fn resolve_live_video_id(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let video_id = stdout
+    let line = stdout
         .lines()
         .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
-        .ok_or_else(|| anyhow::anyhow!("yt-dlp --print id returned empty output"))?;
+        .ok_or_else(|| anyhow::anyhow!("yt-dlp --print returned empty output"))?;
+    let mut parts = line.splitn(2, '\t');
+    let video_id = parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| anyhow::anyhow!("yt-dlp --print missing id"))?;
+    let title = parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "NA");
 
-    // Sanity-check the shape. YouTube video IDs are 11 chars of base64
-    // [A-Za-z0-9_-]. Anything else is suspicious.
     if video_id.len() != 11 || !video_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
-        anyhow::bail!("yt-dlp --print id returned unexpected shape: {video_id:?}");
+        anyhow::bail!("yt-dlp --print returned unexpected id shape: {video_id:?}");
     }
-    Ok(video_id)
+    Ok(LiveFields { video_id, title })
 }
 
 pub struct YtDlpProcess {
@@ -116,16 +137,29 @@ impl YtDlpProcess {
         let mut cmd = Command::new("yt-dlp");
         if live_from_start {
             cmd.arg("--live-from-start");
-            // YT-3 — give yt-dlp a brief grace period to find the
-            // video when the stream is just coming online. Default
-            // is to fail immediately, which loses the first 30 s of
-            // many recordings to the user's reaction time.
-            cmd.args(["--wait-for-video", "30"]);
+            // YT-3 — grace period when the stream is just coming
+            // online. Default is fail-fast, which loses the first
+            // 30 s of many recordings to user reaction time.
+            cmd.args(["--wait-for-video", "60"]);
+            // YT-4 — `--live-from-start` is a YouTube HLS feature.
+            // If yt-dlp's format picker lands on a DASH/MP4
+            // progressive variant (which `-f best` will gladly do
+            // when bandwidth is high), the flag is silently ignored
+            // and the recording starts at the live edge. Forcing
+            // m3u8_native makes the rewind path actually take.
+            cmd.arg("--hls-use-mpegts");
         }
         cmd.arg("--continue");
         cmd.args(["--no-part"]);
 
-        let format_str = format.map(|f| f.format.as_str()).unwrap_or("best");
+        // Format selector: caller's override wins; otherwise pick an
+        // HLS variant explicitly when we need live-from-start.
+        let default_format = if live_from_start {
+            "bv*[protocol=m3u8_native]+ba[protocol=m3u8_native]/b[protocol=m3u8_native]/b"
+        } else {
+            "best"
+        };
+        let format_str = format.map(|f| f.format.as_str()).unwrap_or(default_format);
         cmd.args(["-f", format_str]);
 
         // Bitrate hint for format selection sort.
