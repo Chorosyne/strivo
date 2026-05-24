@@ -34,6 +34,12 @@ pub async fn resolve_live_video_id(
 pub struct LiveFields {
     pub video_id: String,
     pub title: Option<String>,
+    /// The broadcaster's display name as YouTube knows it
+    /// (`%(uploader)s` — what shows under the video player). Falls back
+    /// to `%(channel)s` if uploader is missing. Lets the host build a
+    /// human-readable filename even when the schedule fired with only a
+    /// `UC…` channel id on hand.
+    pub uploader: Option<String>,
 }
 
 /// One round-trip that returns both the video id and the broadcast title.
@@ -47,7 +53,7 @@ pub async fn resolve_live_fields(
     let mut cmd = Command::new("yt-dlp");
     cmd.args([
         "--print",
-        "%(id)s\t%(title)s",
+        "%(id)s\t%(title)s\t%(uploader,channel)s",
         "--no-warnings",
         "--no-download",
         "--no-playlist",
@@ -90,7 +96,7 @@ pub async fn resolve_live_fields(
         .lines()
         .find(|l| !l.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("yt-dlp --print returned empty output"))?;
-    let mut parts = line.splitn(2, '\t');
+    let mut parts = line.splitn(3, '\t');
     let video_id = parts
         .next()
         .map(|s| s.trim().to_string())
@@ -99,11 +105,15 @@ pub async fn resolve_live_fields(
         .next()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "NA");
+    let uploader = parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "NA");
 
     if video_id.len() != 11 || !video_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
         anyhow::bail!("yt-dlp --print returned unexpected id shape: {video_id:?}");
     }
-    Ok(LiveFields { video_id, title })
+    Ok(LiveFields { video_id, title, uploader })
 }
 
 pub struct YtDlpProcess {

@@ -223,7 +223,7 @@ pub async fn run_manager(
                                 // human-readable; falling back to "stream"
                                 // produces the alphanumeric-only filenames
                                 // the user has been seeing.
-                                let (watch_url, resolved_title) =
+                                let (watch_url, resolved_title, resolved_uploader) =
                                     match ytdlp::resolve_live_fields(
                                         &alias_url,
                                         cookies.as_deref(),
@@ -239,9 +239,10 @@ pub async fn run_manager(
                                             channel = %log_channel,
                                             video_id = %fields.video_id,
                                             title = ?fields.title,
+                                            uploader = ?fields.uploader,
                                             "yt-dlp: resolved /live → /watch?v= for live-from-start"
                                         );
-                                        (url, fields.title)
+                                        (url, fields.title, fields.uploader)
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -249,20 +250,38 @@ pub async fn run_manager(
                                             error = %e,
                                             "yt-dlp: live-id resolve failed; falling back to /live alias"
                                         );
-                                        (alias_url, None)
+                                        (alias_url, None, None)
                                     }
                                 };
 
-                                // Prefer the title yt-dlp pulled from the
-                                // active broadcast metadata over whatever
-                                // the monitor cached. Fall back to the
-                                // monitor's value, then to the constant.
+                                // If the host handed us a UC… channel id
+                                // (schedule fires, older saved auto-record
+                                // entries, manual starts where display_name
+                                // was lost), prefer yt-dlp's resolved
+                                // uploader name for the filename's channel
+                                // slot. Otherwise keep what the caller said.
+                                let is_uc_id = filename_channel_owned.len() == 24
+                                    && filename_channel_owned.starts_with("UC")
+                                    && filename_channel_owned
+                                        .chars()
+                                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+                                let filename_channel_final = if (is_uc_id
+                                    || filename_channel_owned.is_empty())
+                                    && resolved_uploader
+                                        .as_ref()
+                                        .is_some_and(|u| !u.is_empty())
+                                {
+                                    resolved_uploader.clone().unwrap()
+                                } else {
+                                    filename_channel_owned.clone()
+                                };
+
                                 let title_for_filename = resolved_title
                                     .clone()
                                     .or(pre_resolved_title);
                                 let new_output_path = build_output_path(
                                     &cfg_clone,
-                                    &filename_channel_owned,
+                                    &filename_channel_final,
                                     PlatformKind::YouTube,
                                     title_for_filename.as_deref(),
                                 );
