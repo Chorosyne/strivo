@@ -658,9 +658,33 @@ function channelDetailHtml(c) {
         <button class="cd-close" data-action="cd-close" title="Close">×</button>
       </div>
       ${c.stream_title ? `<div class="stream-title">${escape(c.stream_title)}</div>` : ""}
+      ${livePreviewHtml(c)}
       ${actions}
       ${sections}
     </div>`;
+}
+
+// Live, muted preview when a live channel is opened (item 4). Uses the
+// platform's own embed player (loopback-robust, no proxy/CORS): Twitch
+// player.twitch.tv with parent=<host>, YouTube embed/live_stream?channel.
+// Muted + autoplay so it plays without a gesture on desktop; the player's
+// own controls cover mobile. Patreon has no live concept.
+function livePreviewHtml(c) {
+  if (!c.is_live) return "";
+  const host = location.hostname || "127.0.0.1";
+  let src = null;
+  if (c.platform === "Twitch") {
+    src = `https://player.twitch.tv/?channel=${encodeURIComponent(c.name)}` +
+      `&parent=${encodeURIComponent(host)}&muted=true&autoplay=true`;
+  } else if (c.platform === "YouTube") {
+    src = `https://www.youtube.com/embed/live_stream?channel=${encodeURIComponent(c.id)}` +
+      `&autoplay=1&mute=1&playsinline=1`;
+  }
+  if (!src) return "";
+  return `<div class="cd-preview">
+    <iframe src="${src}" title="Live preview" loading="lazy"
+            allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+  </div>`;
 }
 
 function wireChannelDetail(c) {
