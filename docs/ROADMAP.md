@@ -67,9 +67,19 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   `GET /api/v1/health/checks` (grouped Storage/Platform Auth/Network checks
   with severity + fix + worst-rollup) + SPA: global topbar health pill
   (amber/red, links to System, hidden when ok) and a domain-grouped checks
-  list on the System page sourced from the registry. — each check returns `{severity:
-  warn|error, message, fix-link}`, grouped by domain (Storage, Platform Auth, Plugins,
-  Network), retestable; global header health pill (amber/red) links to the list.
+  list on the System page sourced from the registry.
+- [ ] **13.5. ElegantFin webui restyle (BUMPED — do next)** `[D]` — restyle
+  `crates/strivo-web/assets/spa.css` to follow the user's Jellyfin theme as
+  **literally as possible**: the ElegantFin theme + the near-black YouTube
+  gradient override. Port the token table from DESIGN.md ("Web UI Theme")
+  into `:root` verbatim (gradient `#101010→#050505`, accent `rgb(119,91,244)`,
+  text `rgb(209,213,219)`, radii 1.25/1/.5/.375em, blur 2/5/10/20px, shadow,
+  borders), then apply the component idioms: section titles with a leading
+  white bar, non-primary buttons `rgba(0,0,0,.2)` r10px + hover `rgba(0,0,0,.5)`,
+  link-buttons with grow-on-hover underline, glass cards (`1em`, blur, soft
+  shadow), submit/delete button colors. Reference CSS in `docs/reference/`.
+  Keep all existing DOM/class names; e2e must stay green. Likely multi-fire
+  (mark `- [~]`): tokens+chrome first, then cards/tables/dialogs/forms.
 - [ ] **14. Scheduled-task duality** `[A][E]` — every periodic task gets a manual
   "Run now" enqueuing the same command; intervals editable; running tasks cancellable.
 - [ ] **15. Logs viewer polish** `[E]` — in-UI level selector + rolling/capped files

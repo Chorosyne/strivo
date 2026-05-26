@@ -1,0 +1,167 @@
+@import url("https://cdn.jsdelivr.net/gh/lscambo13/ElegantFin@main/Theme/ElegantFin-jellyfin-theme-build-latest-minified.css");
+
+/* Action Sheet */
+.actionSheetScroller {
+mask-image: none !important;
+-webkit-mask-image: none !important;
+padding: 0 !important;
+}
+.dialog .actionSheetMenuItem {
+border-radius: 5px !important;
+}
+
+/* Filter Dialog */
+.filterDialogContent {
+height: 100%;
+overflow: auto;
+}
+
+/* Link Buttons */
+a[is=emby-linkbutton]:not(.listItem-border, .navMenuOption) {
+margin-bottom: .3em;
+position: relative;
+text-decoration: none !important;
+}
+a[is=emby-linkbutton]:not(.listItem-border, .navMenuOption).button-link {
+color: var(--accent2-light);
+}
+a[is=emby-linkbutton]:not(.listItem-border, .navMenuOption):after {
+background: currentColor;
+bottom: -.1em;
+content: "" !important;
+height: .1em;
+left: 0 !important;
+position: absolute;
+transform: scale(0);
+transform-origin: right;
+transition: transform .1s ease-in-out;
+width: 100%;
+}
+a[is=emby-linkbutton]:not(.listItem-border, .navMenuOption):hover:after {
+transform: scale(1);
+transform-origin: left;
+}
+
+/* Slider */
+.sliderBubble {
+background: transparent;
+border-radius: 20px;
+overflow: hidden;
+}
+
+/* Chapter Thumbnails */
+.chapterThumbTextContainer {
+background: linear-gradient(0deg, #000 .25em, rgba(0,0,0,.25), transparent) !important;
+padding: .5em .25em !important;
+}
+
+/* Index Page Titles */
+#indexPage .sectionTitle {
+align-items: center;
+color: #fff;
+display: flex;
+flex-direction: row;
+flex-wrap: nowrap;
+font-size: 1.6em;
+}
+#indexPage .sectionTitle:before {
+background: #fff;
+content: "";
+height: 2px;
+margin-right: .5em;
+width: 1.3em;
+}
+
+/* Index Page Buttons */
+#indexPage .emby-scroller .emby-button:not(.cardOverlayButton) {
+background: rgba(0,0,0,.2);
+border-radius: 10px;
+box-shadow: 0 0 .5em rgba(0,0,0,.75);
+margin-right: 1.2em;
+overflow: hidden;
+}
+#indexPage .emby-scroller .emby-button:not(.cardOverlayButton):after {
+all: unset;
+}
+#indexPage .emby-scroller .emby-button:not(.cardOverlayButton):hover {
+background: rgba(0,0,0,.5);
+}
+
+/* Index Section Adjustments */
+#indexPage .section0 .emby-scrollbuttons {
+display: none;
+}
+#indexPage .section0 .itemsContainer {
+flex-wrap: wrap;
+}
+
+.detailSection:has(> form.trackSelections.hide) {
+display: block !important;
+}
+
+.detailRibbon {
+flex-direction: column!important;
+padding-left: 0!important;
+padding-right: 0!important;
+}
+
+.detailPagePrimaryContainer {
+padding-right: var(--sidePadding)!important;
+text-align: left; /* thanks to @LeviSnoot */
+}
+
+.detailPagePrimaryContent.padded-right {
+padding-left: 0!important;
+}
+
+.detailVerticalSection .emby-scrollbuttons {
+padding-top: 2em!important;
+}
+
+.verticalSection.emby-scroller-container>h2.sectionTitle.sectionTitle-cards {
+padding-top: 2em!important;
+}
+
+h2.sectionTitle.sectionTitle-cards.padded-left {
+display: none !important;
+}
+
+h2.sectionTitle.sectionTitle-cards.padded-left:not(:has(> *)):not(:empty) {
+display: none !important;
+}
+
+.emby-tabs-slider {
+display: none !important;
+}
+
+h3.pageTitle.pageTitleWithLogo.pageTitleWithDefaultLogo[aria-hidden="true"] {
+display: none !important;
+}
+
+.sectionTabs.headerTabs {
+display: none !important;
+}
+
+/* Make top-row category cards taller */
+[is="emby-scroller"] .card.overflowThumbCard .cardScalable,
+[is="emby-scroller"] .card.overflowBackdropCard .cardScalable {
+/* Increase the aspect ratio height (default is ~27-30%) */
+padding-top: 30% !important; /* try 40-55% */
+}
+
+/* Ensure the image fills the new height without cropping */
+[is="emby-scroller"] .card.overflowThumbCard .cardImage,
+[is="emby-scroller"] .card.overflowBackdropCard .cardImage {
+height: 100% !important;
+width: 100% !important;
+object-fit: contain !important; /* use 'cover' if you prefer full-bleed */
+}
+
+/* 1) Override ElegantFin gradient tokens to YouTube-style */
+:root {
+--lighterGradientPoint: #101010 !important;
+--darkerGradientPoint: #050505 !important;
+--lighterGradientPointAlpha: rgba(16,16,16,.9) !important;
+--darkerGradientPointAlpha: rgba(5,5,5,.9) !important;
+--backgroundGradient: linear-gradient(180deg,#101010 0%,#050505 100%) !important;
+}
