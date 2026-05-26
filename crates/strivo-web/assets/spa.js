@@ -636,7 +636,82 @@ function renderLogin(errorMsg) {
 }
 
 // ── Home: channel detail (if selected) + recordings dashboard ─────────
+// First-run gate (item 20): a fresh install with no platform connected gets
+// a guided setup checklist instead of an empty/half-configured dashboard.
+// (Platform auth + config writes happen in the TUI/CLI, not the webui, so
+// this screen reports live status and tells the user what to do.)
+let firstRunDismissed = false;
+
+function renderFirstRun(setup) {
+  root.removeAttribute("aria-busy");
+  const step = (done, label, detail) => `
+    <div class="fr-step ${done ? "done" : "todo"}">
+      <span class="fr-mark">${done ? "✓" : "○"}</span>
+      <div class="fr-body">
+        <div class="fr-label">${escape(label)}</div>
+        <div class="fr-detail">${detail}</div>
+      </div>
+    </div>`;
+  const plat = (name, ok) =>
+    `<span class="fr-pill ${ok ? "ok" : ""}">${ok ? "✓" : "○"} ${escape(name)}</span>`;
+  const anyPlatform =
+    setup.twitch_configured || setup.youtube_configured || setup.patreon_configured;
+  const recDir = setup.recording_dir || "(unset)";
+  const chanCount = (setup.auto_record_channels || []).length;
+
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Welcome to StriVo</h1>
+    <p class="page-subtitle">Finish setup before the dashboard fills in.</p>
+    <div class="cfg-card fr-card">
+      ${step(
+        anyPlatform,
+        "1 · Connect a platform",
+        `Authenticate Twitch / YouTube / Patreon by running <code>strivo</code>
+         in a terminal (device-code login). Then re-check below.
+         <div class="fr-pills">${plat("Twitch", setup.twitch_configured)}
+           ${plat("YouTube", setup.youtube_configured)}
+           ${plat("Patreon", setup.patreon_configured)}</div>`,
+      )}
+      ${step(
+        !!setup.recording_dir,
+        "2 · Recording directory",
+        `Where captures are written: <code>${escape(recDir)}</code>.
+         Change it in <code>~/.config/strivo/config.toml</code> if needed.`,
+      )}
+      ${step(
+        chanCount > 0,
+        "3 · Pick channels to record",
+        `Use the <b>＋ Add</b> button (top bar) to find a channel and enable
+         auto-record. ${chanCount} channel(s) configured so far.`,
+      )}
+      <div class="fr-actions">
+        <button id="fr-recheck">↻ Re-check</button>
+        <button id="fr-continue" class="primary">${anyPlatform ? "Continue to dashboard" : "Continue anyway"}</button>
+      </div>
+    </div>
+  `);
+  setupChromeHandlers();
+  document.getElementById("fr-recheck")?.addEventListener("click", () => renderHome());
+  document.getElementById("fr-continue")?.addEventListener("click", () => {
+    firstRunDismissed = true;
+    renderHome();
+  });
+}
+
 async function renderHome() {
+  let setup = null;
+  try {
+    setup = await API.settings();
+  } catch (e) {
+    if (e.message.includes("unauthorized")) return;
+  }
+  const anyPlatform =
+    setup &&
+    (setup.twitch_configured || setup.youtube_configured || setup.patreon_configured);
+  if (setup && !anyPlatform && !firstRunDismissed) {
+    renderFirstRun(setup);
+    return;
+  }
   // Refresh the channel + recordings caches that feed the left rail and
   // the dashboard. Both are cheap snapshots.
   try {

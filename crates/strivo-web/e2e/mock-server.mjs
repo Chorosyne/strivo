@@ -190,7 +190,16 @@ const server = createServer(async (req, res) => {
       });
     if (p === "/gantt") return json(res, 200, { items: [] });
     if (p === "/schedule") return json(res, 200, { schedule: SCHEDULE });
-    if (p === "/settings") return json(res, 200, {});
+    if (p === "/settings")
+      return json(res, 200, {
+        twitch_configured: true,
+        youtube_configured: true,
+        patreon_configured: false,
+        recording_dir: "/mnt/sda2/strivo",
+        auto_record_channels: [],
+        poll_interval_secs: 60,
+        schedule: [],
+      });
 
     // Channel VODs request → answer asynchronously over SSE, like the daemon.
     const vodsMatch = p.match(/^\/channels\/([^/]+)\/vods$/);

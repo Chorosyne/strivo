@@ -1071,6 +1071,31 @@ button.busy::after {
 }
 
 /* System page — checks grouped by domain (item 13). */
+/* First-run setup wizard (item 20). */
+.fr-card { max-width: 620px; }
+.fr-step {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.fr-step:last-of-type { border-bottom: none; }
+.fr-mark { font-weight: 700; font-size: 1.1rem; }
+.fr-step.done .fr-mark { color: var(--live); }
+.fr-step.todo .fr-mark { color: var(--secondary); }
+.fr-label { font-weight: 600; margin-bottom: 0.2rem; }
+.fr-detail { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+.fr-pills { margin-top: 0.4rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.fr-pill {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--overlay);
+  color: var(--muted);
+}
+.fr-pill.ok { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+.fr-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+
 /* Logs viewer (item 15). */
 .logs-toolbar {
   display: flex;

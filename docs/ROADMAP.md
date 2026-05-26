@@ -126,8 +126,12 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   SSE; `POST /api/v1/channels/resolve`) + SPA topbar "＋ Add" wizard modal:
   phase 1 pick platform + search (live resolve), phase 2 confirm the resolved
   entity → enable auto-record. Config deferred until the entity is confirmed.
-- [ ] **20. First-run wizard** `[B]` — gate the SPA behind connect platforms → pick
-  channels → recording defaults → storage path; no half-configured dashboard.
+- [x] **20. First-run wizard** `[B]` — when no platform is connected, the home
+  route shows a guided setup checklist (connect a platform → recording dir →
+  pick channels) with live status from `/settings`, instead of an empty
+  dashboard; dismissable via Continue. (Platform auth + config writes stay in
+  the TUI/CLI — the webui can't do device-code OAuth — so the wizard reports
+  status and directs the user there rather than faking config it can't write.)
 - [ ] **21. Named capture profiles + cutoff** `[B]` — define once
   ("1080p60+transcript", "audio-only"), attach to many channels, with a cutoff so
   StriVo stops re-capturing once met. Warn on pathological perpetual-re-record configs.
