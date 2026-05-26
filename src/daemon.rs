@@ -457,6 +457,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                         let poll_notify = poll_notify.clone();
                         let cancel_ref = cancel.clone();
 
+                        let client_config = config.clone();
                         tokio::spawn(async move {
                             if let Err(e) = handle_client(
                                 stream,
@@ -464,6 +465,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                                 client_broadcast_rx,
                                 rec_tx,
                                 bulk_tx_ref,
+                                client_config,
                                 poll_notify,
                                 cancel_ref,
                             ).await {
@@ -546,6 +548,7 @@ async fn handle_client(
     broadcast_rx: broadcast::Receiver<DaemonEvent>,
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
     bulk_tx: Option<mpsc::UnboundedSender<crate::recording::bulk::BulkCommand>>,
+    config: AppConfig,
     poll_notify: Option<Arc<tokio::sync::Notify>>,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -639,6 +642,26 @@ async fn handle_client(
             ClientMessage::Shutdown => {
                 cancel.cancel();
                 break;
+            }
+            ClientMessage::PatreonPull {
+                embed_url,
+                creator_name,
+                post_title,
+            } => {
+                let output_path = crate::recording::build_output_path(
+                    &config,
+                    &creator_name,
+                    crate::platform::PlatformKind::Patreon,
+                    Some(&post_title),
+                );
+                let _ = recording_tx.send(RecordingCommand::DownloadVod {
+                    url: embed_url,
+                    channel_name: creator_name,
+                    platform: crate::platform::PlatformKind::Patreon,
+                    output_path,
+                    cookies_path: None,
+                    post_title: Some(post_title),
+                });
             }
             ClientMessage::ListPlaylists { channel_id } => {
                 if let Some(ref tx) = bulk_tx {

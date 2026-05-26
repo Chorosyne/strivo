@@ -57,6 +57,8 @@ const API = {
     API._fetch(`/channels/${encodeURIComponent(channelId)}/playlists`, {
       method: "POST",
     }),
+  patreonPull: (body) =>
+    API._fetch("/patreon/pull", { method: "POST", body }),
   login: (apiKey) =>
     API._fetch("/auth/login", { method: "POST", body: { api_key: apiKey } }),
   logout: () => API._fetch("/auth/logout", { method: "POST" }),
@@ -91,6 +93,9 @@ const activityLog = [];
 // #74 — per-channel bulk-download status, keyed by channel_id:
 // { done, total, active }. Fed by the `bulk-progress` SSE event.
 const bulkStatus = {};
+// #75 — Patreon snapshot, fed by the `patreon-state` SSE event:
+// { creators: [ChannelEntry], posts: { campaign_id: [PatreonPost] } }.
+const patreonState = { creators: [], posts: {} };
 function pushActivity(event) {
   const kind = Object.keys(event)[0] || "event";
   const summary = summarizeEvent(event);
@@ -128,6 +133,7 @@ const ROUTES = [
   "library",
   "recordings",
   "schedule",
+  "patreon",
   "pipelines",
   "plugins",
   "activity",
@@ -180,6 +186,9 @@ async function render() {
     case "pipelines":
       renderPipelines();
       break;
+    case "patreon":
+      renderPatreon();
+      break;
     case "plugins":
       renderPlugins();
       break;
@@ -221,6 +230,9 @@ function chrome(content) {
         </a>
         <a href="#/schedule" data-route="schedule" data-key="s">
           <span class="glyph" aria-hidden="true">📅</span> Schedule
+        </a>
+        <a href="#/patreon" data-route="patreon" data-key="n">
+          <span class="glyph" aria-hidden="true">◈</span> Patreon
         </a>
         <a href="#/pipelines" data-route="pipelines" data-key="d">
           <span class="glyph" aria-hidden="true">🔁</span> Pipelines
@@ -764,6 +776,73 @@ async function renderPipelines() {
   setupChromeHandlers();
 }
 
+// ── Patreon (#75 — mirror the TUI right-pane post browser) ─────────────
+function renderPatreon() {
+  root.removeAttribute("aria-busy");
+  const creators = patreonState.creators || [];
+  let body;
+  if (creators.length === 0) {
+    body = `<div class="empty"><div class="glyph">◈</div>
+      No pledged creators yet.<br>
+      <small>The daemon refreshes this each poll once Patreon is connected.</small>
+    </div>`;
+  } else {
+    body = creators
+      .map((c) => {
+        const posts = patreonState.posts[c.id] || [];
+        const rows = posts.length
+          ? posts
+              .map(
+                (p) => `
+            <div class="pl-row" data-action="patreon-pull"
+                 data-embed="${escape(p.embed_url || "")}"
+                 data-creator="${escape(c.display_name || c.name)}"
+                 data-title="${escape(p.title)}">
+              <span style="color: var(--dim)">${escape((p.published_at || "").slice(0, 10))}</span>
+              &nbsp; ${escape(p.title)}
+              ${p.embed_url ? '<span style="float:right; color: var(--primary)">⇩ pull</span>' : ""}
+            </div>`,
+              )
+              .join("")
+          : '<div class="empty" style="padding:0.5rem">No video posts.</div>';
+        return `
+          <div style="background: var(--surface); border: 1px solid var(--border);
+                      border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <h2 style="margin:0 0 0.5rem 0; font-size: 1rem; color: var(--secondary)">
+              ${escape(c.display_name || c.name)}
+              ${c.stream_title ? `<span style="color: var(--muted); font-size: 0.8rem">· ${escape(c.stream_title)}</span>` : ""}
+            </h2>
+            <div class="pl-list">${rows}</div>
+          </div>`;
+      })
+      .join("");
+  }
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Patreon</h1>
+    <p class="page-subtitle">${creators.length} pledged creator${creators.length === 1 ? "" : "s"} · click a post to pull it</p>
+    ${body}
+  `);
+  setupChromeHandlers();
+  document.querySelectorAll("[data-action=patreon-pull]").forEach((row) => {
+    if (!row.dataset.embed) return;
+    row.addEventListener("click", async () => {
+      try {
+        await API.patreonPull({
+          embed_url: row.dataset.embed,
+          creator_name: row.dataset.creator,
+          post_title: row.dataset.title,
+        });
+        row.style.opacity = "0.5";
+        row.querySelector("span:last-child")?.replaceChildren(
+          document.createTextNode("queued ✓"),
+        );
+      } catch (e) {
+        alert(`Pull failed: ${e.message}`);
+      }
+    });
+  });
+}
+
 // ── Plugins (W5 — mirror the TUI's Shift+P browser) ────────────────────
 async function renderPlugins() {
   root.removeAttribute("aria-busy");
@@ -1004,6 +1083,19 @@ events.on((event) => {
       delete bulkStatus[p.channel_id];
     }
     if (currentRoute() === "library") renderLibrary().catch(console.error);
+  }
+  // #75 — Patreon snapshot drives the /patreon browser.
+  if (event.PatreonState) {
+    const ps = event.PatreonState;
+    patreonState.creators = ps.creators || [];
+    patreonState.posts = {};
+    for (const post of ps.posts || []) {
+      (patreonState.posts[post.campaign_id] ||= []).push(post);
+    }
+    for (const list of Object.values(patreonState.posts)) {
+      list.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
+    }
+    if (currentRoute() === "patreon") renderPatreon();
   }
   // #74 / #73 — playlist list answers the picker request.
   if (event.PlaylistList) {

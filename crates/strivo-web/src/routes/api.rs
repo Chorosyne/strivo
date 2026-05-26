@@ -601,6 +601,39 @@ async fn request_playlists(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct PatreonPullPayload {
+    embed_url: String,
+    creator_name: String,
+    post_title: String,
+}
+
+/// `POST /api/v1/patreon/pull` — download a single Patreon video post on
+/// demand. Webui equivalent of the TUI's `p` on a creator's post (#69).
+/// The daemon builds the output path from its config. (#75.)
+async fn patreon_pull(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<PatreonPullPayload>,
+) -> impl IntoResponse {
+    if let Err(code) = check_key(&headers, &state) {
+        return (code, Json(json!({"error": "unauthorized"}))).into_response();
+    }
+    let cmd = ClientMessage::PatreonPull {
+        embed_url: body.embed_url,
+        creator_name: body.creator_name,
+        post_title: body.post_title,
+    };
+    match state.ipc.send_command(cmd).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "queued"}))).into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/health", get(health))
@@ -628,4 +661,6 @@ pub fn router() -> Router<AppState> {
             "/api/v1/channels/{channel_id}/playlists",
             post(request_playlists),
         )
+        // #75: Patreon manual pull
+        .route("/api/v1/patreon/pull", post(patreon_pull))
 }

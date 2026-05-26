@@ -49,6 +49,14 @@ pub enum ClientMessage {
     ListPlaylists {
         channel_id: String,
     },
+    /// Pull a single Patreon video post on demand (task #75 — webui
+    /// equivalent of the TUI's PullPatreonPost). The daemon builds the
+    /// output path from its config, so the webui doesn't have to.
+    PatreonPull {
+        embed_url: String,
+        creator_name: String,
+        post_title: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
