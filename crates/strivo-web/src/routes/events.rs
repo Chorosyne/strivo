@@ -29,10 +29,16 @@ async fn events(
         while let Some(item) = event_stream.next().await {
             match item {
                 Ok(de) => {
-                    let variant = daemon_event_kind(&de);
+                    // Emit UNNAMED SSE frames (default "message" type). The
+                    // SPA dispatches on the externally-tagged JSON body
+                    // ({"ChannelVods":{…}}) via EventSource.onmessage, which
+                    // only fires for unnamed events — a named `event:` field
+                    // would make onmessage never fire and silently drop every
+                    // real-time update. (The legacy htmx hx-sse selectors that
+                    // needed event names are retired.)
                     match serde_json::to_string(&de) {
                         Ok(body) => {
-                            yield Ok(Event::default().event(variant).data(body));
+                            yield Ok(Event::default().data(body));
                         }
                         Err(e) => {
                             tracing::warn!("event JSON encode failed: {e}");
@@ -41,9 +47,9 @@ async fn events(
                 }
                 Err(e) => {
                     tracing::warn!("daemon event stream error: {e}");
-                    yield Ok(Event::default()
-                        .event("error")
-                        .data(e.to_string()));
+                    yield Ok(Event::default().data(
+                        serde_json::json!({ "Error": e.to_string() }).to_string(),
+                    ));
                     break;
                 }
             }
@@ -54,32 +60,6 @@ async fn events(
             .interval(Duration::from_secs(15))
             .text("ping"),
     )
-}
-
-/// Stable string label for the SSE `event:` field — keeps the wire
-/// format independent of the Rust enum discriminant order.
-fn daemon_event_kind(de: &strivo_core::app::DaemonEvent) -> &'static str {
-    use strivo_core::app::DaemonEvent as D;
-    match de {
-        D::ChannelsUpdated(_) => "channels-updated",
-        D::ChannelWentLive(_) => "channel-live",
-        D::ChannelWentOffline(_) => "channel-offline",
-        D::StreamUrlResolved { .. } => "stream-url-resolved",
-        D::RecordingStarted { .. } => "recording-started",
-        D::RecordingProgress { .. } => "recording-progress",
-        D::RecordingFinished { .. } => "recording-finished",
-        D::Notification { .. } => "notification",
-        D::AllRecordingsStopped => "all-stopped",
-        D::DeviceCodeRequired { .. } => "device-code-required",
-        D::PlatformAuthenticated { .. } => "platform-authenticated",
-        D::PatreonPostFound { .. } => "patreon-post",
-        D::PatreonState { .. } => "patreon-state",
-        D::BulkProgress { .. } => "bulk-progress",
-        D::PlaylistList { .. } => "playlist-list",
-        D::ChannelVods { .. } => "channel-vods",
-        D::ScheduleFired { .. } => "schedule-fired",
-        D::Error(_) => "error",
-    }
 }
 
 pub fn router() -> Router<AppState> {

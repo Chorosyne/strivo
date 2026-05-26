@@ -571,6 +571,28 @@ function loadChannelDetailData(c) {
   if (c.platform === "YouTube") {
     API.requestPlaylists(c.id).catch(() => {});
   }
+  // Don't hang on "Loading…" forever — if the channel-vods SSE answer
+  // hasn't arrived in 15s (slow/failed platform fetch), show an error
+  // state for whichever sections are still loading.
+  const id = c.id;
+  setTimeout(() => {
+    if (!channelVods[id] && `${c.platform}:${id}` === selectedChannelKey) {
+      for (const sid of ["cd-streams", "cd-uploads"]) {
+        const el = document.getElementById(sid);
+        if (el && el.textContent.includes("Loading")) {
+          const title = sid === "cd-streams"
+            ? (c.platform === "Twitch" ? "Past broadcasts" : "Recent live streams")
+            : "Recent uploads";
+          el.innerHTML = `<h2 class="cd-section-title">${title}</h2>` +
+            `<div class="empty sm">Couldn't load — the daemon may be fetching, or the platform isn't authed. <a href="#" data-action="cd-retry">Retry</a></div>`;
+        }
+      }
+      document.querySelector('[data-action="cd-retry"]')?.addEventListener("click", (e) => {
+        e.preventDefault();
+        loadChannelDetailData(c);
+      });
+    }
+  }, 15000);
 }
 
 function paintChannelVods(channelId, platform) {
