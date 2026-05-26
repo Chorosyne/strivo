@@ -10,9 +10,11 @@
 //! consumers (scripts, automations) continue to use the header; the
 //! browser uses the cookie after one login.
 
-use axum::extract::State;
-use axum::http::header::SET_COOKIE;
-use axum::http::{HeaderMap, StatusCode};
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, State};
+use axum::http::header::{RETRY_AFTER, SET_COOKIE};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -36,15 +38,30 @@ struct LoginPayload {
 /// sets the `strivo_session` cookie + returns the expiry timestamp.
 async fn login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(body): Json<LoginPayload>,
 ) -> impl IntoResponse {
+    let ip = peer.ip();
+    if let crate::ratelimit::Decision::Blocked { retry_after_secs } = state.login_limiter.check(ip) {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from(retry_after_secs));
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            headers,
+            Json(json!({"error": "too many failed attempts; try again later"})),
+        )
+            .into_response();
+    }
+
     if !state.api_key.matches(&body.api_key) {
+        state.login_limiter.record_failure(ip);
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error": "invalid api_key"})),
         )
             .into_response();
     }
+    state.login_limiter.record_success(ip);
 
     // Lazily persist a session secret on first login. Re-uses the
     // existing config-save path so the secret survives restarts.

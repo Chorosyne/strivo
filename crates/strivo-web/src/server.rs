@@ -18,6 +18,8 @@ pub struct AppState {
     /// `WebConfig.session_secret`; `None` until the first /login
     /// generates and persists one.
     pub session_secret: Option<String>,
+    /// Per-IP failed-login throttle (roadmap Phase 1).
+    pub login_limiter: crate::ratelimit::LoginLimiter,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +64,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         ipc,
         api_key: cfg.api_key,
         session_secret: Some(session_secret),
+        login_limiter: crate::ratelimit::LoginLimiter::new(),
     };
 
     // The SPA (served by assets::router at / and /app) is the webui; it
@@ -84,6 +87,11 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         .with_context(|| format!("bind {}", cfg.bind))?;
 
     tracing::info!(addr = %cfg.bind, "strivo-web listening");
-    axum::serve(listener, app).await?;
+    // ConnectInfo carries the peer IP into the login rate limiter.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
