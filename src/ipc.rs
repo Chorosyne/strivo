@@ -57,6 +57,13 @@ pub enum ClientMessage {
         creator_name: String,
         post_title: String,
     },
+    /// Request a channel's recent VODs (live broadcasts + uploads) for the
+    /// webui channel-detail pane. Answered asynchronously with
+    /// DaemonEvent::ChannelVods.
+    FetchChannelVods {
+        channel_id: String,
+        platform: PlatformKind,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

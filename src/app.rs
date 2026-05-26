@@ -75,6 +75,12 @@ pub enum DaemonEvent {
         channel_id: String,
         playlists: Vec<crate::platform::PlaylistInfo>,
     },
+    /// A channel's recent VODs (live broadcasts + uploads), answering
+    /// ClientMessage::FetchChannelVods for the webui channel-detail pane.
+    ChannelVods {
+        channel_id: String,
+        vods: Vec<crate::platform::VodEntry>,
+    },
     /// A cron schedule fired and a recording was kicked off. Includes the
     /// pre-generated `job_id` so the TUI can correlate with the
     /// `RecordingStarted` that follows.
@@ -1711,6 +1717,8 @@ impl AppState {
                     }
                 }
             }
+            // Webui-only: the TUI shows channel VODs via its own panes.
+            DaemonEvent::ChannelVods { .. } => {}
             DaemonEvent::PatreonState { creators, posts } => {
                 // Cache posts by campaign_id, newest first.
                 let mut by_campaign: HashMap<String, Vec<crate::platform::patreon::PatreonPost>> =

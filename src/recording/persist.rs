@@ -388,6 +388,7 @@ mod tests {
             duration: None,
             url: "https://example.com/abc".into(),
             thumbnail_url: None,
+            kind: crate::platform::VodKind::Upload,
         };
         assert!(!db
             .is_vod_recorded(PlatformKind::YouTube, "UC123", "abc")

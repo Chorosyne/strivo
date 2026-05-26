@@ -89,6 +89,22 @@ pub struct VodEntry {
     pub duration: Option<Duration>,
     pub url: String,
     pub thumbnail_url: Option<String>,
+    /// Whether this item was a live broadcast (past stream) or a regular
+    /// upload. Lets the webui split a channel's "recent live streams" from
+    /// "recent uploads" without re-deriving it client-side. Defaults to
+    /// Upload for sources that don't distinguish.
+    #[serde(default)]
+    pub kind: VodKind,
+}
+
+/// Distinguishes a past live broadcast from a regular upload (webui channel
+/// detail). YouTube sets this from `liveStreamingDetails`; Twitch archives
+/// are always past broadcasts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VodKind {
+    #[default]
+    Upload,
+    LiveBroadcast,
 }
 
 /// A YouTube playlist usable as a bulk-download scope (task #73).

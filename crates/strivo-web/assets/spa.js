@@ -57,6 +57,12 @@ const API = {
     API._fetch(`/channels/${encodeURIComponent(channelId)}/playlists`, {
       method: "POST",
     }),
+  requestChannelVods: (channelId, platform) =>
+    API._fetch(`/channels/${encodeURIComponent(channelId)}/vods`, {
+      method: "POST",
+      body: { platform },
+    }),
+  schedule: () => API._fetch("/schedule"),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   login: (apiKey) =>
@@ -88,8 +94,6 @@ const events = {
   },
 };
 
-// Activity event ring (most-recent-first, capped at 50).
-const activityLog = [];
 // #74 — per-channel bulk-download status, keyed by channel_id:
 // { done, total, active }. Fed by the `bulk-progress` SSE event.
 const bulkStatus = {};
@@ -100,36 +104,18 @@ const patreonState = { creators: [], posts: {} };
 let recSort = { col: "started", dir: "desc" };
 let recFilter = "";
 let recCache = [];
-function pushActivity(event) {
-  const kind = Object.keys(event)[0] || "event";
-  const summary = summarizeEvent(event);
-  activityLog.unshift({
-    kind,
-    summary,
-    at: new Date(),
-  });
-  if (activityLog.length > 50) activityLog.pop();
-  renderActivityRail();
-}
-function summarizeEvent(event) {
-  if (event.ChannelWentLive)
-    return `${event.ChannelWentLive.display_name || event.ChannelWentLive.name} went LIVE`;
-  if (event.ChannelWentOffline)
-    return `${event.ChannelWentOffline.display_name || event.ChannelWentOffline.name} went offline`;
-  if (event.RecordingStarted)
-    return `Started: ${event.RecordingStarted.job.channel_name}`;
-  if (event.RecordingFinished)
-    return `Finished: ${event.RecordingFinished.final_state}`;
-  if (event.RecordingProgress)
-    return `Progress: ${(event.RecordingProgress.bytes_written / 1e6).toFixed(1)} MB`;
-  if (event.ScheduleFired)
-    return `Schedule fired: ${event.ScheduleFired.channel}`;
-  if (event.Notification)
-    return `${event.Notification.title}: ${event.Notification.body}`;
-  if (event.PlatformAuthenticated)
-    return `Authenticated: ${event.PlatformAuthenticated.kind}`;
-  if (event.DeviceCodeRequired) return `Device-code prompt`;
-  return JSON.stringify(event).slice(0, 80);
+// TUI-redesign — left-rail channel cache, current selection, per-channel
+// VOD cache (channel_id -> [VodEntry]), and the recordings dashboard cache.
+let channelCache = [];
+let selectedChannelKey = null;
+const channelVods = {};
+let dashRecordings = [];
+let dashSchedule = [];
+
+// True for recording states still in flight.
+function isInProgress(state) {
+  const s = stateLabel(state).toLowerCase();
+  return s.includes("record") || s.includes("resolv") || s.includes("stopp");
 }
 
 // ── Hash router ──────────────────────────────────────────────────────
@@ -137,10 +123,8 @@ const ROUTES = [
   "library",
   "recordings",
   "schedule",
-  "patreon",
   "pipelines",
   "plugins",
-  "activity",
   "settings",
   "system",
   "login",
@@ -179,7 +163,7 @@ async function render() {
       renderLogin();
       break;
     case "library":
-      await renderLibrary();
+      await renderHome();
       break;
     case "recordings":
       await renderRecordings();
@@ -190,14 +174,8 @@ async function render() {
     case "pipelines":
       renderPipelines();
       break;
-    case "patreon":
-      renderPatreon();
-      break;
     case "plugins":
       renderPlugins();
-      break;
-    case "activity":
-      renderActivityPage();
       break;
     case "settings":
       renderStub("Settings", "Settings page — webui parity follow-up.");
@@ -208,7 +186,28 @@ async function render() {
   }
 }
 
+// Top-bar route nav (functional pages). The left rail is the channel
+// list now; these icon links reach the management pages.
+const TOPNAV = [
+  ["library", "▣", "Home", "l"],
+  ["recordings", "📁", "Recordings", "r"],
+  ["schedule", "📅", "Schedule", "s"],
+  ["pipelines", "🔁", "Pipelines", "d"],
+  ["plugins", "🧩", "Plugins", "g"],
+  ["settings", "⚙", "Settings", "c"],
+  ["system", "🛠", "System", "y"],
+];
+
 function chrome(content) {
+  const r = currentRoute();
+  const nav = TOPNAV.map(
+    ([route, glyph, label, key]) =>
+      `<a class="topnav-link ${route === r ? "active" : ""}"
+          href="#/${route}" data-route="${route}" data-key="${key}"
+          title="${label}" aria-label="${label}">
+        <span aria-hidden="true">${glyph}</span>
+      </a>`,
+  ).join("");
   return `
     <div class="chrome">
       <header class="topbar" role="banner">
@@ -218,59 +217,18 @@ function chrome(content) {
         <span id="storage-pill" class="storage-pill" style="display: none"
               aria-label="Storage usage"></span>
         <span class="spacer"></span>
-        <button id="activity-toggle" title="Toggle activity feed (a)"
-                aria-label="Toggle activity rail">⌘ Activity</button>
+        <nav class="topnav" aria-label="Main navigation">${nav}</nav>
         <button id="poll-now" title="Poke channel monitor (p)"
                 aria-label="Trigger immediate channel poll">↻ Poll</button>
-        <button id="logout" title="Logout"
-                aria-label="Sign out">⏻</button>
+        <button id="logout" title="Logout" aria-label="Sign out">⏻</button>
       </header>
-      <nav class="leftrail" aria-label="Main navigation">
-        <a href="#/library" data-route="library" data-key="l">
-          <span class="glyph" aria-hidden="true">▣</span> Library
-        </a>
-        <a href="#/recordings" data-route="recordings" data-key="r">
-          <span class="glyph" aria-hidden="true">📁</span> Recordings
-        </a>
-        <a href="#/schedule" data-route="schedule" data-key="s">
-          <span class="glyph" aria-hidden="true">📅</span> Schedule
-        </a>
-        <a href="#/patreon" data-route="patreon" data-key="n">
-          <span class="glyph" aria-hidden="true">◈</span> Patreon
-        </a>
-        <a href="#/pipelines" data-route="pipelines" data-key="d">
-          <span class="glyph" aria-hidden="true">🔁</span> Pipelines
-        </a>
-        <a href="#/plugins" data-route="plugins" data-key="g">
-          <span class="glyph" aria-hidden="true">🧩</span> Plugins
-        </a>
-        <a href="#/activity" data-route="activity" data-key="i">
-          <span class="glyph" aria-hidden="true">⚡</span> Activity
-        </a>
-        <a href="#/settings" data-route="settings" data-key="c">
-          <span class="glyph" aria-hidden="true">⚙</span> Settings
-        </a>
-        <a href="#/system" data-route="system" data-key="y">
-          <span class="glyph" aria-hidden="true">🛠</span> System
-        </a>
-      </nav>
+      <nav class="leftrail" id="channel-list" aria-label="Channels"></nav>
       <main class="content" id="content">${content}</main>
-      <aside class="activity-rail" id="activity-rail">
-        <h3>
-          Activity
-          <button class="close-btn" id="activity-close">×</button>
-        </h3>
-        <div id="activity-list"></div>
-      </aside>
     </div>
   `;
 }
 
 function setupChromeHandlers() {
-  const r = currentRoute();
-  document.querySelectorAll(".leftrail a").forEach((a) => {
-    a.classList.toggle("active", a.dataset.route === r);
-  });
   document.getElementById("poll-now")?.addEventListener("click", async () => {
     try {
       await API.pollNow();
@@ -282,17 +240,10 @@ function setupChromeHandlers() {
     await API.logout().catch(() => {});
     route("login");
   });
-  document
-    .getElementById("activity-toggle")
-    ?.addEventListener("click", () => {
-      document.getElementById("activity-rail")?.classList.toggle("open");
-      renderActivityRail();
-    });
-  document.getElementById("activity-close")?.addEventListener("click", () => {
-    document.getElementById("activity-rail")?.classList.remove("open");
-  });
   // W5 — refresh the topbar storage pill on every chrome mount.
   refreshStoragePill();
+  // Channel list lives in the left rail on every page.
+  paintChannelList();
 }
 
 // Storage pill refresh — debounced to once per chrome render.
@@ -312,20 +263,85 @@ async function refreshStoragePill() {
   }
 }
 
-function renderActivityRail() {
-  const list = document.getElementById("activity-list");
-  if (!list) return;
-  list.innerHTML = activityLog
-    .map(
-      (e) => `
-    <div class="activity-event">
-      <span class="kind">${escape(e.kind)}</span>
-      <span class="timestamp">${e.at.toLocaleTimeString()}</span>
-      <div class="summary">${escape(e.summary)}</div>
-    </div>
-  `,
-    )
-    .join("");
+// ── Channel list (left rail) ─────────────────────────────────────────
+// Merges /channels (Twitch/YT) with Patreon creators (patreonState),
+// live first + bold, then offline. Clicking selects a channel and shows
+// its detail in the center (home route only).
+function paintChannelList() {
+  const rail = document.getElementById("channel-list");
+  if (!rail) return;
+
+  const merged = [...channelCache, ...patreonState.creators];
+  // De-dupe by platform:id in case a Patreon creator is also in /channels.
+  const seen = new Set();
+  const channels = merged.filter((c) => {
+    const k = `${c.platform}:${c.id}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  const live = channels.filter((c) => c.is_live);
+  const offline = channels
+    .filter((c) => !c.is_live)
+    .sort((a, b) =>
+      (a.display_name || a.name).localeCompare(b.display_name || b.name),
+    );
+  updateLiveCount(recCache.filter((r) => isInProgress(r.state)).length);
+
+  const recordingChannelIds = new Set(
+    recCache.filter((r) => isInProgress(r.state)).map((r) => r.channel_id),
+  );
+
+  const row = (c) => {
+    const key = `${c.platform}:${c.id}`;
+    const sel = key === selectedChannelKey ? "sel" : "";
+    const rec = recordingChannelIds.has(c.id)
+      ? '<span class="ch-rec" title="recording">●</span>'
+      : "";
+    const liveDot = c.is_live ? '<span class="ch-live">◉</span>' : "";
+    const viewers = c.is_live && c.viewer_count
+      ? `<span class="ch-viewers">${formatCount(c.viewer_count)}</span>`
+      : "";
+    return `
+      <a class="ch-row ${c.is_live ? "live" : ""} ${sel}"
+         data-channel-key="${key}" data-channel-id="${c.id}"
+         data-platform="${c.platform}" href="#/library">
+        <span class="ch-plat ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
+        <span class="ch-name">${escape(c.display_name || c.name)}</span>
+        ${viewers}${liveDot}${rec}
+      </a>`;
+  };
+
+  const section = (title, list) =>
+    list.length
+      ? `<div class="ch-section-title">${title}</div>${list.map(row).join("")}`
+      : "";
+
+  rail.innerHTML =
+    channels.length === 0
+      ? '<div class="ch-empty">No channels yet</div>'
+      : section(`LIVE (${live.length})`, live) + section("Channels", offline);
+
+  rail.querySelectorAll(".ch-row").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      selectChannel(el.dataset.channelKey);
+    });
+  });
+}
+
+function platformGlyph(p) {
+  return p === "Twitch" ? "🟣" : p === "YouTube" ? "🔴" : "◈";
+}
+
+function selectChannel(key) {
+  selectedChannelKey = key;
+  if (currentRoute() !== "library") {
+    route("library"); // hashchange triggers render()
+  } else {
+    render();
+  }
 }
 
 // ── Login ────────────────────────────────────────────────────────────
@@ -361,68 +377,277 @@ function renderLogin(errorMsg) {
   });
 }
 
-// ── Library (channels grid + LIVE NOW strip) ──────────────────────────
-async function renderLibrary() {
-  let channels = [];
+// ── Home: channel detail (if selected) + recordings dashboard ─────────
+async function renderHome() {
+  // Refresh the channel + recordings caches that feed the left rail and
+  // the dashboard. Both are cheap snapshots.
   try {
-    const data = await API.channels();
-    channels = data.channels || [];
+    const [ch, rec] = await Promise.all([API.channels(), API.recordings()]);
+    channelCache = ch.channels || [];
+    recCache = rec.recordings || [];
+    dashRecordings = recCache;
   } catch (e) {
     if (e.message.includes("unauthorized")) return;
-    root.innerHTML = chrome(
-      `<div class="empty"><div class="glyph">⚠</div>${escape(e.message)}</div>`,
-    );
-    setupChromeHandlers();
-    return;
+  }
+  try {
+    dashSchedule = (await API.schedule()).schedule || [];
+  } catch (_) {
+    dashSchedule = [];
   }
   root.removeAttribute("aria-busy");
 
-  const live = channels.filter((c) => c.is_live);
-  const offline = channels.filter((c) => !c.is_live);
-  updateLiveCount(live.length);
+  const selected = selectedChannelKey
+    ? [...channelCache, ...patreonState.creators].find(
+        (c) => `${c.platform}:${c.id}` === selectedChannelKey,
+      )
+    : null;
 
-  const liveStrip = live.length
-    ? `
-    <div class="live-now">
-      <h2><span class="rec-dot">●</span> LIVE NOW (${live.length})</h2>
-      <div class="live-now-grid">
-        ${live.map(channelCard).join("")}
+  const center = selected
+    ? `${channelDetailHtml(selected)}
+       <div class="dash-band">${recordingsDashboardHtml(true)}</div>`
+    : recordingsDashboardHtml(false);
+
+  root.innerHTML = chrome(center);
+  setupChromeHandlers();
+
+  if (selected) {
+    wireChannelDetail(selected);
+    loadChannelDetailData(selected);
+  }
+  wireDashboard();
+}
+
+// ── Recordings dashboard ─────────────────────────────────────────────
+function recordingsDashboardHtml(compact) {
+  const inProgress = dashRecordings.filter((r) => isInProgress(r.state));
+  const recent = dashRecordings
+    .filter((r) => !isInProgress(r.state))
+    .slice(0, compact ? 6 : 24);
+  const upcoming = [...dashSchedule]
+    .filter((s) => s.next_fire)
+    .sort((a, b) => new Date(a.next_fire) - new Date(b.next_fire));
+
+  const recCardEl = (r) => {
+    const cls = stateClassName(r.state);
+    const stopBtn = isInProgress(r.state)
+      ? `<button class="danger sm" data-action="stop" data-job-id="${r.id}">Stop</button>`
+      : "";
+    return `<div class="rec-card ${cls}">
+      <div class="rec-card-title">${escape(r.stream_title || r.channel_name || "(recording)")}</div>
+      <div class="rec-card-meta">
+        <span class="state-pill ${cls}">${escape(stateLabel(r.state))}</span>
+        <span>${escape(r.channel_name || "")}</span>
+        <span>${formatBytes(r.bytes_written || 0)}</span>
       </div>
-    </div>
-  `
-    : "";
+      ${stopBtn}
+    </div>`;
+  };
+  const schedCardEl = (s) => `
+    <div class="rec-card upcoming">
+      <div class="rec-card-title">${escape(s.channel)}</div>
+      <div class="rec-card-meta">
+        <span>${new Date(s.next_fire).toLocaleString()}</span>
+        <span>${escape(s.duration || "")}</span>
+      </div>
+    </div>`;
 
-  // W5 — 24h Gantt strip just below the LIVE NOW pane.
-  let ganttHtml = "";
-  try {
-    const g = await API.gantt();
-    ganttHtml = renderGantt(g.items || []);
-  } catch (_) {
-    /* Gantt is decorative; silent fail. */
+  const rowEl = (title, count, html, empty) => `
+    <section class="dash-row">
+      <h2 class="dash-row-title">${title}${count != null ? ` <span class="dash-count">${count}</span>` : ""}</h2>
+      <div class="dash-strip">${html || `<div class="empty sm">${empty}</div>`}</div>
+    </section>`;
+
+  const heading = compact ? "" : `<h1 class="page-title">Recordings dashboard</h1>`;
+  return `${heading}
+    ${rowEl("In progress", inProgress.length, inProgress.map(recCardEl).join(""), "Nothing recording")}
+    ${rowEl("Recent", null, recent.map(recCardEl).join(""), "No recordings yet")}
+    ${rowEl("Upcoming", upcoming.length, upcoming.map(schedCardEl).join(""), "No scheduled recordings")}`;
+}
+
+function wireDashboard() {
+  document.querySelectorAll('[data-action="stop"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await API.stopRecording(btn.dataset.jobId);
+        setTimeout(render, 500);
+      } catch (e) {
+        alert(`Stop failed: ${e.message}`);
+      }
+    });
+  });
+}
+
+// ── Channel detail (center) ──────────────────────────────────────────
+function channelDetailHtml(c) {
+  const key = `${c.platform}:${c.id}`;
+  const isPatreon = c.platform === "Patreon";
+  const liveBadge = c.is_live
+    ? '<span class="status live">LIVE</span>'
+    : '<span class="status">offline</span>';
+  const actions = `
+    <div class="actions">
+      ${c.is_live ? `
+        <button class="primary" data-action="record" data-channel-id="${c.id}"
+                data-channel-name="${escape(c.name)}"
+                data-display-name="${escape(c.display_name || c.name)}"
+                data-platform="${c.platform}"
+                data-stream-title="${escape(c.stream_title || "")}">● Record</button>
+        <button data-action="record" data-from-start="true" data-channel-id="${c.id}"
+                data-channel-name="${escape(c.name)}"
+                data-display-name="${escape(c.display_name || c.name)}"
+                data-platform="${c.platform}"
+                data-stream-title="${escape(c.stream_title || "")}">● From start</button>
+      ` : ""}
+      ${!isPatreon ? `
+        <button data-action="auto-record" data-channel-key="${key}"
+                data-enabled="${!c.auto_record}">
+          ${c.auto_record ? "Disable auto" : "Enable auto"}
+        </button>
+        ${bulkButton(c)}
+        ${c.platform === "YouTube" ? `
+          <button data-action="bulk-playlist" data-channel-id="${c.id}"
+                  data-channel-name="${escape(c.display_name || c.name)}">⛁ Playlist…</button>` : ""}
+      ` : ""}
+    </div>`;
+
+  // Section placeholders filled by loadChannelDetailData (async).
+  let sections;
+  if (isPatreon) {
+    sections = `<div id="cd-posts" class="cd-section"></div>`;
+  } else if (c.platform === "YouTube") {
+    sections = `
+      <div id="cd-playlists" class="cd-section"></div>
+      <div id="cd-streams" class="cd-section"></div>
+      <div id="cd-uploads" class="cd-section"></div>`;
+  } else {
+    sections = `<div id="cd-streams" class="cd-section"></div>`;
   }
 
-  root.innerHTML = chrome(`
-    <h1 class="page-title">Library</h1>
-    <p class="page-subtitle">${channels.length} channels monitored</p>
-    ${liveStrip}
-    ${ganttHtml}
-    <div class="channel-grid">
-      ${offline.map(channelCard).join("") ||
-        '<div class="empty">No offline channels yet</div>'}
-    </div>
-  `);
-  setupChromeHandlers();
-  document.querySelectorAll("[data-action=record]").forEach((btn) => {
-    btn.addEventListener("click", () => startRecordingFromCard(btn.dataset));
+  return `
+    <div class="channel-detail">
+      <div class="cd-header">
+        <span class="platform-icon ${c.platform.toLowerCase()}">${c.platform}</span>
+        <h1 class="cd-name">${escape(c.display_name || c.name)}</h1>
+        ${liveBadge}
+        ${c.viewer_count ? `<span class="cd-viewers">${formatCount(c.viewer_count)} viewers</span>` : ""}
+        <button class="cd-close" data-action="cd-close" title="Close">×</button>
+      </div>
+      ${c.stream_title ? `<div class="stream-title">${escape(c.stream_title)}</div>` : ""}
+      ${actions}
+      ${sections}
+    </div>`;
+}
+
+function wireChannelDetail(c) {
+  document.querySelector('[data-action="cd-close"]')?.addEventListener("click", () => {
+    selectedChannelKey = null;
+    render();
   });
-  document.querySelectorAll("[data-action=auto-record]").forEach((btn) => {
-    btn.addEventListener("click", () => toggleAutoRecord(btn.dataset));
-  });
-  document.querySelectorAll("[data-action=bulk]").forEach((btn) => {
-    btn.addEventListener("click", () => toggleBulk(btn.dataset));
-  });
-  document.querySelectorAll("[data-action=bulk-playlist]").forEach((btn) => {
-    btn.addEventListener("click", () => openPlaylistPicker(btn.dataset));
+  document.querySelectorAll("[data-action=record]").forEach((btn) =>
+    btn.addEventListener("click", () => startRecordingFromCard(btn.dataset)),
+  );
+  document.querySelectorAll("[data-action=auto-record]").forEach((btn) =>
+    btn.addEventListener("click", () => toggleAutoRecord(btn.dataset)),
+  );
+  document.querySelectorAll("[data-action=bulk]").forEach((btn) =>
+    btn.addEventListener("click", () => toggleBulk(btn.dataset)),
+  );
+  document.querySelectorAll("[data-action=bulk-playlist]").forEach((btn) =>
+    btn.addEventListener("click", () => openPlaylistPicker(btn.dataset)),
+  );
+}
+
+// Fetch + render the per-channel VOD lists. Patreon uses cached posts;
+// YouTube/Twitch request VODs over IPC (result arrives via SSE) and also
+// request playlists for YouTube.
+function loadChannelDetailData(c) {
+  if (c.platform === "Patreon") {
+    renderPatreonPosts(c);
+    return;
+  }
+  // Render from cache immediately if we have it, then (re)request.
+  paintChannelVods(c.id, c.platform);
+  API.requestChannelVods(c.id, c.platform).catch(() => {});
+  if (c.platform === "YouTube") {
+    API.requestPlaylists(c.id).catch(() => {});
+  }
+}
+
+function paintChannelVods(channelId, platform) {
+  const vods = channelVods[channelId];
+  const streamsEl = document.getElementById("cd-streams");
+  const uploadsEl = document.getElementById("cd-uploads");
+  if (!vods) {
+    if (streamsEl) streamsEl.innerHTML = vodSectionHtml("Recent live streams", null);
+    if (uploadsEl) uploadsEl.innerHTML = vodSectionHtml("Recent uploads", null);
+    return;
+  }
+  const streams = vods.filter((v) => v.kind === "LiveBroadcast");
+  const uploads = vods.filter((v) => v.kind !== "LiveBroadcast");
+  if (streamsEl) {
+    streamsEl.innerHTML = vodSectionHtml(
+      platform === "Twitch" ? "Past broadcasts" : "Recent live streams",
+      streams,
+    );
+  }
+  if (uploadsEl) uploadsEl.innerHTML = vodSectionHtml("Recent uploads", uploads);
+}
+
+function vodSectionHtml(title, vods) {
+  if (vods === null) {
+    return `<h2 class="cd-section-title">${title}</h2><div class="empty sm">Loading…</div>`;
+  }
+  if (vods.length === 0) {
+    return `<h2 class="cd-section-title">${title}</h2><div class="empty sm">None</div>`;
+  }
+  const rows = vods
+    .map(
+      (v) => `
+    <a class="vod-row" href="${escape(v.url)}" target="_blank" rel="noopener">
+      <span class="vod-date">${escape((v.published_at || "").slice(0, 10))}</span>
+      <span class="vod-title">${escape(v.title)}</span>
+    </a>`,
+    )
+    .join("");
+  return `<h2 class="cd-section-title">${title} <span class="dash-count">${vods.length}</span></h2>
+    <div class="vod-list">${rows}</div>`;
+}
+
+// Patreon channel detail: render cached posts with a pull action.
+function renderPatreonPosts(c) {
+  const el = document.getElementById("cd-posts");
+  if (!el) return;
+  const posts = patreonState.posts[c.id] || [];
+  const rows = posts.length
+    ? posts
+        .map(
+          (p) => `
+      <div class="vod-row" data-action="patreon-pull"
+           data-embed="${escape(p.embed_url || "")}"
+           data-creator="${escape(c.display_name || c.name)}"
+           data-title="${escape(p.title)}">
+        <span class="vod-date">${escape((p.published_at || "").slice(0, 10))}</span>
+        <span class="vod-title">${escape(p.title)}</span>
+        ${p.embed_url ? '<span class="vod-pull">⇩ pull</span>' : ""}
+      </div>`,
+        )
+        .join("")
+    : '<div class="empty sm">No video posts.</div>';
+  el.innerHTML = `<h2 class="cd-section-title">Posts</h2><div class="vod-list">${rows}</div>`;
+  el.querySelectorAll("[data-action=patreon-pull]").forEach((row) => {
+    if (!row.dataset.embed) return;
+    row.addEventListener("click", async () => {
+      try {
+        await API.patreonPull({
+          embed_url: row.dataset.embed,
+          creator_name: row.dataset.creator,
+          post_title: row.dataset.title,
+        });
+        row.querySelector(".vod-pull")?.replaceChildren(document.createTextNode("queued ✓"));
+      } catch (e) {
+        alert(`Pull failed: ${e.message}`);
+      }
+    });
   });
 }
 
@@ -506,58 +731,6 @@ function showPlaylistModal(opts) {
       }
     });
   });
-}
-
-function channelCard(c) {
-  const platformClass = c.platform.toLowerCase();
-  const liveClass = c.is_live ? "live" : "";
-  const channelKey = `${c.platform}:${c.id}`;
-  return `
-    <div class="channel-card ${liveClass}">
-      <div class="row">
-        <span class="platform-icon ${platformClass}">${c.platform}</span>
-        <span class="name">${escape(c.display_name || c.name)}</span>
-        ${c.is_live ? '<span class="status live">LIVE</span>' : '<span class="status">offline</span>'}
-      </div>
-      ${c.stream_title ? `<div class="stream-title">${escape(c.stream_title)}</div>` : ""}
-      <div class="meta">
-        ${c.viewer_count ? `<span>${formatCount(c.viewer_count)} viewers</span>` : ""}
-        ${c.game_or_category ? `<span>${escape(c.game_or_category)}</span>` : ""}
-        ${c.auto_record ? '<span style="color: var(--secondary)">★ auto</span>' : ""}
-      </div>
-      <div class="actions">
-        ${c.is_live ? `
-          <button class="primary" data-action="record" data-channel-id="${c.id}"
-                  data-channel-name="${escape(c.name)}"
-                  data-display-name="${escape(c.display_name || c.name)}"
-                  data-platform="${c.platform}"
-                  data-stream-title="${escape(c.stream_title || '')}">
-            ● Record
-          </button>
-          <button data-action="record" data-from-start="true"
-                  data-channel-id="${c.id}"
-                  data-channel-name="${escape(c.name)}"
-                  data-display-name="${escape(c.display_name || c.name)}"
-                  data-platform="${c.platform}"
-                  data-stream-title="${escape(c.stream_title || '')}">
-            ● From start
-          </button>
-        ` : ""}
-        <button data-action="auto-record"
-                data-channel-key="${channelKey}"
-                data-enabled="${!c.auto_record}">
-          ${c.auto_record ? "Disable auto" : "Enable auto"}
-        </button>
-        ${bulkButton(c)}
-        ${c.platform === "YouTube" ? `
-          <button data-action="bulk-playlist" data-channel-id="${c.id}"
-                  data-channel-name="${escape(c.display_name || c.name)}">
-            ⛁ Playlist…
-          </button>
-        ` : ""}
-      </div>
-    </div>
-  `;
 }
 
 // #74 — bulk-download toggle button reflecting live SSE progress.
@@ -844,73 +1017,6 @@ async function renderPipelines() {
   setupChromeHandlers();
 }
 
-// ── Patreon (#75 — mirror the TUI right-pane post browser) ─────────────
-function renderPatreon() {
-  root.removeAttribute("aria-busy");
-  const creators = patreonState.creators || [];
-  let body;
-  if (creators.length === 0) {
-    body = `<div class="empty"><div class="glyph">◈</div>
-      No pledged creators yet.<br>
-      <small>The daemon refreshes this each poll once Patreon is connected.</small>
-    </div>`;
-  } else {
-    body = creators
-      .map((c) => {
-        const posts = patreonState.posts[c.id] || [];
-        const rows = posts.length
-          ? posts
-              .map(
-                (p) => `
-            <div class="pl-row" data-action="patreon-pull"
-                 data-embed="${escape(p.embed_url || "")}"
-                 data-creator="${escape(c.display_name || c.name)}"
-                 data-title="${escape(p.title)}">
-              <span style="color: var(--dim)">${escape((p.published_at || "").slice(0, 10))}</span>
-              &nbsp; ${escape(p.title)}
-              ${p.embed_url ? '<span style="float:right; color: var(--primary)">⇩ pull</span>' : ""}
-            </div>`,
-              )
-              .join("")
-          : '<div class="empty" style="padding:0.5rem">No video posts.</div>';
-        return `
-          <div style="background: var(--surface); border: 1px solid var(--border);
-                      border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <h2 style="margin:0 0 0.5rem 0; font-size: 1rem; color: var(--secondary)">
-              ${escape(c.display_name || c.name)}
-              ${c.stream_title ? `<span style="color: var(--muted); font-size: 0.8rem">· ${escape(c.stream_title)}</span>` : ""}
-            </h2>
-            <div class="pl-list">${rows}</div>
-          </div>`;
-      })
-      .join("");
-  }
-  root.innerHTML = chrome(`
-    <h1 class="page-title">Patreon</h1>
-    <p class="page-subtitle">${creators.length} pledged creator${creators.length === 1 ? "" : "s"} · click a post to pull it</p>
-    ${body}
-  `);
-  setupChromeHandlers();
-  document.querySelectorAll("[data-action=patreon-pull]").forEach((row) => {
-    if (!row.dataset.embed) return;
-    row.addEventListener("click", async () => {
-      try {
-        await API.patreonPull({
-          embed_url: row.dataset.embed,
-          creator_name: row.dataset.creator,
-          post_title: row.dataset.title,
-        });
-        row.style.opacity = "0.5";
-        row.querySelector("span:last-child")?.replaceChildren(
-          document.createTextNode("queued ✓"),
-        );
-      } catch (e) {
-        alert(`Pull failed: ${e.message}`);
-      }
-    });
-  });
-}
-
 // ── Plugins (W5 — mirror the TUI's Shift+P browser) ────────────────────
 async function renderPlugins() {
   root.removeAttribute("aria-busy");
@@ -966,30 +1072,6 @@ function pluginCard(slug, name, desc, verbs) {
       <div class="actions">${verbButtons || '<span style="color: var(--muted); font-size: 0.75rem">no item-scoped verbs</span>'}</div>
     </div>
   `;
-}
-
-// ── Activity (W5 — full-page version of the right-rail tail) ───────────
-function renderActivityPage() {
-  root.removeAttribute("aria-busy");
-  const items = activityLog.length
-    ? activityLog
-        .map(
-          (e) => `
-      <div class="activity-event" style="border-bottom-color: var(--border);">
-        <span class="kind">${escape(e.kind)}</span>
-        <span class="timestamp">${e.at.toLocaleString()}</span>
-        <div class="summary">${escape(e.summary)}</div>
-      </div>
-    `,
-        )
-        .join("")
-    : `<div class="empty"><div class="glyph">⚡</div>No events yet. Things appear here as the daemon emits them.</div>`;
-  root.innerHTML = chrome(`
-    <h1 class="page-title">Activity</h1>
-    <p class="page-subtitle">Last ${activityLog.length} events (live).</p>
-    <div style="max-width: 720px;">${items}</div>
-  `);
-  setupChromeHandlers();
 }
 
 // ── Stub routes ──────────────────────────────────────────────────────
@@ -1082,13 +1164,10 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     document.getElementById("kbd-help")?.classList.remove("open");
-    document.getElementById("activity-rail")?.classList.remove("open");
-    return;
-  }
-  if (e.key === "a") {
-    e.preventDefault();
-    document.getElementById("activity-rail")?.classList.toggle("open");
-    renderActivityRail();
+    if (selectedChannelKey) {
+      selectedChannelKey = null;
+      render();
+    }
     return;
   }
   if (e.key === "p") {
@@ -1104,11 +1183,10 @@ document.addEventListener("keydown", (e) => {
   if (prefixActive) {
     clearTimeout(prefixTimer);
     prefixActive = false;
-    const link = document.querySelector(`.leftrail a[data-key="${e.key}"]`);
+    const link = document.querySelector(`.topnav a[data-key="${e.key}"]`);
     if (link) {
       e.preventDefault();
-      const r = link.dataset.route;
-      route(r);
+      route(link.dataset.route);
     }
   }
 });
@@ -1119,13 +1197,11 @@ let cmdkSelected = 0;
 
 function commandList() {
   const nav = [
-    ["library", "Go to Library"],
+    ["library", "Go to Home"],
     ["recordings", "Go to Recordings"],
     ["schedule", "Go to Schedule"],
-    ["patreon", "Go to Patreon"],
     ["pipelines", "Go to Pipelines"],
     ["plugins", "Go to Plugins"],
-    ["activity", "Go to Activity"],
     ["settings", "Go to Settings"],
     ["system", "Go to System"],
   ].map(([r, label]) => ({ label, run: () => route(r) }));
@@ -1134,13 +1210,6 @@ function commandList() {
     {
       label: "Stop all recordings",
       run: () => API._fetch("/recordings/stop_all", { method: "POST" }).catch(() => {}),
-    },
-    {
-      label: "Toggle activity rail",
-      run: () => {
-        document.getElementById("activity-rail")?.classList.toggle("open");
-        renderActivityRail();
-      },
     },
     { label: "Logout", run: () => API.logout().then(() => route("login")) },
   ];
@@ -1259,25 +1328,28 @@ function injectKeyboardHelp() {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────
-events.on(pushActivity);
 events.on((event) => {
-  // Cheap re-render gate: refresh the visible page on relevant events.
-  if (
-    currentRoute() === "library" &&
-    (event.ChannelWentLive ||
-      event.ChannelWentOffline ||
-      event.ChannelsUpdated)
-  ) {
-    renderLibrary().catch(console.error);
+  const onHome = currentRoute() === "library";
+
+  // Channel transitions: update the cache + repaint the left rail; if the
+  // home dashboard is showing, refresh it too.
+  if (event.ChannelsUpdated) {
+    channelCache = event.ChannelsUpdated;
+    paintChannelList();
+    if (onHome) renderHome().catch(console.error);
   }
-  if (
-    currentRoute() === "recordings" &&
-    (event.RecordingStarted ||
-      event.RecordingFinished ||
-      event.RecordingProgress)
-  ) {
-    renderRecordings().catch(console.error);
+  if (event.ChannelWentLive || event.ChannelWentOffline) {
+    paintChannelList();
+    if (onHome) renderHome().catch(console.error);
   }
+
+  // Recording lifecycle: refresh the dashboard + left-rail rec dots.
+  if (event.RecordingStarted || event.RecordingFinished || event.RecordingProgress || event.AllRecordingsStopped) {
+    if (currentRoute() === "recordings") renderRecordings().catch(console.error);
+    else if (onHome) renderHome().catch(console.error);
+    else paintChannelList();
+  }
+
   // #74 — bulk-download progress drives the per-channel button.
   if (event.BulkProgress) {
     const p = event.BulkProgress;
@@ -1286,9 +1358,10 @@ events.on((event) => {
     } else {
       delete bulkStatus[p.channel_id];
     }
-    if (currentRoute() === "library") renderLibrary().catch(console.error);
+    if (onHome) renderHome().catch(console.error);
   }
-  // #75 — Patreon snapshot drives the /patreon browser.
+
+  // #75 — Patreon snapshot feeds the channel list + Patreon detail.
   if (event.PatreonState) {
     const ps = event.PatreonState;
     patreonState.creators = ps.creators || [];
@@ -1299,8 +1372,25 @@ events.on((event) => {
     for (const list of Object.values(patreonState.posts)) {
       list.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
     }
-    if (currentRoute() === "patreon") renderPatreon();
+    paintChannelList();
+    // Refresh an open Patreon detail.
+    if (onHome && selectedChannelKey && selectedChannelKey.startsWith("Patreon:")) {
+      const id = selectedChannelKey.slice("Patreon:".length);
+      const c = patreonState.creators.find((x) => x.id === id);
+      if (c) renderPatreonPosts(c);
+    }
   }
+
+  // Channel VODs answer the detail-pane request.
+  if (event.ChannelVods) {
+    const cv = event.ChannelVods;
+    channelVods[cv.channel_id] = cv.vods || [];
+    if (onHome && selectedChannelKey && selectedChannelKey.endsWith(`:${cv.channel_id}`)) {
+      const platform = selectedChannelKey.split(":")[0];
+      paintChannelVods(cv.channel_id, platform);
+    }
+  }
+
   // #74 / #73 — playlist list answers the picker request.
   if (event.PlaylistList) {
     const pl = event.PlaylistList;

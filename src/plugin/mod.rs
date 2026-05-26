@@ -397,6 +397,7 @@ pub enum DaemonEventKind {
     PatreonState,
     BulkProgress,
     PlaylistList,
+    ChannelVods,
     ScheduleFired,
     Error,
 }
@@ -419,6 +420,7 @@ impl DaemonEventKind {
             DaemonEvent::PatreonState { .. } => Self::PatreonState,
             DaemonEvent::BulkProgress { .. } => Self::BulkProgress,
             DaemonEvent::PlaylistList { .. } => Self::PlaylistList,
+            DaemonEvent::ChannelVods { .. } => Self::ChannelVods,
             DaemonEvent::ScheduleFired { .. } => Self::ScheduleFired,
             DaemonEvent::Error(_) => Self::Error,
         }

@@ -75,12 +75,27 @@ function json(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
+// Open SSE connections, so POSTs that resolve asynchronously (vods,
+// playlists) can push their answer like the real daemon does.
+const sseClients = new Set();
+function broadcast(eventObj) {
+  const frame = `data: ${JSON.stringify(eventObj)}\n\n`;
+  for (const c of sseClients) c.write(frame);
+}
+
+const SCHEDULE = [
+  {
+    channel: "Alpha",
+    cron: "0 20 * * *",
+    duration: "4h",
+    next_fire: new Date(Date.now() + 3600_000).toISOString(),
+  },
+];
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
 
-  // SSE stream — open it and keep it alive with comments; tests don't
-  // rely on pushed events, only that the connection doesn't error.
   if (path === "/events") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -88,8 +103,12 @@ const server = createServer(async (req, res) => {
       Connection: "keep-alive",
     });
     res.write(": connected\n\n");
+    sseClients.add(res);
     const ka = setInterval(() => res.write(": keepalive\n\n"), 1000);
-    req.on("close", () => clearInterval(ka));
+    req.on("close", () => {
+      clearInterval(ka);
+      sseClients.delete(res);
+    });
     return;
   }
 
@@ -107,8 +126,43 @@ const server = createServer(async (req, res) => {
         filesystem_avail_bytes: 900_000_000_000,
       });
     if (p === "/gantt") return json(res, 200, { items: [] });
-    if (p === "/schedule") return json(res, 200, { entries: [] });
+    if (p === "/schedule") return json(res, 200, { schedule: SCHEDULE });
     if (p === "/settings") return json(res, 200, {});
+
+    // Channel VODs request → answer asynchronously over SSE, like the daemon.
+    const vodsMatch = p.match(/^\/channels\/([^/]+)\/vods$/);
+    if (vodsMatch && req.method === "POST") {
+      const channelId = decodeURIComponent(vodsMatch[1]);
+      setTimeout(() => {
+        broadcast({
+          ChannelVods: {
+            channel_id: channelId,
+            vods: [
+              {
+                id: "stream1",
+                platform: "YouTube",
+                channel_id: channelId,
+                title: "Yesterday's livestream",
+                published_at: "2026-05-25T20:00:00Z",
+                url: "https://youtu.be/stream1",
+                kind: "LiveBroadcast",
+              },
+              {
+                id: "upload1",
+                platform: "YouTube",
+                channel_id: channelId,
+                title: "How I edit my videos",
+                published_at: "2026-05-24T12:00:00Z",
+                url: "https://youtu.be/upload1",
+                kind: "Upload",
+              },
+            ],
+          },
+        });
+      }, 50);
+      return json(res, 202, { status: "requested" });
+    }
+
     // Mutations / verb dispatch — accept and echo queued.
     if (req.method === "POST" || req.method === "PUT" || req.method === "DELETE") {
       return json(res, 202, { status: "queued", path: p });

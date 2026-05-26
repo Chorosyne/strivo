@@ -683,6 +683,17 @@ async fn handle_client(
                     });
                 }
             }
+            ClientMessage::FetchChannelVods {
+                channel_id,
+                platform,
+            } => {
+                if let Some(ref tx) = bulk_tx {
+                    let _ = tx.send(crate::recording::bulk::BulkCommand::FetchVods {
+                        channel_id,
+                        platform,
+                    });
+                }
+            }
             ClientMessage::BulkDownload {
                 channel_id,
                 channel_name,

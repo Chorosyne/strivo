@@ -518,6 +518,10 @@ impl YouTubePlatform {
                     duration: None,
                     url: format!("https://www.youtube.com/watch?v={video_id}"),
                     thumbnail_url: thumbnail,
+                    // Uploads-playlist enumeration (bulk DL) doesn't probe
+                    // live status; fetch_recent_videos annotates kind for
+                    // the webui channel detail.
+                    kind: crate::platform::VodKind::Upload,
                 });
 
                 if let Some(cap) = limit {
@@ -538,6 +542,55 @@ impl YouTubePlatform {
         }
 
         Ok(out)
+    }
+
+    /// Fetch a channel's most recent videos, annotated as live broadcast vs
+    /// upload (webui channel detail, task: TUI-style redesign). Two cheap
+    /// calls: the uploads playlist for the recent N, then one videos.list
+    /// with `liveStreamingDetails` — items carrying `actualStartTime` were
+    /// live broadcasts; the rest are uploads.
+    pub async fn fetch_recent_videos(
+        &self,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<VodEntry>> {
+        let mut vods = self
+            .fetch_uploads_playlist(channel_id, None, Some(limit))
+            .await?;
+        if vods.is_empty() {
+            return Ok(vods);
+        }
+
+        // videos.list caps at 50 ids per call; recent-N is small so one call.
+        let ids = vods
+            .iter()
+            .take(50)
+            .map(|v| v.id.clone())
+            .collect::<Vec<_>>()
+            .join(",");
+        let url = format!("{YOUTUBE_API_URL}/videos?part=liveStreamingDetails&id={ids}");
+        match self.api_get::<VideoListResponse>(&url).await {
+            Ok(resp) => {
+                let live_ids: std::collections::HashSet<String> = resp
+                    .items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|it| {
+                        it.live_streaming_details
+                            .as_ref()
+                            .is_some_and(|d| d.actual_start_time.is_some())
+                    })
+                    .filter_map(|it| it.id)
+                    .collect();
+                annotate_live(&mut vods, &live_ids);
+            }
+            Err(e) => {
+                // Non-fatal: fall back to all-uploads if the annotation call
+                // fails (quota, transient). The list is still useful.
+                tracing::warn!("youtube: liveStreamingDetails annotate failed: {e}");
+            }
+        }
+        Ok(vods)
     }
 
     /// List a channel's playlists for the bulk-download scope picker
@@ -718,5 +771,53 @@ impl Platform for YouTubePlatform {
         limit: Option<usize>,
     ) -> Result<Vec<VodEntry>> {
         self.fetch_uploads_playlist(channel_id, since, limit).await
+    }
+}
+
+/// Flip `kind` to LiveBroadcast for any VOD whose id is in `live_ids`
+/// (those carried `liveStreamingDetails.actualStartTime`). Pure so the
+/// live/upload partition is unit-testable without the network.
+fn annotate_live(vods: &mut [VodEntry], live_ids: &std::collections::HashSet<String>) {
+    for v in vods.iter_mut() {
+        if live_ids.contains(&v.id) {
+            v.kind = crate::platform::VodKind::LiveBroadcast;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::{PlatformKind, VodEntry, VodKind};
+
+    fn vod(id: &str) -> VodEntry {
+        VodEntry {
+            id: id.into(),
+            platform: PlatformKind::YouTube,
+            channel_id: "UC".into(),
+            title: id.into(),
+            published_at: None,
+            duration: None,
+            url: format!("https://youtu.be/{id}"),
+            thumbnail_url: None,
+            kind: VodKind::Upload,
+        }
+    }
+
+    #[test]
+    fn partitions_live_from_uploads() {
+        let mut vods = vec![vod("stream1"), vod("upload1"), vod("stream2")];
+        let live: std::collections::HashSet<String> =
+            ["stream1".to_string(), "stream2".to_string()].into_iter().collect();
+        annotate_live(&mut vods, &live);
+
+        let kinds: Vec<_> = vods.iter().map(|v| (v.id.as_str(), v.kind)).collect();
+        assert_eq!(kinds[0], ("stream1", VodKind::LiveBroadcast));
+        assert_eq!(kinds[1], ("upload1", VodKind::Upload));
+        assert_eq!(kinds[2], ("stream2", VodKind::LiveBroadcast));
+        // No id appears in both partitions.
+        let streams = vods.iter().filter(|v| v.kind == VodKind::LiveBroadcast).count();
+        let uploads = vods.iter().filter(|v| v.kind == VodKind::Upload).count();
+        assert_eq!(streams + uploads, vods.len());
     }
 }

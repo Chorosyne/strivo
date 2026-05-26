@@ -548,6 +548,8 @@ impl Platform for TwitchPlatform {
                     duration,
                     url: url_str,
                     thumbnail_url: thumbnail,
+                    // Twitch `type=archive` videos are past broadcasts.
+                    kind: crate::platform::VodKind::LiveBroadcast,
                 });
 
                 if let Some(cap) = limit {

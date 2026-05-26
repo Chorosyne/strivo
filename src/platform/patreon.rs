@@ -537,6 +537,7 @@ impl PatreonClient {
                         duration: None,
                         url: download_url,
                         thumbnail_url: None,
+                        kind: crate::platform::VodKind::Upload,
                     });
 
                     if let Some(cap) = limit {

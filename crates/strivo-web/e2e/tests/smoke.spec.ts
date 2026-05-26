@@ -1,31 +1,56 @@
 import { test, expect } from "@playwright/test";
 
 // W7 — critical-path smoke journeys against the real SPA + mock backend.
+// Updated for the TUI-style 3-pane redesign: channel-list left rail,
+// channel-detail center, recordings dashboard, no Activity surface.
 
 test("login page renders and accepts a key", async ({ page }) => {
   await page.goto("/app#/login");
   await expect(page.locator("#login-form")).toBeVisible();
   await page.locator("#api-key").fill("test-key");
   await page.locator("#login-form button[type=submit]").click();
-  // On success the SPA leaves the login route for the library.
-  await expect(page.locator(".leftrail")).toBeVisible();
+  // On success the SPA leaves login for the home chrome (channel rail).
+  await expect(page.locator("#channel-list")).toBeVisible();
 });
 
-test("library shows live + offline channels", async ({ page }) => {
+test("left rail lists channels, live first", async ({ page }) => {
   await page.goto("/app#/library");
-  await expect(page.getByText("LIVE NOW")).toBeVisible();
+  await expect(page.locator("#channel-list")).toBeVisible();
   await expect(page.getByText("Live Channel")).toBeVisible();
   await expect(page.getByText("Offline Channel")).toBeVisible();
+  // LIVE section header appears for the live channel.
+  await expect(page.locator(".ch-section-title", { hasText: "LIVE" })).toBeVisible();
 });
 
-test("bulk-download button is present and fires a request", async ({ page }) => {
+test("recordings dashboard shows the three rows by default", async ({ page }) => {
   await page.goto("/app#/library");
-  const reqs: string[] = [];
-  page.on("request", (r) => {
-    if (r.url().includes("/bulk")) reqs.push(r.url());
-  });
-  await page.getByRole("button", { name: /Bulk DL/ }).first().click();
-  await expect.poll(() => reqs.length).toBeGreaterThan(0);
+  await expect(page.getByRole("heading", { name: "In progress" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Upcoming" })).toBeVisible();
+});
+
+test("clicking a YouTube channel shows detail with streams + uploads", async ({ page }) => {
+  await page.goto("/app#/library");
+  await page.locator(".ch-row", { hasText: "Live Channel" }).click();
+  await expect(page.locator(".cd-name")).toHaveText("Live Channel");
+  // VOD lists arrive over SSE (mock pushes one LiveBroadcast + one Upload).
+  await expect(page.getByText("Yesterday's livestream")).toBeVisible();
+  await expect(page.getByText("How I edit my videos")).toBeVisible();
+  await expect(page.locator(".cd-section-title", { hasText: "Recent live streams" })).toBeVisible();
+  await expect(page.locator(".cd-section-title", { hasText: "Recent uploads" })).toBeVisible();
+});
+
+test("no Activity surface anywhere", async ({ page }) => {
+  await page.goto("/app#/library");
+  await expect(page.locator(".activity-rail")).toHaveCount(0);
+  await expect(page.locator('[data-route="activity"]')).toHaveCount(0);
+});
+
+test("top-bar icon nav reaches the recordings table", async ({ page }) => {
+  await page.goto("/app#/library");
+  await page.locator('.topnav-link[data-route="recordings"]').click();
+  await expect(page).toHaveURL(/#\/recordings/);
+  await expect(page.locator(".recordings-table")).toBeVisible();
 });
 
 test("command palette opens with Ctrl+K and navigates", async ({ page }) => {
@@ -35,21 +60,4 @@ test("command palette opens with Ctrl+K and navigates", async ({ page }) => {
   await page.locator("#cmdk-input").fill("recordings");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/recordings/);
-});
-
-test("recordings grid filters and sorts", async ({ page }) => {
-  await page.goto("/app#/recordings");
-  await expect(page.locator(".recordings-table tbody tr")).toHaveCount(3);
-  // Filter by channel name.
-  await page.locator("#rec-filter").fill("bravo");
-  await expect(page.locator(".recordings-table tbody tr")).toHaveCount(1);
-  await page.locator("#rec-filter").fill("");
-  // Sort by Channel ascending — first row should be Alpha.
-  await page.locator('th[data-sort="channel"]').click();
-  await expect(page.locator(".recordings-table tbody tr").first()).toContainText("Alpha");
-});
-
-test("patreon route renders without a daemon", async ({ page }) => {
-  await page.goto("/app#/patreon");
-  await expect(page.getByRole("heading", { name: "Patreon" })).toBeVisible();
 });

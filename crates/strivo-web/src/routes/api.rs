@@ -113,7 +113,33 @@ async fn schedule(headers: HeaderMap, State(state): State<AppState>) -> impl Int
         return (code, Json(json!({"error": "unauthorized"}))).into_response();
     }
     match strivo_core::config::AppConfig::load(None) {
-        Ok(cfg) => Json(json!({ "schedule": cfg.schedule })).into_response(),
+        Ok(cfg) => {
+            // Annotate each entry with its next fire time (RFC3339) so the
+            // webui "Upcoming" row can sort + display it. Mirrors the cron
+            // parse in src/recording/schedule.rs (5-field → prepend "0 ").
+            let entries: Vec<_> = cfg
+                .schedule
+                .iter()
+                .map(|e| {
+                    let cron_expr = if e.cron.split_whitespace().count() == 5 {
+                        format!("0 {}", e.cron)
+                    } else {
+                        e.cron.clone()
+                    };
+                    let next_fire = std::str::FromStr::from_str(&cron_expr)
+                        .ok()
+                        .and_then(|s: cron::Schedule| s.upcoming(chrono::Utc).next())
+                        .map(|dt| dt.to_rfc3339());
+                    json!({
+                        "channel": e.channel,
+                        "cron": e.cron,
+                        "duration": e.duration,
+                        "next_fire": next_fire,
+                    })
+                })
+                .collect();
+            Json(json!({ "schedule": entries })).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
@@ -602,6 +628,44 @@ async fn request_playlists(
 }
 
 #[derive(Debug, Deserialize)]
+struct ChannelVodsPayload {
+    platform: PlatformKind,
+}
+
+/// `POST /api/v1/channels/{id}/vods` — request a channel's recent VODs
+/// (live broadcasts + uploads) for the detail pane. The list arrives over
+/// `/events` as `channel-vods`. (TUI-style redesign.)
+async fn request_channel_vods(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(channel_id): Path<String>,
+    Json(body): Json<ChannelVodsPayload>,
+) -> impl IntoResponse {
+    if let Err(code) = check_key(&headers, &state) {
+        return (code, Json(json!({"error": "unauthorized"}))).into_response();
+    }
+    match state
+        .ipc
+        .send_command(ClientMessage::FetchChannelVods {
+            channel_id,
+            platform: body.platform,
+        })
+        .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "requested", "note": "result arrives via /events channel-vods"})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct PatreonPullPayload {
     embed_url: String,
     creator_name: String,
@@ -660,6 +724,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/channels/{channel_id}/playlists",
             post(request_playlists),
+        )
+        .route(
+            "/api/v1/channels/{channel_id}/vods",
+            post(request_channel_vods),
         )
         // #75: Patreon manual pull
         .route("/api/v1/patreon/pull", post(patreon_pull))

@@ -76,6 +76,7 @@ fn daemon_event_kind(de: &strivo_core::app::DaemonEvent) -> &'static str {
         D::PatreonState { .. } => "patreon-state",
         D::BulkProgress { .. } => "bulk-progress",
         D::PlaylistList { .. } => "playlist-list",
+        D::ChannelVods { .. } => "channel-vods",
         D::ScheduleFired { .. } => "schedule-fired",
         D::Error(_) => "error",
     }

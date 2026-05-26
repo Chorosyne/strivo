@@ -36,6 +36,12 @@ pub enum BulkCommand {
     ListPlaylists {
         channel_id: String,
     },
+    /// Fetch a channel's recent VODs (live + uploads) and emit them as
+    /// DaemonEvent::ChannelVods for the webui channel-detail pane.
+    FetchVods {
+        channel_id: String,
+        platform: PlatformKind,
+    },
 }
 
 /// Spawn the bulk-download manager. Returns the command sender; the daemon
@@ -104,10 +110,65 @@ pub fn spawn(
                         }));
                     });
                 }
+                BulkCommand::FetchVods {
+                    channel_id,
+                    platform,
+                } => {
+                    let cfg = config.clone();
+                    let etx = event_tx.clone();
+                    tokio::spawn(async move {
+                        let vods = fetch_recent_vods(&cfg, &channel_id, platform)
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::warn!("bulk-dl: fetch_recent_vods failed: {e:#}");
+                                Vec::new()
+                            });
+                        let _ = etx.send(AppEvent::Daemon(DaemonEvent::ChannelVods {
+                            channel_id,
+                            vods,
+                        }));
+                    });
+                }
             }
         }
     });
     tx
+}
+
+/// Fetch a channel's recent VODs (live + uploads) for the webui channel
+/// detail. YouTube annotates live-vs-upload; Twitch returns past broadcasts;
+/// Patreon has no VOD catalog here (the webui shows its cached posts).
+async fn fetch_recent_vods(
+    config: &AppConfig,
+    channel_id: &str,
+    platform: PlatformKind,
+) -> anyhow::Result<Vec<VodEntry>> {
+    use anyhow::Context;
+    match platform {
+        PlatformKind::YouTube => {
+            let cfg = config
+                .youtube
+                .clone()
+                .context("youtube section missing in config")?;
+            let yt = crate::platform::youtube::YouTubePlatform::new(
+                cfg.client_id,
+                cfg.client_secret,
+                cfg.cookies_path.clone(),
+            );
+            yt.load_stored_tokens().await.context("youtube auth")?;
+            yt.fetch_recent_videos(channel_id, 30).await
+        }
+        PlatformKind::Twitch => {
+            let cfg = config
+                .twitch
+                .clone()
+                .context("twitch section missing in config")?;
+            let tw = crate::platform::twitch::TwitchPlatform::new(cfg.client_id, cfg.client_secret);
+            tw.load_stored_tokens().await.context("twitch auth")?;
+            tw.fetch_channel_vods(channel_id, None, Some(30)).await
+        }
+        PlatformKind::Patreon => Ok(Vec::new()),
+    }
 }
 
 /// Resolve a channel's catalog and run the pull, emitting BulkProgress.
