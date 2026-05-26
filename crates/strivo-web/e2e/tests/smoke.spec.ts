@@ -53,6 +53,20 @@ test("top-bar icon nav reaches the recordings table", async ({ page }) => {
   await expect(page.locator(".recordings-table")).toBeVisible();
 });
 
+test("settings page renders real config sections", async ({ page }) => {
+  await page.goto("/app#/settings");
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Platforms" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recording" })).toBeVisible();
+});
+
+test("system page renders health + tasks", async ({ page }) => {
+  await page.goto("/app#/system");
+  await expect(page.getByRole("heading", { name: "System" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Health" })).toBeVisible();
+  await expect(page.locator(".sys-check").first()).toBeVisible();
+});
+
 test("command palette opens with Ctrl+K and navigates", async ({ page }) => {
   await page.goto("/app#/library");
   await page.keyboard.press("Control+k");

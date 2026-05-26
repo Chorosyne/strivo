@@ -42,6 +42,7 @@ const API = {
   pollNow: () => API._fetch("/poll_now", { method: "POST" }),
   health: () => API._fetch("/health"),
   storage: () => API._fetch("/storage"),
+  settings: () => API._fetch("/settings"),
   gantt: () => API._fetch("/gantt"),
   pluginRpc: (plugin, verb, body) =>
     API._fetch(`/plugins/${encodeURIComponent(plugin)}/${encodeURIComponent(verb)}`, {
@@ -293,10 +294,10 @@ async function render() {
       renderPlugins();
       break;
     case "settings":
-      renderStub("Settings", "Settings page — webui parity follow-up.");
+      await renderSettings();
       break;
     case "system":
-      renderStub("System", "Health checks + log files — webui parity follow-up.");
+      await renderSystem();
       break;
   }
 }
@@ -1282,6 +1283,159 @@ function renderStub(title, msg) {
     <div class="empty">
       <div class="glyph">🚧</div>
       ${escape(msg)}
+    </div>
+  `);
+  setupChromeHandlers();
+}
+
+// ── Settings (item 7) — real, domain-grouped read of the daemon config.
+// Editing still lives in the TUI / config.toml; this surfaces the live
+// configuration so the page is informative rather than a stub.
+async function renderSettings() {
+  let s = {};
+  try {
+    s = await API.settings();
+  } catch (e) {
+    if (e.message.includes("unauthorized")) return;
+  }
+  root.removeAttribute("aria-busy");
+
+  const yesno = (b) => (b ? "yes" : "no");
+  const badge = (ok, okText, noText) =>
+    `<span class="cfg-badge ${ok ? "ok" : "warn"}">${ok ? okText : noText}</span>`;
+  const rec = s.recording || {};
+  const arc = s.archiver || {};
+  const ui = s.ui || {};
+
+  const card = (title, rows) => `
+    <section class="cfg-card">
+      <h2 class="cfg-title">${title}</h2>
+      <dl class="cfg-list">${rows}</dl>
+    </section>`;
+  const kv = (k, v) => `<dt>${escape(k)}</dt><dd>${v}</dd>`;
+
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Settings</h1>
+    <p class="page-subtitle">Live daemon configuration. Edit via the TUI or <code>~/.config/strivo/config.toml</code>.</p>
+    <div class="cfg-grid">
+      ${card("Platforms", [
+        kv("Twitch", badge(s.twitch_configured, "configured", "not configured")),
+        kv("YouTube", badge(s.youtube_configured, "configured", "not configured")),
+        kv("Patreon", badge(s.patreon_configured, "configured", "not configured")),
+        kv("Auto-record channels", `${(s.auto_record_channels || []).length}`),
+        kv("Poll interval", `${s.poll_interval_secs ?? "?"}s`),
+      ].join(""))}
+      ${card("Recording", [
+        kv("Directory", `<code>${escape(s.recording_dir || "?")}</code>`),
+        kv("Filename template", `<code>${escape(rec.filename_template || "?")}</code>`),
+        kv("Transcode", yesno(rec.transcode)),
+        kv("Twitch from-start", yesno(rec.twitch_live_from_start)),
+        kv("Auto VOD backfill", yesno(rec.auto_vod_backfill)),
+        kv("Auto-trim ads", yesno(rec.auto_trim_ads)),
+      ].join(""))}
+      ${card("Plugins", [
+        kv("Archiver", badge(arc.enabled, "enabled", "disabled")),
+        kv("Archiver dir", `<code>${escape(arc.archive_dir || "—")}</code>`),
+        kv("Archiver format", escape(arc.format || "—")),
+        kv("Concurrent fragments", `${arc.concurrent_fragments ?? "—"}`),
+      ].join(""))}
+      ${card("Interface", [
+        kv("Reduce motion", yesno(ui.reduce_motion)),
+        kv("Verbose status", yesno(ui.verbose_status)),
+        kv("Scheduled recordings", `${(s.schedule || []).length}`),
+      ].join(""))}
+    </div>
+  `);
+  setupChromeHandlers();
+}
+
+// ── System (item 7) — version, daemon connectivity, severity-tiered
+// health checks, disk gauge, tasks. (research §E)
+async function renderSystem() {
+  const [health, storage, settings] = await Promise.all([
+    API.health().catch(() => null),
+    API.storage().catch(() => null),
+    API.settings().catch(() => null),
+  ]);
+  root.removeAttribute("aria-busy");
+
+  // Build severity-tiered health checks: each {sev: ok|warn|error, msg}.
+  const checks = [];
+  checks.push(
+    health
+      ? { sev: "ok", label: "Daemon", msg: `reachable · v${health.version || "?"}` }
+      : { sev: "error", label: "Daemon", msg: "not reachable" },
+  );
+  if (settings) {
+    const plat = (name, ok) =>
+      checks.push({
+        sev: ok ? "ok" : "warn",
+        label: name,
+        msg: ok ? "configured" : "not configured",
+      });
+    plat("Twitch", settings.twitch_configured);
+    plat("YouTube", settings.youtube_configured);
+    plat("Patreon", settings.patreon_configured);
+  }
+  if (storage && storage.filesystem_total_bytes) {
+    const freePct = (storage.filesystem_avail_bytes / storage.filesystem_total_bytes) * 100;
+    checks.push({
+      sev: freePct < 5 ? "error" : freePct < 10 ? "warn" : "ok",
+      label: "Disk space",
+      msg: `${formatBytes(storage.filesystem_avail_bytes)} free (${freePct.toFixed(0)}%)`,
+    });
+  }
+  const activeRec = recCache.filter((r) => isInProgress(r.state)).length;
+
+  const sevGlyph = { ok: "✓", warn: "▲", error: "✕" };
+  const healthRows = checks
+    .map(
+      (c) => `
+    <div class="sys-check ${c.sev}">
+      <span class="sys-sev">${sevGlyph[c.sev]}</span>
+      <span class="sys-label">${escape(c.label)}</span>
+      <span class="sys-msg">${escape(c.msg)}</span>
+    </div>`,
+    )
+    .join("");
+
+  // Disk gauge.
+  const gauge = storage && storage.filesystem_total_bytes
+    ? (() => {
+        const usedPct = (1 - storage.filesystem_avail_bytes / storage.filesystem_total_bytes) * 100;
+        return `<div class="sys-gauge"><div class="sys-gauge-fill" style="width:${usedPct.toFixed(1)}%"></div></div>
+          <div class="sys-gauge-label">${formatBytes(storage.bytes_used_by_recordings || 0)} recordings ·
+          ${formatBytes(storage.filesystem_avail_bytes)} free of ${formatBytes(storage.filesystem_total_bytes)}</div>`;
+      })()
+    : '<div class="empty sm">Disk stats unavailable</div>';
+
+  const worst = checks.some((c) => c.sev === "error")
+    ? "error"
+    : checks.some((c) => c.sev === "warn")
+    ? "warn"
+    : "ok";
+
+  root.innerHTML = chrome(`
+    <h1 class="page-title">System</h1>
+    <p class="page-subtitle">StriVo v${health ? escape(health.version || "?") : "?"} ·
+      overall <span class="cfg-badge ${worst === "ok" ? "ok" : worst === "warn" ? "warn" : "err"}">${worst}</span></p>
+    <div class="cfg-grid">
+      <section class="cfg-card">
+        <h2 class="cfg-title">Health</h2>
+        <div class="sys-checks">${healthRows}</div>
+      </section>
+      <section class="cfg-card">
+        <h2 class="cfg-title">Storage</h2>
+        ${gauge}
+      </section>
+      <section class="cfg-card">
+        <h2 class="cfg-title">Tasks</h2>
+        <dl class="cfg-list">
+          <dt>Channel poll</dt><dd>every ${settings ? settings.poll_interval_secs : "?"}s</dd>
+          <dt>Active recordings</dt><dd>${activeRec}</dd>
+          <dt>Scheduled</dt><dd>${settings ? (settings.schedule || []).length : "?"}</dd>
+        </dl>
+      </section>
     </div>
   `);
   setupChromeHandlers();

@@ -881,3 +881,75 @@ button.busy::after {
   height: 100%;
   border: 0;
 }
+
+/* ── Settings / System pages (item 7) ── */
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+.cfg-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+}
+.cfg-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.6rem 0;
+  color: var(--secondary);
+}
+.cfg-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.cfg-list dt { color: var(--muted); }
+.cfg-list dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.cfg-badge {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cfg-badge.ok { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+.cfg-badge.warn { background: color-mix(in srgb, var(--secondary) 22%, transparent); color: var(--secondary); }
+.cfg-badge.err { background: color-mix(in srgb, var(--recording) 22%, transparent); color: var(--recording); }
+
+.sys-checks { display: flex; flex-direction: column; gap: 0.4rem; }
+.sys-check {
+  display: grid;
+  grid-template-columns: 1.2rem auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.sys-check .sys-sev { text-align: center; font-weight: 700; }
+.sys-check.ok .sys-sev { color: var(--live); }
+.sys-check.warn .sys-sev { color: var(--secondary); }
+.sys-check.error .sys-sev { color: var(--recording); }
+.sys-check .sys-msg { color: var(--muted); text-align: right; }
+
+.sys-gauge {
+  height: 10px;
+  background: var(--overlay);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.sys-gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+}
+.sys-gauge-label {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
