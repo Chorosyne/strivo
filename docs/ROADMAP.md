@@ -63,7 +63,11 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
 
 ## Phase 3 — System / Health UX
 
-- [ ] **13. Health-check registry** `[E]` — each check returns `{severity:
+- [~] **13. Health-check registry** `[E]` — *(part 1 of 2: backend*
+  *`GET /api/v1/health/checks` returns grouped checks (Storage / Platform*
+  *Auth / Network) as {domain,name,severity,message,fix} with worst-severity*
+  *rollup + disk_severity test. Remaining: SPA header health pill + checks*
+  *list view — next fire.)* — each check returns `{severity:
   warn|error, message, fix-link}`, grouped by domain (Storage, Platform Auth, Plugins,
   Network), retestable; global header health pill (amber/red) links to the list.
 - [ ] **14. Scheduled-task duality** `[A][E]` — every periodic task gets a manual

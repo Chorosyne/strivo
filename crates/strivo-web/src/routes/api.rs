@@ -219,6 +219,115 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     (code, Json(body))
 }
 
+fn human_bytes(b: u64) -> String {
+    const GB: u64 = 1 << 30;
+    const MB: u64 = 1 << 20;
+    if b >= GB {
+        format!("{:.1} GB", b as f64 / GB as f64)
+    } else if b >= MB {
+        format!("{:.0} MB", b as f64 / MB as f64)
+    } else {
+        format!("{b} B")
+    }
+}
+
+/// Disk free-space severity for the recording filesystem (roadmap item 13).
+/// <5% free = error, <15% = warn, else ok; unknown (total 0) = warn.
+fn disk_severity(total: u64, avail: u64) -> &'static str {
+    if total == 0 {
+        return "warn";
+    }
+    let frac = avail as f64 / total as f64;
+    if frac < 0.05 {
+        "error"
+    } else if frac < 0.15 {
+        "warn"
+    } else {
+        "ok"
+    }
+}
+
+fn add_check(checks: &mut Vec<serde_json::Value>, domain: &str, name: &str, sev: &str, message: String, fix: &str) {
+    checks.push(json!({
+        "domain": domain, "name": name, "severity": sev,
+        "message": message, "fix": fix,
+    }));
+}
+
+/// `GET /api/v1/health/checks` — grouped, retestable health checks for the
+/// System page (roadmap item 13). Each check carries {domain, name,
+/// severity (ok|warn|error), message, fix}; overall status is the worst
+/// severity. Authenticated (unlike the plain `/health` liveness probe).
+async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let mut checks: Vec<serde_json::Value> = Vec::new();
+
+    // Network — daemon reachable, and the platform-connected flags it reports.
+    let snap = state.ipc.snapshot().await;
+    let (tw_c, yt_c, pt_c) = match &snap {
+        Ok(ServerMessage::StateSnapshot {
+            twitch_connected,
+            youtube_connected,
+            patreon_connected,
+            ..
+        }) => (*twitch_connected, *youtube_connected, *patreon_connected),
+        _ => (false, false, false),
+    };
+    if snap.is_ok() {
+        add_check(&mut checks, "Network", "Daemon IPC", "ok", "Daemon reachable.".into(), "");
+    } else {
+        add_check(&mut checks, "Network", "Daemon IPC", "error",
+            "Daemon unreachable over the IPC socket.".into(),
+            "Start the daemon (strivo daemon) or check the socket.");
+    }
+
+    // Storage — free space on the recording filesystem.
+    let cfg = strivo_core::config::AppConfig::load(None);
+    match &cfg {
+        Ok(cfg) => {
+            let (total, avail) = statvfs_bytes(&cfg.recording_dir).unwrap_or((0, 0));
+            let sev = disk_severity(total, avail);
+            let msg = if total == 0 {
+                format!("Cannot stat recording dir {}.", cfg.recording_dir.display())
+            } else {
+                format!("{} free of {}.", human_bytes(avail), human_bytes(total))
+            };
+            let fix = if sev == "ok" { "" } else { "Free space or change recording_dir." };
+            add_check(&mut checks, "Storage", "Disk space", sev, msg, fix);
+        }
+        Err(e) => add_check(&mut checks, "Storage", "Config", "error",
+            format!("config load failed: {e}"), "Fix config.toml."),
+    }
+
+    // Platform Auth — configured-but-not-authenticated is a warning.
+    if let Ok(cfg) = &cfg {
+        for (name, configured, connected) in [
+            ("Twitch", cfg.twitch.is_some(), tw_c),
+            ("YouTube", cfg.youtube.is_some(), yt_c),
+            ("Patreon", cfg.patreon.is_some(), pt_c),
+        ] {
+            if configured && connected {
+                add_check(&mut checks, "Platform Auth", name, "ok", format!("{name} authenticated."), "");
+            } else if configured {
+                add_check(&mut checks, "Platform Auth", name, "warn",
+                    format!("{name} configured but not authenticated."),
+                    "Authenticate the platform (TUI login or re-run auth).");
+            }
+        }
+    }
+
+    let worst = if checks.iter().any(|c| c["severity"] == "error") {
+        "error"
+    } else if checks.iter().any(|c| c["severity"] == "warn") {
+        "warn"
+    } else {
+        "ok"
+    };
+    Json(json!({ "status": worst, "checks": checks })).into_response()
+}
+
 /// `GET /api/v1/storage` — disk usage of the recording directory.
 /// (W5 — storage gauges.) Returns bytes_used + bytes_free for the
 /// filesystem the recording dir lives on, plus per-platform totals
@@ -682,6 +791,7 @@ async fn patreon_pull(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/health/checks", get(health_checks))
         .route("/api/v1/channels", get(channels))
         .route("/api/v1/patreon", get(patreon))
         .route("/api/v1/recordings", get(recordings).post(start_recording))
@@ -713,4 +823,19 @@ pub fn router() -> Router<AppState> {
         )
         // #75: Patreon manual pull
         .route("/api/v1/patreon/pull", post(patreon_pull))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_severity_thresholds() {
+        assert_eq!(disk_severity(0, 0), "warn"); // unknown
+        assert_eq!(disk_severity(100, 2), "error"); // 2% free
+        assert_eq!(disk_severity(100, 10), "warn"); // 10% free
+        assert_eq!(disk_severity(100, 50), "ok"); // 50% free
+        assert_eq!(disk_severity(100, 15), "ok"); // exactly 15% → ok (>= boundary)
+        assert_eq!(disk_severity(100, 14), "warn");
+    }
 }
