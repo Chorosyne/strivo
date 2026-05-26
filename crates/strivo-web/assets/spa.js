@@ -55,6 +55,7 @@ const API = {
   backups: () => API._fetch("/backups"),
   backupRestore: (name) =>
     API._fetch(`/backups/${encodeURIComponent(name)}/restore`, { method: "POST" }),
+  history: () => API._fetch("/history"),
   blocklist: () => API._fetch("/blocklist"),
   blockAdd: (body) => API._fetch("/blocklist", { method: "POST", body }),
   blockRemove: (body) => API._fetch("/blocklist", { method: "DELETE", body }),
@@ -286,6 +287,7 @@ const ROUTES = [
   "settings",
   "system",
   "logs",
+  "history",
   "login",
 ];
 
@@ -345,6 +347,9 @@ async function render() {
     case "logs":
       await renderLogs();
       break;
+    case "history":
+      await renderHistory();
+      break;
   }
 }
 
@@ -359,6 +364,7 @@ const TOPNAV = [
   ["settings", "⚙", "Settings", "c"],
   ["system", "🛠", "System", "y"],
   ["logs", "📜", "Logs", "o"],
+  ["history", "🗂", "History", "h"],
 ];
 
 function chrome(content) {
@@ -1755,6 +1761,43 @@ async function renderLogs() {
   });
   document.getElementById("logs-refresh")?.addEventListener("click", load);
   await load();
+}
+
+// ── Durable History (item 17) — completed/failed audit from the jobs DB,
+// survives restarts (unlike the in-memory /recordings snapshot). ──
+async function renderHistory() {
+  let rows = [];
+  try {
+    const r = await API.history();
+    rows = r.history || [];
+  } catch (_) {}
+  root.removeAttribute("aria-busy");
+  const body = rows.length
+    ? rows
+        .map((j) => {
+          const when = j.started_at
+            ? new Date(j.started_at).toLocaleString()
+            : "—";
+          return `
+      <tr>
+        <td><span class="state-pill ${stateClassName(j.state)}">${escape(stateLabel(j.state))}</span></td>
+        <td>${escape(j.channel_name || "")}</td>
+        <td>${escape(j.stream_title || "")}</td>
+        <td>${escape(when)}</td>
+        <td>${formatBytes(j.bytes_written || 0)}</td>
+      </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty sm">No recording history yet.</td></tr>`;
+  root.innerHTML = chrome(`
+    <h1 class="page-title">History</h1>
+    <p class="page-subtitle">Durable record of every capture (survives restarts) · ${rows.length} entries</p>
+    <table class="recordings-table">
+      <thead><tr><th>State</th><th>Channel</th><th>Title</th><th>Started</th><th>Size</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  `);
+  setupChromeHandlers();
 }
 
 // ── Live-count ticker ────────────────────────────────────────────────

@@ -116,6 +116,12 @@ const server = createServer(async (req, res) => {
   if (path.startsWith("/api/v1/")) {
     const p = path.slice("/api/v1".length);
     if (p === "/health") return json(res, 200, { status: "ok" });
+    if (p === "/history")
+      return json(res, 200, {
+        history: [
+          { id: "1", channel_name: "LilAggy", stream_title: "Elden Ring", platform: "Twitch", state: "Finished", started_at: "2026-05-26T20:00:00Z", bytes_written: 123456789 },
+        ],
+      });
     if (p === "/blocklist" && req.method === "GET")
       return json(res, 200, {
         blocklist: [

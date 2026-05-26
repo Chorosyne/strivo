@@ -87,6 +87,13 @@ test("logs page renders with level selector and lines", async ({ page }) => {
   await expect(page.locator("#logs-output")).toContainText("StriVo daemon starting");
 });
 
+test("history page renders durable jobs from the DB", async ({ page }) => {
+  await page.goto("/app#/history");
+  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(page.locator(".recordings-table")).toContainText("LilAggy");
+  await expect(page.locator(".recordings-table")).toContainText("Finished");
+});
+
 test("command palette opens with Ctrl+K and navigates", async ({ page }) => {
   await page.goto("/app#/library");
   await page.keyboard.press("Control+k");

@@ -727,6 +727,26 @@ async fn backup_restore(
     .into_response()
 }
 
+/// `GET /api/v1/history` — durable recording history from the jobs DB
+/// (roadmap item 17). Unlike `/recordings` (the in-memory, bounded daemon
+/// snapshot), this survives restarts and includes completed/failed jobs.
+async fn history(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let db = match open_jobs_db() {
+        Ok(d) => d,
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
+    };
+    match db.load_recording_jobs().await {
+        Ok(mut jobs) => {
+            jobs.sort_by_key(|j| std::cmp::Reverse(j.started_at));
+            Json(json!({ "history": jobs })).into_response()
+        }
+        Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
+    }
+}
+
 // ── Blocklist (roadmap item 17) ──────────────────────────────────────
 
 fn parse_platform(s: &str) -> Option<PlatformKind> {
@@ -1090,6 +1110,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/poll_now", post(poll_now))
         .route("/api/v1/logs", get(logs))
+        .route("/api/v1/history", get(history))
         .route("/api/v1/backup", post(backup_create))
         .route("/api/v1/backups", get(backups_list))
         .route("/api/v1/backups/{name}/restore", post(backup_restore))

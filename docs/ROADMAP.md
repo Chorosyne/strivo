@@ -110,12 +110,11 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
 
 ## Phase 4 — Information architecture & journey
 
-- [~] **17. Durable History + Blocklist** `[B]` — *(blocklist DONE: storage +*
-  *catalog skip-wiring + `GET/POST/DELETE /api/v1/blocklist` + System*
-  *Blocklist card (list/unblock) + channel-detail Block button. Remaining: a*
-  *durable History view over the jobs table (audit that survives restart) —*
-  *next fire.)* — completed/failed audit trail that
-  survives restart (not toast-and-forget) + skip-this-VOD/channel feedback.
+- [x] **17. Durable History + Blocklist** `[B]` — Blocklist: durable table +
+  catalog skip-wiring + `GET/POST/DELETE /api/v1/blocklist` + System card
+  (list/unblock) + channel-detail Block button. History: `GET /api/v1/history`
+  over the jobs DB + a History route (🗂) rendering the durable completed/failed
+  audit (survives restart, unlike the in-memory /recordings snapshot).
 - [ ] **18. Upcoming calendar/agenda** `[B]` — first-class view of known upcoming
   broadcasts (scheduled Twitch/YT, Patreon drops).
 - [ ] **19. Add-Channel two-phase wizard** `[B]` — type name → live search → pick
