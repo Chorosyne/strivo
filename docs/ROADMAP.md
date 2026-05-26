@@ -45,7 +45,10 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   cap or age so `app.recordings` doesn't grow unbounded for the process lifetime.
 - [x] **9. Cap concurrent client tasks** `[review]` — bound the per-connection IPC
   task spawns in the daemon (semaphore / join-set with limit).
-- [ ] **10. Dead-code sweep** `[review]` — `session_secret: Option<…>` ⇒ `String`
+- [~] **10. Dead-code sweep** `[review]` — *(part 1 of 2: deleted the 6*
+  *legacy htmx page modules (channels/dashboard/logs/schedule/settings/*
+  *system) + their orphan templates. Remaining: `session_secret`*
+  *Option→String and any other dead helpers — next fire.)* — `session_secret: Option<…>` ⇒ `String`
   (always Some at startup); delete the retired/unmounted legacy htmx route modules
   and `with_filter`-style dead helpers.
 - [ ] **11. `/health` JSON endpoint** `[E]` — machine-readable: recorder up, DB
