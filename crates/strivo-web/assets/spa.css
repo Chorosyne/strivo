@@ -162,6 +162,12 @@ input[type="password"]:focus {
   font-weight: 700;
   font-size: 1.25rem;
   color: var(--primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.topbar .brand:hover {
+  text-decoration: none;
+  filter: brightness(1.15);
 }
 .topbar .live-pill {
   background: var(--recording);

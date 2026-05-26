@@ -326,7 +326,7 @@ function chrome(content) {
   return `
     <div class="chrome">
       <header class="topbar" role="banner">
-        <span class="brand">StriVo</span>
+        <a class="brand" href="#/library" id="brand-home" title="Home">StriVo</a>
         <span id="live-pill" class="live-pill" style="display: none"
               aria-label="Live recording count"></span>
         <span id="storage-pill" class="storage-pill" style="display: none"
@@ -344,6 +344,13 @@ function chrome(content) {
 }
 
 function setupChromeHandlers() {
+  // Brand → home: clear any selected channel and go to the dashboard.
+  document.getElementById("brand-home")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    selectedChannelKey = null;
+    if (currentRoute() === "library") render();
+    else route("library");
+  });
   document.getElementById("poll-now")?.addEventListener("click", async () => {
     try {
       await API.pollNow();
