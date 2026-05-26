@@ -118,6 +118,121 @@ function isInProgress(state) {
   return s.includes("record") || s.includes("resolv") || s.includes("stopp");
 }
 
+// ── Toasts (research §D) ──────────────────────────────────────────────
+// One singleton with two pre-created ARIA live regions: polite for
+// success/info, assertive for errors. Errors are sticky (action-needed);
+// success/info auto-dismiss with hover-pause. Toasts are non-interactive
+// (message + close only).
+const Toast = (() => {
+  let polite, assertive;
+  function ensure() {
+    if (polite) return;
+    const wrap = document.createElement("div");
+    wrap.className = "toast-wrap";
+    const mk = (role, live) => {
+      const r = document.createElement("div");
+      r.className = "toast-region";
+      r.setAttribute("role", role);
+      r.setAttribute("aria-live", live);
+      return r;
+    };
+    assertive = mk("alert", "assertive");
+    polite = mk("status", "polite");
+    wrap.append(assertive, polite);
+    document.body.appendChild(wrap);
+  }
+  function show(kind, msg, sticky) {
+    ensure();
+    const region = kind === "error" ? assertive : polite;
+    const el = document.createElement("div");
+    el.className = `toast ${kind}`;
+    el.innerHTML = `<span class="toast-msg"></span><button class="toast-close" aria-label="Dismiss">×</button>`;
+    el.querySelector(".toast-msg").textContent = msg;
+    const close = () => {
+      el.classList.add("out");
+      setTimeout(() => el.remove(), 200);
+    };
+    el.querySelector(".toast-close").addEventListener("click", close);
+    region.appendChild(el);
+    while (region.children.length > 4) region.firstChild.remove();
+    if (!sticky) {
+      const ttl = 5000;
+      let timer = setTimeout(close, ttl);
+      el.addEventListener("mouseenter", () => clearTimeout(timer));
+      el.addEventListener("mouseleave", () => (timer = setTimeout(close, ttl)));
+    }
+    return close;
+  }
+  return {
+    success: (m) => show("success", m, false),
+    info: (m) => show("info", m, false),
+    error: (m) => show("error", m, true), // sticky — user must see/dismiss
+  };
+})();
+
+// Focus-trapped confirmation dialog for destructive actions. Resolves
+// true/false. (research §D: modals only for irreversible actions.)
+function confirmDialog(message, opts = {}) {
+  return new Promise((resolve) => {
+    const prev = document.activeElement;
+    const modal = document.createElement("div");
+    modal.className = "kbd-help open confirm-modal";
+    modal.innerHTML = `<div class="card" role="alertdialog" aria-modal="true">
+      <p class="confirm-msg"></p>
+      <div class="confirm-actions">
+        <button class="confirm-cancel">${escape(opts.cancel || "Cancel")}</button>
+        <button class="confirm-ok ${opts.danger ? "danger" : "primary"}">${escape(opts.ok || "Confirm")}</button>
+      </div></div>`;
+    modal.querySelector(".confirm-msg").textContent = message;
+    document.body.appendChild(modal);
+    const ok = modal.querySelector(".confirm-ok");
+    const cancel = modal.querySelector(".confirm-cancel");
+    const done = (v) => {
+      modal.remove();
+      if (prev && prev.focus) prev.focus();
+      resolve(v);
+    };
+    ok.addEventListener("click", () => done(true));
+    cancel.addEventListener("click", () => done(false));
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) done(false);
+    });
+    modal.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") done(false);
+      if (e.key === "Tab") {
+        e.preventDefault();
+        (document.activeElement === ok ? cancel : ok).focus();
+      }
+    });
+    ok.focus();
+  });
+}
+
+// Run an async action with a busy/debounced button: aria-busy + label
+// swap + double-fire guard. Safe even if the handler re-renders the page.
+async function withBusy(btn, busyLabel, fn) {
+  if (btn) {
+    if (btn.dataset.busy === "1") return; // debounce
+    btn.dataset.busy = "1";
+    btn.setAttribute("aria-busy", "true");
+    btn.classList.add("busy");
+    if (busyLabel) {
+      btn.dataset.prevLabel = btn.textContent;
+      btn.textContent = busyLabel;
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    if (btn && btn.isConnected) {
+      btn.dataset.busy = "0";
+      btn.removeAttribute("aria-busy");
+      btn.classList.remove("busy");
+      if (btn.dataset.prevLabel) btn.textContent = btn.dataset.prevLabel;
+    }
+  }
+}
+
 // ── Hash router ──────────────────────────────────────────────────────
 const ROUTES = [
   "library",
@@ -467,11 +582,14 @@ function recordingsDashboardHtml(compact) {
 function wireDashboard() {
   document.querySelectorAll('[data-action="stop"]').forEach((btn) => {
     btn.addEventListener("click", async () => {
+      if (!(await confirmDialog("Stop this recording?", { ok: "Stop", danger: true })))
+        return;
       try {
         await API.stopRecording(btn.dataset.jobId);
+        Toast.success("Recording stopped");
         setTimeout(render, 500);
       } catch (e) {
-        alert(`Stop failed: ${e.message}`);
+        Toast.error(`Stop failed: ${e.message}`);
       }
     });
   });
@@ -666,8 +784,9 @@ function renderPatreonPosts(c) {
           post_title: row.dataset.title,
         });
         row.querySelector(".vod-pull")?.replaceChildren(document.createTextNode("queued ✓"));
+        Toast.success(`Pull queued — ${row.dataset.title}`);
       } catch (e) {
-        alert(`Pull failed: ${e.message}`);
+        Toast.error(`Pull failed: ${e.message}`);
       }
     });
   });
@@ -686,9 +805,14 @@ async function toggleBulk(ds) {
     bulkStatus[ds.channelId] = active
       ? { done: 0, total: 0, active: false }
       : { done: 0, total: 0, active: true };
+    Toast.success(
+      active
+        ? `Stopped bulk download — ${ds.channelName}`
+        : `Bulk download started — ${ds.channelName}`,
+    );
     if (currentRoute() === "library") render();
   } catch (e) {
-    alert(`Bulk download failed: ${e.message}`);
+    Toast.error(`Bulk download failed: ${e.message}`);
   }
 }
 
@@ -701,7 +825,7 @@ async function openPlaylistPicker(ds) {
     await API.requestPlaylists(ds.channelId);
     showPlaylistModal({ loading: true, name: ds.channelName, playlists: [] });
   } catch (e) {
-    alert(`Couldn't load playlists: ${e.message}`);
+    Toast.error(`Couldn't load playlists: ${e.message}`);
   }
 }
 
@@ -747,9 +871,10 @@ function showPlaylistModal(opts) {
         });
         bulkStatus[ch.id] = { done: 0, total: 0, active: true };
         modal.classList.remove("open");
+        Toast.success(`Bulk download started — ${ch.name}`);
         if (currentRoute() === "library") render();
       } catch (e) {
-        alert(`Bulk download failed: ${e.message}`);
+        Toast.error(`Bulk download failed: ${e.message}`);
       }
     });
   });
@@ -782,17 +907,22 @@ async function startRecordingFromCard(d) {
       stream_title: d.streamTitle || null,
       transcode: false,
     });
+    Toast.success(
+      `Recording ${d.fromStart === "true" ? "from start " : ""}— ${d.displayName || d.channelName}`,
+    );
   } catch (e) {
-    alert(`Start failed: ${e.message}`);
+    Toast.error(`Start failed: ${e.message}`);
   }
 }
 
 async function toggleAutoRecord(d) {
+  const enabling = d.enabled === "true";
   try {
-    await API.toggleAutoRecord(d.channelKey, d.enabled === "true");
+    await API.toggleAutoRecord(d.channelKey, enabling);
+    Toast.success(enabling ? "Auto-record enabled" : "Auto-record disabled");
     await render();
   } catch (e) {
-    alert(`Auto-record toggle failed: ${e.message}`);
+    Toast.error(`Auto-record toggle failed: ${e.message}`);
   }
 }
 
@@ -908,11 +1038,14 @@ function paintRecordings() {
   }
   body.querySelectorAll("[data-action=stop]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      if (!(await confirmDialog("Stop this recording?", { ok: "Stop", danger: true })))
+        return;
       try {
         await API.stopRecording(btn.dataset.jobId);
+        Toast.success("Recording stopped");
         setTimeout(render, 500);
       } catch (e) {
-        alert(`Stop failed: ${e.message}`);
+        Toast.error(`Stop failed: ${e.message}`);
       }
     });
   });
@@ -1065,9 +1198,9 @@ async function renderPlugins() {
         const r = await API.pluginRpc(btn.dataset.plugin, btn.dataset.verb, {
           selection: [],
         });
-        alert(`Dispatched: ${btn.dataset.plugin}: ${btn.dataset.verb}\n${r.note || ""}`);
+        Toast.success(`${btn.dataset.plugin}: ${btn.dataset.verb} — ${r.note ? "dispatched" : "queued"}`);
       } catch (e) {
-        alert(`Plugin RPC failed: ${e.message}`);
+        Toast.error(`Plugin RPC failed: ${e.message}`);
       }
     });
   });

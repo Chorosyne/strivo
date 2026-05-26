@@ -738,3 +738,91 @@ button.sm {
     border-bottom: 1px solid var(--border);
   }
 }
+
+/* ── Toasts (item 2 / research §D) ── */
+.toast-wrap {
+  position: fixed;
+  top: 64px;
+  right: 1rem;
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  max-width: 360px;
+  pointer-events: none;
+}
+.toast-region {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
+  animation: toast-in 0.18s ease-out;
+}
+.toast.out {
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.toast.success { border-left-color: var(--live); }
+.toast.error { border-left-color: var(--recording); }
+.toast.info { border-left-color: var(--primary); }
+.toast-msg { flex: 1; }
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+}
+.toast-close:hover { color: var(--fg); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+  .toast.out { transition: none; }
+}
+
+/* ── Confirm dialog (item 2) ── */
+.confirm-modal .card { width: 380px; max-width: 92vw; }
+.confirm-msg { margin: 0 0 1rem 0; font-size: 0.95rem; }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* ── Button busy state (item 2) ── */
+button.busy {
+  opacity: 0.7;
+  cursor: progress;
+  position: relative;
+}
+button.busy::after {
+  content: "";
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: 0.4em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
