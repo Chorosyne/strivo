@@ -214,6 +214,52 @@ pub fn check_dual(
     }
 }
 
+/// Idle-refresh policy: re-issue once the cookie is past the halfway point
+/// of its lifetime, giving a rolling expiry that slides forward on activity
+/// (roadmap item 4). Returns false for tokens with plenty of life left so we
+/// don't write a Set-Cookie on every request.
+fn should_refresh(expires_at: u64, now: u64, ttl: u64) -> bool {
+    expires_at.saturating_sub(now) < ttl / 2
+}
+
+/// Middleware: when a request authenticated by a valid session cookie is
+/// past the halfway mark, append a freshly-signed cookie so active sessions
+/// never expire mid-use. No-op for X-Api-Key clients (no cookie), for the
+/// auth endpoints themselves (login sets / logout clears the cookie), and
+/// for tokens still in the first half of their life.
+pub async fn session_refresh(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+    let req_headers = req.headers().clone();
+    let mut resp = next.run(req).await;
+
+    if path.starts_with("/api/v1/auth/") {
+        return resp;
+    }
+    let Some(secret) = state.session_secret.as_deref() else {
+        return resp;
+    };
+    let Some(tok) = session_from_headers(&req_headers, Some(secret)) else {
+        return resp;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if !should_refresh(tok.expires_at, now, SESSION_TTL_SECS) {
+        return resp;
+    }
+    let value = SessionToken::new(SESSION_TTL_SECS).encode(secret);
+    let cookie = build_session_cookie(&value, SESSION_TTL_SECS, is_secure_request(&req_headers));
+    if let Ok(h) = HeaderValue::from_str(&cookie) {
+        resp.headers_mut().append(SET_COOKIE, h);
+    }
+    resp
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/auth/login", post(login))
@@ -269,6 +315,22 @@ mod tests {
                 "cookie name {name} should verify"
             );
         }
+    }
+
+    #[test]
+    fn refresh_only_past_halfway() {
+        let ttl = 1000;
+        let now = 10_000;
+        // Fresh token (full life left) → no refresh.
+        assert!(!should_refresh(now + ttl, now, ttl));
+        // Exactly at halfway boundary → not yet (strict <).
+        assert!(!should_refresh(now + ttl / 2, now, ttl));
+        // Past halfway → refresh.
+        assert!(should_refresh(now + ttl / 2 - 1, now, ttl));
+        // Nearly expired → refresh.
+        assert!(should_refresh(now + 1, now, ttl));
+        // Already expired → refresh (saturating_sub → 0).
+        assert!(should_refresh(now.saturating_sub(5), now, ttl));
     }
 
     #[test]

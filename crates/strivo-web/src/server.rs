@@ -78,6 +78,10 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         .merge(routes::api::router())
         .merge(routes::login::router())
         .merge(routes::assets::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            routes::login::session_refresh,
+        ))
         .layer(middleware::from_fn(csrf::csrf_guard))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
