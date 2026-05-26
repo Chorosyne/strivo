@@ -96,8 +96,10 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   a settings-write endpoint, so the System Tasks interval becomes editable
   without a restart. (Deferred from 14 to avoid a config-write that silently
   needs a restart.)
-- [ ] **15. Logs viewer polish** `[E]` — in-UI level selector + rolling/capped files
-  so users never SSH for logs.
+- [~] **15. Logs viewer polish** `[E]` — *(part 1 of 2: backend — daemon now
+  logs to rolling/capped files (daily rotation, keep 7 via tracing-appender)
+  + `GET /api/v1/logs?level=&lines=` tails the newest file with min-level*
+  *filtering. Remaining: SPA Logs view + level selector — next fire.)*
 - [ ] **16. Config/DB backup + restore** `[E]` — scheduled + on-demand backup of
   config + jobs DB with a restore path.
 

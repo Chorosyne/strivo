@@ -529,6 +529,87 @@ async fn poll_now(headers: HeaderMap, State(state): State<AppState>) -> impl Int
     }
 }
 
+/// Numeric severity for a `tracing` level token, higher = more severe.
+fn level_rank(level: &str) -> u8 {
+    match level.to_ascii_uppercase().as_str() {
+        "ERROR" => 4,
+        "WARN" => 3,
+        "INFO" => 2,
+        "DEBUG" => 1,
+        "TRACE" => 0,
+        _ => 2,
+    }
+}
+
+/// Extract the level token from a `tracing` fmt line, e.g.
+/// `2026-05-26T18:00:00Z  INFO strivo::x: msg` → `INFO`.
+fn line_level(line: &str) -> Option<&str> {
+    line.split_whitespace()
+        .find(|t| matches!(*t, "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE"))
+}
+
+/// Newest `strivo.<date>.log` in the state dir (rolling appender output).
+fn newest_log_file(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("strivo") && n.ends_with("log"))
+        })
+        .max_by_key(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+        })
+}
+
+#[derive(Debug, Deserialize)]
+struct LogQuery {
+    #[serde(default)]
+    level: Option<String>,
+    #[serde(default)]
+    lines: Option<usize>,
+}
+
+/// `GET /api/v1/logs?level=info&lines=200` — tail the newest rolling log
+/// file, filtered to the given minimum level (roadmap item 15). Bounded by
+/// `lines` (default 200, max 2000) so users never SSH for logs.
+async fn logs(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<LogQuery>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let dir = strivo_core::config::AppConfig::state_dir();
+    let Some(path) = newest_log_file(&dir) else {
+        return Json(json!({ "lines": [], "level": "info", "file": null })).into_response();
+    };
+    let body = match tokio::fs::read_to_string(&path).await {
+        Ok(s) => s,
+        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+    };
+    let min = level_rank(q.level.as_deref().unwrap_or("trace"));
+    let cap = q.lines.unwrap_or(200).clamp(1, 2000);
+    let mut filtered: Vec<&str> = body
+        .lines()
+        .filter(|l| line_level(l).map_or(true, |lv| level_rank(lv) >= min))
+        .collect();
+    if filtered.len() > cap {
+        filtered = filtered.split_off(filtered.len() - cap);
+    }
+    Json(json!({
+        "lines": filtered,
+        "level": q.level.unwrap_or_else(|| "trace".into()),
+        "file": path.file_name().and_then(|n| n.to_str()),
+    }))
+    .into_response()
+}
+
 #[derive(Debug, Deserialize)]
 struct AutoRecordPayload {
     enabled: bool,
@@ -803,6 +884,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/schedule", get(schedule))
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/poll_now", post(poll_now))
+        .route("/api/v1/logs", get(logs))
         .route(
             "/api/v1/channels/{channel_key}/auto_record",
             put(put_auto_record),
@@ -828,6 +910,17 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_level_parse_and_rank() {
+        assert_eq!(line_level("2026-05-26T00:00:00Z  INFO mod: hi"), Some("INFO"));
+        assert_eq!(line_level("2026-05-26T00:00:00Z ERROR mod: boom"), Some("ERROR"));
+        assert_eq!(line_level("continuation line with no level"), None);
+        assert!(level_rank("ERROR") > level_rank("WARN"));
+        assert!(level_rank("WARN") > level_rank("INFO"));
+        assert!(level_rank("INFO") > level_rank("DEBUG"));
+        assert!(level_rank("DEBUG") > level_rank("TRACE"));
+    }
 
     #[test]
     fn disk_severity_thresholds() {

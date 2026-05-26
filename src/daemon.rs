@@ -184,20 +184,29 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
     let state_dir = AppConfig::state_dir();
     std::fs::create_dir_all(&state_dir)?;
 
-    let log_path = state_dir.join("strivo.log");
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
+    // Rolling, capped log files (roadmap item 15): daily rotation, keep the
+    // last 7 days, so logs never grow unbounded and users never SSH for them
+    // (the webui tails the newest file). Files are `strivo.<date>.log`.
+    let appender = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("strivo")
+        .filename_suffix("log")
+        .max_log_files(7)
+        .build(&state_dir)
+        .context("build rolling log appender")?;
+    let (nb_writer, log_guard) = tracing_appender::non_blocking(appender);
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_writer(log_file)
+        .with_writer(nb_writer)
         .with_ansi(false)
         .init();
+    // Keep the non-blocking writer's flush guard alive for the daemon's
+    // lifetime; dropping it would stop log flushing.
+    let _log_guard = log_guard;
 
     tracing::info!("StriVo daemon starting");
 
