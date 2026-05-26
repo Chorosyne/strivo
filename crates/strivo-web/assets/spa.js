@@ -437,13 +437,21 @@ function paintChannelList() {
 
   const section = (title, list) =>
     list.length
-      ? `<div class="ch-section-title">${title}</div>${list.map(row).join("")}`
+      ? `<div class="ch-section-title">${title} <span class="ch-count">${list.length}</span></div>${list.map(row).join("")}`
       : "";
+
+  // Offline channels grouped by platform (item 5). Twitch / YouTube /
+  // Patreon each get their own header; Patreon thus becomes a distinct,
+  // always-visible section (item 6).
+  const byPlat = (plat) => offline.filter((c) => c.platform === plat);
 
   rail.innerHTML =
     channels.length === 0
       ? '<div class="ch-empty">No channels yet</div>'
-      : section(`LIVE (${live.length})`, live) + section("Channels", offline);
+      : section(`● LIVE`, live) +
+        section("Twitch", byPlat("Twitch")) +
+        section("YouTube", byPlat("YouTube")) +
+        section("Patreon", byPlat("Patreon"));
 
   rail.querySelectorAll(".ch-row").forEach((el) => {
     el.addEventListener("click", (e) => {

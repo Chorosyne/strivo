@@ -302,6 +302,14 @@ th[data-sort]:hover {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.ch-count {
+  color: var(--dim);
+  font-weight: 600;
 }
 .ch-empty {
   padding: 1rem;
