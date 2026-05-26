@@ -116,6 +116,13 @@ const server = createServer(async (req, res) => {
   if (path.startsWith("/api/v1/")) {
     const p = path.slice("/api/v1".length);
     if (p === "/health") return json(res, 200, { status: "ok" });
+    if (p === "/blocklist" && req.method === "GET")
+      return json(res, 200, {
+        blocklist: [
+          { platform: "Twitch", channel_id: "ch1", vod_id: "", reason: null, created_at: "2026-05-26T00:00:00Z" },
+        ],
+      });
+    if (p === "/blocklist") return json(res, 201, { status: "ok" });
     if (p === "/backup") return json(res, 201, { name: "2026-05-26T00-00-00Z", files: ["config.toml", "jobs.db"], bytes: 1234 });
     if (p === "/backups")
       return json(res, 200, {

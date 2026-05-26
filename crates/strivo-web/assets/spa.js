@@ -55,6 +55,9 @@ const API = {
   backups: () => API._fetch("/backups"),
   backupRestore: (name) =>
     API._fetch(`/backups/${encodeURIComponent(name)}/restore`, { method: "POST" }),
+  blocklist: () => API._fetch("/blocklist"),
+  blockAdd: (body) => API._fetch("/blocklist", { method: "POST", body }),
+  blockRemove: (body) => API._fetch("/blocklist", { method: "DELETE", body }),
   storage: () => API._fetch("/storage"),
   settings: () => API._fetch("/settings"),
   patreon: () => API._fetch("/patreon"),
@@ -756,6 +759,10 @@ function channelDetailHtml(c) {
         ${c.platform === "YouTube" ? `
           <button data-action="bulk-playlist" data-channel-id="${c.id}"
                   data-channel-name="${escape(c.display_name || c.name)}">⛁ Playlist…</button>` : ""}
+        <button data-action="block-channel" data-channel-id="${c.id}"
+                data-platform="${c.platform}"
+                data-channel-name="${escape(c.display_name || c.name)}"
+                title="Stop auto-grabbing this channel">⊘ Block</button>
       ` : ""}
     </div>`;
 
@@ -827,6 +834,24 @@ function wireChannelDetail() {
   );
   document.querySelectorAll("[data-action=bulk-playlist]").forEach((btn) =>
     btn.addEventListener("click", () => openPlaylistPicker(btn.dataset)),
+  );
+  document.querySelectorAll("[data-action=block-channel]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const d = btn.dataset;
+      if (
+        !(await confirmDialog(
+          `Block ${d.channelName}? StriVo will stop auto-grabbing this channel's VODs.`,
+          { ok: "Block", danger: true },
+        ))
+      )
+        return;
+      try {
+        await API.blockAdd({ platform: d.platform, channel_id: d.channelId });
+        Toast.success(`Blocked ${d.channelName}`);
+      } catch (e) {
+        Toast.error(`Block failed: ${e.message}`);
+      }
+    }),
   );
 }
 
@@ -1538,6 +1563,10 @@ async function renderSystem() {
         </div>
         <div id="backup-list"><div class="empty sm">Loading backups…</div></div>
       </section>
+      <section class="cfg-card" id="blocklist-card">
+        <h2 class="cfg-title">Blocklist</h2>
+        <div id="blocklist-list"><div class="empty sm">Loading blocklist…</div></div>
+      </section>
       <section class="cfg-card">
         <h2 class="cfg-title">Tasks</h2>
         <div class="task-row">
@@ -1594,6 +1623,52 @@ async function renderSystem() {
     }).catch((err) => Toast.error(`Backup failed: ${err.message}`));
   });
   paintBackups();
+  paintBlocklist();
+}
+
+async function paintBlocklist() {
+  const el = document.getElementById("blocklist-list");
+  if (!el) return;
+  try {
+    const r = await API.blocklist();
+    const rows = r.blocklist || [];
+    if (!rows.length) {
+      el.innerHTML = '<div class="empty sm">Nothing blocked.</div>';
+      return;
+    }
+    el.innerHTML = rows
+      .map((b) => {
+        const scope = b.vod_id ? `VOD ${escape(b.vod_id)}` : "whole channel";
+        return `
+      <div class="task-row">
+        <div class="task-info">
+          <span class="task-name">${escape(b.platform)} · ${escape(b.channel_id)}</span>
+          <span class="task-cadence">${scope}${b.reason ? ` · ${escape(b.reason)}` : ""}</span>
+        </div>
+        <button class="sm unblock" data-platform="${escape(b.platform)}"
+                data-channel="${escape(b.channel_id)}" data-vod="${escape(b.vod_id || "")}">Unblock</button>
+      </div>`;
+      })
+      .join("");
+    el.querySelectorAll(".unblock").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const d = btn.dataset;
+        try {
+          await API.blockRemove({
+            platform: d.platform,
+            channel_id: d.channel,
+            vod_id: d.vod || null,
+          });
+          Toast.success("Unblocked");
+          paintBlocklist();
+        } catch (e) {
+          Toast.error(`Unblock failed: ${e.message}`);
+        }
+      });
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="empty sm">Could not load blocklist: ${escape(e.message)}</div>`;
+  }
 }
 
 async function paintBackups() {

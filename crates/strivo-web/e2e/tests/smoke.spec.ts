@@ -76,6 +76,8 @@ test("system page renders health + tasks", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Backup" })).toBeVisible();
   await expect(page.locator("#backup-now")).toBeVisible();
   await expect(page.locator(".restore-backup").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Blocklist" })).toBeVisible();
+  await expect(page.locator(".unblock").first()).toBeVisible();
 });
 
 test("logs page renders with level selector and lines", async ({ page }) => {

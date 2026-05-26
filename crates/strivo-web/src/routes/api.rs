@@ -727,6 +727,94 @@ async fn backup_restore(
     .into_response()
 }
 
+// ── Blocklist (roadmap item 17) ──────────────────────────────────────
+
+fn parse_platform(s: &str) -> Option<PlatformKind> {
+    match s.to_ascii_lowercase().as_str() {
+        "twitch" => Some(PlatformKind::Twitch),
+        "youtube" => Some(PlatformKind::YouTube),
+        "patreon" => Some(PlatformKind::Patreon),
+        _ => None,
+    }
+}
+
+fn open_jobs_db() -> Result<strivo_core::recording::persist::PersistDb, String> {
+    let db_path = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    strivo_core::recording::persist::PersistDb::open(&db_path).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockPayload {
+    platform: String,
+    channel_id: String,
+    #[serde(default)]
+    vod_id: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+async fn blocklist_get(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let db = match open_jobs_db() {
+        Ok(d) => d,
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
+    };
+    match db.list_blocklist().await {
+        Ok(entries) => Json(json!({ "blocklist": entries })).into_response(),
+        Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
+    }
+}
+
+async fn blocklist_add(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<BlockPayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let Some(platform) = parse_platform(&body.platform) else {
+        return crate::problem::Problem::bad_request("unknown platform").into_response();
+    };
+    let db = match open_jobs_db() {
+        Ok(d) => d,
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
+    };
+    match db
+        .add_blocklist(platform, &body.channel_id, body.vod_id.as_deref(), body.reason.as_deref())
+        .await
+    {
+        Ok(()) => (StatusCode::CREATED, Json(json!({"status": "blocked"}))).into_response(),
+        Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
+    }
+}
+
+async fn blocklist_remove(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<BlockPayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let Some(platform) = parse_platform(&body.platform) else {
+        return crate::problem::Problem::bad_request("unknown platform").into_response();
+    };
+    let db = match open_jobs_db() {
+        Ok(d) => d,
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
+    };
+    match db
+        .remove_blocklist(platform, &body.channel_id, body.vod_id.as_deref())
+        .await
+    {
+        Ok(()) => Json(json!({"status": "unblocked"})).into_response(),
+        Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct AutoRecordPayload {
     enabled: bool,
@@ -1005,6 +1093,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/backup", post(backup_create))
         .route("/api/v1/backups", get(backups_list))
         .route("/api/v1/backups/{name}/restore", post(backup_restore))
+        .route(
+            "/api/v1/blocklist",
+            get(blocklist_get).post(blocklist_add).delete(blocklist_remove),
+        )
         .route(
             "/api/v1/channels/{channel_key}/auto_record",
             put(put_auto_record),
