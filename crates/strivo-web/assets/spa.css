@@ -204,8 +204,30 @@ input:focus-visible {
   cursor: pointer;
   font-size: 0.9rem;
 }
-.pl-row:hover {
+.pl-row:hover,
+.pl-row.sel {
   background: var(--overlay);
+  color: var(--primary);
+}
+
+/* W4-alt — grid filter input + ⌘K palette input. */
+.grid-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.grid-filter:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+th[data-sort]:hover {
   color: var(--primary);
 }
 

@@ -96,6 +96,10 @@ const bulkStatus = {};
 // #75 — Patreon snapshot, fed by the `patreon-state` SSE event:
 // { creators: [ChannelEntry], posts: { campaign_id: [PatreonPost] } }.
 const patreonState = { creators: [], posts: {} };
+// W4-alt — recordings grid sort/filter state + last-fetched cache.
+let recSort = { col: "started", dir: "desc" };
+let recFilter = "";
+let recCache = [];
 function pushActivity(event) {
   const kind = Object.keys(event)[0] || "event";
   const summary = summarizeEvent(event);
@@ -623,27 +627,91 @@ async function renderRecordings() {
     setupChromeHandlers();
     return;
   }
+  recCache = recordings;
+  // W4-alt: sortable + filterable data grid. Column headers toggle sort;
+  // the filter box narrows by channel/title live without refetching.
   root.innerHTML = chrome(`
     <h1 class="page-title">Recordings</h1>
-    <p class="page-subtitle">${recordings.length} total</p>
+    <input id="rec-filter" class="grid-filter" type="search"
+           placeholder="Filter by channel or title… (/)"
+           aria-label="Filter recordings" value="${escape(recFilter)}">
+    <p class="page-subtitle" id="rec-count"></p>
     <table class="recordings-table">
       <thead>
         <tr>
-          <th>State</th>
-          <th>Channel</th>
-          <th>Title</th>
-          <th>Started</th>
-          <th>Size</th>
+          ${recHeader("state", "State")}
+          ${recHeader("channel", "Channel")}
+          ${recHeader("title", "Title")}
+          ${recHeader("started", "Started")}
+          ${recHeader("size", "Size")}
           <th></th>
         </tr>
       </thead>
-      <tbody>
-        ${recordings.map(recordingRow).join("")}
-      </tbody>
+      <tbody id="rec-body"></tbody>
     </table>
   `);
   setupChromeHandlers();
-  document.querySelectorAll("[data-action=stop]").forEach((btn) => {
+  paintRecordings();
+
+  document.getElementById("rec-filter")?.addEventListener("input", (e) => {
+    recFilter = e.target.value;
+    paintRecordings();
+  });
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.sort;
+      if (recSort.col === col) {
+        recSort.dir = recSort.dir === "asc" ? "desc" : "asc";
+      } else {
+        recSort = { col, dir: "asc" };
+      }
+      renderRecordings(); // re-render header arrows + body
+    });
+  });
+}
+
+function recHeader(key, label) {
+  const arrow =
+    recSort.col === key ? (recSort.dir === "asc" ? " ▲" : " ▼") : "";
+  return `<th data-sort="${key}" style="cursor:pointer">${label}${arrow}</th>`;
+}
+
+// Apply the live filter + sort to recCache and repaint the table body.
+function paintRecordings() {
+  const body = document.getElementById("rec-body");
+  if (!body) return;
+  const q = recFilter.trim().toLowerCase();
+  let rows = recCache.filter((r) => {
+    if (!q) return true;
+    return (
+      (r.channel_name || "").toLowerCase().includes(q) ||
+      (r.stream_title || "").toLowerCase().includes(q)
+    );
+  });
+  const dir = recSort.dir === "asc" ? 1 : -1;
+  const key = (r) => {
+    switch (recSort.col) {
+      case "state": return stateLabel(r.state).toLowerCase();
+      case "channel": return (r.channel_name || "").toLowerCase();
+      case "title": return (r.stream_title || "").toLowerCase();
+      case "size": return r.bytes_written || 0;
+      case "started":
+      default: return new Date(r.started_at).getTime() || 0;
+    }
+  };
+  rows.sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    return ka < kb ? -dir : ka > kb ? dir : 0;
+  });
+  body.innerHTML = rows.map(recordingRow).join("");
+  const count = document.getElementById("rec-count");
+  if (count) {
+    count.textContent =
+      q || rows.length !== recCache.length
+        ? `${rows.length} of ${recCache.length}`
+        : `${recCache.length} total`;
+  }
+  body.querySelectorAll("[data-action=stop]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
         await API.stopRecording(btn.dataset.jobId);
@@ -979,10 +1047,33 @@ let prefixActive = false;
 let prefixTimer = null;
 
 document.addEventListener("keydown", (e) => {
+  // ⌘K / Ctrl+K — command palette. Handled before the input guard so it
+  // works from anywhere, including while a field is focused. (W4-alt.)
+  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    toggleCommandPalette();
+    return;
+  }
+  // If the palette is open, it owns the keyboard.
+  if (document.getElementById("cmdk")?.classList.contains("open")) {
+    handleCmdkKey(e);
+    return;
+  }
+
   // Don't intercept while typing in an input.
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  // `/` focuses the recordings filter when on that route.
+  if (e.key === "/" && currentRoute() === "recordings") {
+    const f = document.getElementById("rec-filter");
+    if (f) {
+      e.preventDefault();
+      f.focus();
+      return;
+    }
+  }
 
   if (e.key === "?") {
     e.preventDefault();
@@ -1022,6 +1113,117 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ── ⌘K command palette (W4-alt) ───────────────────────────────────────
+let cmdkItems = [];
+let cmdkSelected = 0;
+
+function commandList() {
+  const nav = [
+    ["library", "Go to Library"],
+    ["recordings", "Go to Recordings"],
+    ["schedule", "Go to Schedule"],
+    ["patreon", "Go to Patreon"],
+    ["pipelines", "Go to Pipelines"],
+    ["plugins", "Go to Plugins"],
+    ["activity", "Go to Activity"],
+    ["settings", "Go to Settings"],
+    ["system", "Go to System"],
+  ].map(([r, label]) => ({ label, run: () => route(r) }));
+  const actions = [
+    { label: "Poll channels now", run: () => API.pollNow().catch(() => {}) },
+    {
+      label: "Stop all recordings",
+      run: () => API._fetch("/recordings/stop_all", { method: "POST" }).catch(() => {}),
+    },
+    {
+      label: "Toggle activity rail",
+      run: () => {
+        document.getElementById("activity-rail")?.classList.toggle("open");
+        renderActivityRail();
+      },
+    },
+    { label: "Logout", run: () => API.logout().then(() => route("login")) },
+  ];
+  return [...nav, ...actions];
+}
+
+function toggleCommandPalette() {
+  let el = document.getElementById("cmdk");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "cmdk";
+    el.className = "kbd-help";
+    el.innerHTML = `
+      <div class="card">
+        <input id="cmdk-input" class="grid-filter" type="text"
+               placeholder="Type a command…" autocomplete="off" aria-label="Command palette">
+        <div id="cmdk-list" class="pl-list"></div>
+      </div>`;
+    document.body.appendChild(el);
+    el.addEventListener("click", (ev) => {
+      if (ev.target === el) el.classList.remove("open");
+    });
+    el.querySelector("#cmdk-input").addEventListener("input", paintCmdk);
+  }
+  const open = el.classList.toggle("open");
+  if (open) {
+    cmdkSelected = 0;
+    const input = el.querySelector("#cmdk-input");
+    input.value = "";
+    paintCmdk();
+    input.focus();
+  }
+}
+
+function paintCmdk() {
+  const q = (document.getElementById("cmdk-input")?.value || "")
+    .trim()
+    .toLowerCase();
+  const all = commandList();
+  cmdkItems = q
+    ? all.filter((c) => c.label.toLowerCase().includes(q))
+    : all;
+  if (cmdkSelected >= cmdkItems.length) cmdkSelected = 0;
+  const list = document.getElementById("cmdk-list");
+  if (!list) return;
+  list.innerHTML = cmdkItems
+    .map(
+      (c, i) =>
+        `<div class="pl-row ${i === cmdkSelected ? "sel" : ""}" data-i="${i}">${escape(
+          c.label,
+        )}</div>`,
+    )
+    .join("");
+  list.querySelectorAll(".pl-row").forEach((row) => {
+    row.addEventListener("click", () => runCmdk(parseInt(row.dataset.i, 10)));
+  });
+}
+
+function handleCmdkKey(e) {
+  const el = document.getElementById("cmdk");
+  if (e.key === "Escape") {
+    e.preventDefault();
+    el.classList.remove("open");
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    cmdkSelected = Math.min(cmdkSelected + 1, cmdkItems.length - 1);
+    paintCmdk();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    cmdkSelected = Math.max(cmdkSelected - 1, 0);
+    paintCmdk();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    runCmdk(cmdkSelected);
+  }
+}
+
+function runCmdk(i) {
+  const item = cmdkItems[i];
+  document.getElementById("cmdk")?.classList.remove("open");
+  if (item) item.run();
+}
+
 function injectKeyboardHelp() {
   if (document.getElementById("kbd-help")) return;
   const div = document.createElement("div");
@@ -1034,6 +1236,8 @@ function injectKeyboardHelp() {
       <h2>Keyboard shortcuts</h2>
       <dl>
         <dt>?</dt><dd>This help</dd>
+        <dt>⌘K</dt><dd>Command palette</dd>
+        <dt>/</dt><dd>Filter recordings</dd>
         <dt>g l</dt><dd>Library</dd>
         <dt>g r</dt><dd>Recordings</dd>
         <dt>g s</dt><dd>Schedule</dd>
