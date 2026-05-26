@@ -116,6 +116,14 @@ const server = createServer(async (req, res) => {
   if (path.startsWith("/api/v1/")) {
     const p = path.slice("/api/v1".length);
     if (p === "/health") return json(res, 200, { status: "ok" });
+    if (p === "/health/checks")
+      return json(res, 200, {
+        status: "ok",
+        checks: [
+          { domain: "Network", name: "Daemon IPC", severity: "ok", message: "Daemon reachable.", fix: "" },
+          { domain: "Storage", name: "Disk space", severity: "ok", message: "3 TB free.", fix: "" },
+        ],
+      });
     if (p === "/auth/login") return json(res, 200, { status: "ok" });
     if (p === "/auth/logout") return json(res, 200, { status: "ok" });
     if (p === "/channels") return json(res, 200, { channels: CHANNELS });

@@ -965,3 +965,33 @@ button.busy::after {
 }
 .conn-status[hidden] { display: none; }
 .conn-status::first-letter { /* the dot */ }
+
+/* Topbar health pill (item 13) — only shown when degraded. */
+.health-pill {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.health-pill[hidden] { display: none; }
+.health-pill.warn {
+  background: color-mix(in srgb, var(--secondary) 22%, transparent);
+  color: var(--secondary);
+}
+.health-pill.error {
+  background: color-mix(in srgb, var(--recording) 25%, transparent);
+  color: var(--recording);
+}
+
+/* System page — checks grouped by domain (item 13). */
+.sys-domain { margin-bottom: 0.8rem; }
+.sys-domain-title {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0.4rem 0 0.3rem;
+}
+.sys-fix { color: var(--muted); font-style: italic; }

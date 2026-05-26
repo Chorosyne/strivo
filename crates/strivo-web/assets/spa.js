@@ -48,6 +48,7 @@ const API = {
     }),
   pollNow: () => API._fetch("/poll_now", { method: "POST" }),
   health: () => API._fetch("/health"),
+  healthChecks: () => API._fetch("/health/checks"),
   storage: () => API._fetch("/storage"),
   settings: () => API._fetch("/settings"),
   patreon: () => API._fetch("/patreon"),
@@ -366,6 +367,8 @@ function chrome(content) {
               aria-label="Storage usage"></span>
         <span id="conn-status" class="conn-status" role="status" hidden
               title="Live updates connection">● reconnecting…</span>
+        <a id="health-pill" class="health-pill" href="#/system" hidden
+           role="status" title="System health — click for details"></a>
         <span class="spacer"></span>
         <nav class="topnav" aria-label="Main navigation">${nav}</nav>
         <button id="poll-now" title="Poke channel monitor (p)"
@@ -399,6 +402,8 @@ function setupChromeHandlers() {
   });
   // W5 — refresh the topbar storage pill on every chrome mount.
   refreshStoragePill();
+  // Health pill — amber/red when any check is degraded (roadmap item 13).
+  refreshHealthPill();
   // Channel list lives in the left rail on every page.
   paintChannelList();
 }
@@ -417,6 +422,28 @@ async function refreshStoragePill() {
     }
   } catch (_) {
     pill.style.display = "none";
+  }
+}
+
+// Topbar health pill: only shown when the worst check is warn/error, so a
+// healthy system stays uncluttered. Links to the System page. (Item 13.)
+async function refreshHealthPill() {
+  const pill = document.getElementById("health-pill");
+  if (!pill) return;
+  try {
+    const h = await API.healthChecks();
+    const worst = h.status || "ok";
+    if (worst === "ok") {
+      pill.hidden = true;
+      return;
+    }
+    const bad = (h.checks || []).filter((c) => c.severity !== "ok");
+    pill.className = `health-pill ${worst}`;
+    pill.textContent = `${worst === "error" ? "✕" : "▲"} ${bad.length} issue${bad.length === 1 ? "" : "s"}`;
+    pill.title = bad.map((c) => `${c.domain}/${c.name}: ${c.message}`).join("\n");
+    pill.hidden = false;
+  } catch (_) {
+    pill.hidden = true;
   }
 }
 
@@ -1423,51 +1450,41 @@ async function renderSettings() {
 // ── System (item 7) — version, daemon connectivity, severity-tiered
 // health checks, disk gauge, tasks. (research §E)
 async function renderSystem() {
-  const [health, storage, settings] = await Promise.all([
+  const [health, storage, checksResp, settings] = await Promise.all([
     API.health().catch(() => null),
     API.storage().catch(() => null),
+    API.healthChecks().catch(() => null),
     API.settings().catch(() => null),
   ]);
   root.removeAttribute("aria-busy");
 
-  // Build severity-tiered health checks: each {sev: ok|warn|error, msg}.
-  const checks = [];
-  checks.push(
-    health
-      ? { sev: "ok", label: "Daemon", msg: `reachable · v${health.version || "?"}` }
-      : { sev: "error", label: "Daemon", msg: "not reachable" },
-  );
-  if (settings) {
-    const plat = (name, ok) =>
-      checks.push({
-        sev: ok ? "ok" : "warn",
-        label: name,
-        msg: ok ? "configured" : "not configured",
-      });
-    plat("Twitch", settings.twitch_configured);
-    plat("YouTube", settings.youtube_configured);
-    plat("Patreon", settings.patreon_configured);
-  }
-  if (storage && storage.filesystem_total_bytes) {
-    const freePct = (storage.filesystem_avail_bytes / storage.filesystem_total_bytes) * 100;
-    checks.push({
-      sev: freePct < 5 ? "error" : freePct < 10 ? "warn" : "ok",
-      label: "Disk space",
-      msg: `${formatBytes(storage.filesystem_avail_bytes)} free (${freePct.toFixed(0)}%)`,
-    });
-  }
+  // Server-side health-check registry is the single source of truth
+  // (roadmap item 13): {domain, name, severity, message, fix}.
+  const serverChecks = (checksResp && checksResp.checks) || [
+    { domain: "Network", name: "Daemon IPC", severity: "error", message: "not reachable", fix: "" },
+  ];
+  const checks = serverChecks.map((c) => ({ sev: c.severity, label: c.name, msg: c.message }));
   const activeRec = recCache.filter((r) => isInProgress(r.state)).length;
 
   const sevGlyph = { ok: "✓", warn: "▲", error: "✕" };
-  const healthRows = checks
-    .map(
-      (c) => `
-    <div class="sys-check ${c.sev}">
-      <span class="sys-sev">${sevGlyph[c.sev]}</span>
-      <span class="sys-label">${escape(c.label)}</span>
-      <span class="sys-msg">${escape(c.msg)}</span>
+  // Group rows by domain so related checks (Storage / Platform Auth /
+  // Network) sit together, each with its remediation hint.
+  const domains = [...new Set(serverChecks.map((c) => c.domain))];
+  const healthRows = domains
+    .map((domain) => {
+      const rows = serverChecks
+        .filter((c) => c.domain === domain)
+        .map(
+          (c) => `
+    <div class="sys-check ${c.severity}">
+      <span class="sys-sev">${sevGlyph[c.severity] || "•"}</span>
+      <span class="sys-label">${escape(c.name)}</span>
+      <span class="sys-msg">${escape(c.message)}${c.fix ? ` <span class="sys-fix">— ${escape(c.fix)}</span>` : ""}</span>
     </div>`,
-    )
+        )
+        .join("");
+      return `<div class="sys-domain"><h3 class="sys-domain-title">${escape(domain)}</h3>${rows}</div>`;
+    })
     .join("");
 
   // Disk gauge.
