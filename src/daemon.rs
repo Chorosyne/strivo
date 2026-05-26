@@ -21,6 +21,11 @@ use crate::recording::RecordingCommand;
 /// can't grow without limit over a long-running daemon (roadmap item 8).
 const MAX_TERMINAL_RECORDINGS: usize = 200;
 
+/// Cap on concurrently-handled client connections (TUI + webui share the
+/// daemon over the Unix socket). Excess connections are dropped rather than
+/// queued so the accept loop can't be starved (roadmap item 9).
+const MAX_CLIENT_TASKS: usize = 64;
+
 /// Daemon state — maintained from internal events.
 struct DaemonState {
     channels: Vec<ChannelEntry>,
@@ -486,6 +491,11 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
         });
     }
 
+    // Cap concurrent client handler tasks so a flood of connections can't
+    // spawn unbounded tasks (roadmap item 9). Excess connections are dropped
+    // immediately; a TUI/webui reconnects on its own.
+    let client_sem = Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_TASKS));
+
     // Main loop
     loop {
         tokio::select! {
@@ -493,6 +503,16 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             result = listener.accept() => {
                 match result {
                     Ok((stream, _)) => {
+                        let permit = match client_sem.clone().try_acquire_owned() {
+                            Ok(p) => p,
+                            Err(_) => {
+                                tracing::warn!(
+                                    "client task limit ({MAX_CLIENT_TASKS}) reached; dropping connection"
+                                );
+                                drop(stream);
+                                continue;
+                            }
+                        };
                         let snapshot = state.snapshot();
                         let client_broadcast_rx = broadcast_tx.subscribe();
                         let rec_tx = recording_tx.clone();
@@ -505,6 +525,8 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                         let client_recordings = state.recordings.clone();
                         let client_event_tx = event_tx.clone();
                         tokio::spawn(async move {
+                            // Held for the connection's lifetime; released on drop.
+                            let _permit = permit;
                             if let Err(e) = handle_client(
                                 stream,
                                 snapshot,

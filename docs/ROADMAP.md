@@ -43,7 +43,7 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   type (`type,title,status,detail,instance`); replace ad-hoc JSON error shapes.
 - [x] **8. Bound the recordings map** `[review]` — evict finished/failed jobs past a
   cap or age so `app.recordings` doesn't grow unbounded for the process lifetime.
-- [ ] **9. Cap concurrent client tasks** `[review]` — bound the per-connection IPC
+- [x] **9. Cap concurrent client tasks** `[review]` — bound the per-connection IPC
   task spawns in the daemon (semaphore / join-set with limit).
 - [ ] **10. Dead-code sweep** `[review]` — `session_secret: Option<…>` ⇒ `String`
   (always Some at startup); delete the retired/unmounted legacy htmx route modules
