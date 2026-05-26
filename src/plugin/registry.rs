@@ -243,11 +243,11 @@ impl PluginRegistry {
         plugin_name: &str,
         verb: &str,
         selection: &[uuid::Uuid],
-        app: &AppState,
+        ctx: &crate::plugin::VerbContext,
     ) -> Vec<PluginAction> {
         for plugin in &mut self.plugins {
             if plugin.name() == plugin_name {
-                return plugin.on_verb(verb, selection, app);
+                return plugin.on_verb(verb, selection, ctx);
             }
         }
         Vec::new()

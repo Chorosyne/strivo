@@ -126,11 +126,14 @@ async fn run_loop(
             // PluginRegistry handle in scope), then feed any returned
             // PluginActions back through the existing dispatcher.
             if let Some(pending) = app.pending_plugin_verb.take() {
+                let ctx = crate::plugin::VerbContext {
+                    recordings: &app.recordings,
+                };
                 let returned = registry.dispatch_verb(
                     pending.plugin,
                     pending.verb,
                     &pending.selection,
-                    app,
+                    &ctx,
                 );
                 if let Some(action) =
                     process_plugin_actions(returned, app, registry)

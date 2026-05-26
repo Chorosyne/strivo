@@ -509,7 +509,7 @@ async fn plugin_rpc(
                 "status": "queued",
                 "plugin": plugin,
                 "verb": verb,
-                "note": "daemon plugin host is the W2-phase-2 follow-up; the dispatch is currently logged only"
+                "note": "dispatched in the daemon plugin host (W2-phase-3); SpawnTask work runs headless"
             })),
         )
             .into_response(),

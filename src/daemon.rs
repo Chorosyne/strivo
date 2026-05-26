@@ -192,6 +192,10 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             }
         }
     }
+    // W2-phase-3: share the registry with per-connection handlers so
+    // PluginRpc over IPC can actually dispatch on_verb (it's idle after
+    // init_all otherwise). tokio Mutex — dispatch is sync and brief.
+    let registry = std::sync::Arc::new(tokio::sync::Mutex::new(host.registry));
 
     // Open the persistence db (jobs / catalog / crunchr_queue) and recover any
     // jobs that were marked running when the daemon last died. Recovery is
@@ -458,6 +462,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                         let cancel_ref = cancel.clone();
 
                         let client_config = config.clone();
+                        let client_registry = registry.clone();
+                        let client_recordings = state.recordings.clone();
+                        let client_event_tx = event_tx.clone();
                         tokio::spawn(async move {
                             if let Err(e) = handle_client(
                                 stream,
@@ -466,6 +473,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                                 rec_tx,
                                 bulk_tx_ref,
                                 client_config,
+                                client_registry,
+                                client_recordings,
+                                client_event_tx,
                                 poll_notify,
                                 cancel_ref,
                             ).await {
@@ -549,6 +559,9 @@ async fn handle_client(
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
     bulk_tx: Option<mpsc::UnboundedSender<crate::recording::bulk::BulkCommand>>,
     config: AppConfig,
+    registry: Arc<tokio::sync::Mutex<crate::plugin::registry::PluginRegistry>>,
+    recordings: HashMap<Uuid, RecordingJob>,
+    event_tx: mpsc::UnboundedSender<AppEvent>,
     poll_notify: Option<Arc<tokio::sync::Notify>>,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -700,17 +713,28 @@ async fn handle_client(
                 selection,
                 payload: _,
             } => {
-                // W2 — IPC + HTTP path exist; plugin loading inside
-                // the daemon process is the phase-2 follow-up. Log
-                // verbosely so the webui's error surface stays
-                // actionable.
-                tracing::warn!(
+                // W2-phase-3 — actually dispatch the verb. The registry
+                // is shared (Arc<Mutex>); on_verb takes the narrow
+                // VerbContext so we don't need a full AppState. The
+                // returned PluginActions are processed headless: the
+                // SpawnTask futures (the real work — transcription,
+                // archive pulls) are spawned, and SetStatus/Notify are
+                // surfaced as daemon notifications. TUI-only actions
+                // (ActivatePane/NavigateBack) are no-ops here.
+                let actions = {
+                    let mut reg = registry.lock().await;
+                    let ctx = crate::plugin::VerbContext {
+                        recordings: &recordings,
+                    };
+                    reg.dispatch_verb(&plugin, &verb, &selection, &ctx)
+                };
+                tracing::info!(
                     plugin = %plugin,
                     verb = %verb,
-                    selection_count = selection.len(),
-                    "PluginRpc received in daemon mode; plugins are not yet loaded inside the daemon — \
-                     re-issue from the TUI or wait for the W2-phase-2 daemon plugin host"
+                    action_count = actions.len(),
+                    "daemon: dispatched plugin verb"
                 );
+                process_daemon_plugin_actions(actions, &registry, &event_tx);
             }
         }
     }
@@ -718,6 +742,50 @@ async fn handle_client(
     broadcast_task.abort();
     writer_task.abort();
     Ok(())
+}
+
+/// Process PluginActions returned by a daemon-side verb dispatch (W2-phase-3).
+/// Headless: the SpawnTask futures (the real work) are spawned, and their
+/// follow-up plugin events are pumped back through the shared registry so a
+/// multi-stage verb runs to completion. SetStatus/Notify become daemon
+/// notifications (visible to connected TUI/web clients). TUI-only actions
+/// (pane activation, mpv playback) are no-ops in the daemon.
+fn process_daemon_plugin_actions(
+    actions: Vec<crate::plugin::PluginAction>,
+    registry: &Arc<tokio::sync::Mutex<crate::plugin::registry::PluginRegistry>>,
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+) {
+    use crate::plugin::PluginAction as PA;
+    for action in actions {
+        match action {
+            PA::SetStatus(s) => {
+                let _ = event_tx.send(AppEvent::notification("Plugin".to_string(), s));
+            }
+            PA::Notify { title, body } => {
+                let _ = event_tx.send(AppEvent::notification(title, body));
+            }
+            PA::SpawnTask {
+                plugin_name,
+                future,
+            } => {
+                let reg = registry.clone();
+                let etx = event_tx.clone();
+                tokio::spawn(async move {
+                    let result = future.await;
+                    let next = {
+                        let mut r = reg.lock().await;
+                        r.dispatch_plugin_event(plugin_name, result)
+                    };
+                    // Recurse: the follow-up actions may spawn further
+                    // stages (e.g. transcription pipeline steps).
+                    process_daemon_plugin_actions(next, &reg, &etx);
+                });
+            }
+            // No daemon equivalent (no TUI panes / mpv / config persistence
+            // path here); the TUI handles these when it dispatches verbs.
+            _ => {}
+        }
+    }
 }
 
 /// Persist a recording's lifecycle for crash-recovery. Best-effort — a sqlite

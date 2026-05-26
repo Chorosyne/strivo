@@ -441,6 +441,16 @@ pub enum StatusSlot {
     None,
 }
 
+/// Minimal context for item-scoped verb dispatch (W2-phase-3). `on_verb`
+/// only ever needs the recording table to resolve the selected UUIDs, so
+/// it takes this narrow view rather than the full `&AppState`. That lets
+/// the headless daemon dispatch verbs over IPC — it has the recordings
+/// map but cannot construct an `AppState` (which initializes terminal
+/// image protocols). The TUI builds it from `&app.recordings`.
+pub struct VerbContext<'a> {
+    pub recordings: &'a std::collections::HashMap<uuid::Uuid, crate::recording::job::RecordingJob>,
+}
+
 pub trait Plugin: Send {
     /// Unique name for this plugin (e.g., "crunchr").
     fn name(&self) -> &'static str;
@@ -487,7 +497,7 @@ pub trait Plugin: Send {
         &mut self,
         _verb: &str,
         _selection: &[uuid::Uuid],
-        _app: &AppState,
+        _ctx: &VerbContext,
     ) -> Vec<PluginAction> {
         Vec::new()
     }
