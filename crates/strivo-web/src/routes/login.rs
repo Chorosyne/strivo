@@ -93,8 +93,18 @@ async fn login(
         "{SESSION_COOKIE}={cookie_value}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL_SECS}"
     );
 
+    let cookie_header = match HeaderValue::from_str(&cookie) {
+        Ok(h) => h,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "could not encode session cookie"})),
+            )
+                .into_response();
+        }
+    };
     let mut headers = HeaderMap::new();
-    headers.insert(SET_COOKIE, cookie.parse().unwrap());
+    headers.insert(SET_COOKIE, cookie_header);
     (
         StatusCode::OK,
         headers,
@@ -107,7 +117,11 @@ async fn login(
 async fn logout() -> impl IntoResponse {
     let cookie = format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     let mut headers = HeaderMap::new();
-    headers.insert(SET_COOKIE, cookie.parse().unwrap());
+    // Clearing cookie is a fixed string; fall back to a no-cookie 200 rather
+    // than panic if it somehow fails to parse.
+    if let Ok(h) = HeaderValue::from_str(&cookie) {
+        headers.insert(SET_COOKIE, h);
+    }
     (StatusCode::OK, headers, Json(json!({"status": "logged out"}))).into_response()
 }
 

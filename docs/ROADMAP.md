@@ -20,7 +20,7 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   mitigates but doesn't remove brute-force.
 - [x] **2. Recordings path containment** `[review]` — canonicalise the served file
   path against the recordings root; reject traversal (`..`, symlink escape) with 403.
-- [ ] **3. `login.rs` Set-Cookie hardening** `[review]` — replace `.parse().unwrap()`
+- [x] **3. `login.rs` Set-Cookie hardening** `[review]` — replace `.parse().unwrap()`
   with graceful error; never panic the handler on a malformed header value.
 - [ ] **4. Cookie attributes + idle refresh** `[F]` — `__Host-strivo_session; HttpOnly;
   Secure; SameSite=Lax; Path=/`; rotate HMAC session on activity; expired/invalid HMAC
