@@ -85,8 +85,17 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   shadow), submit/delete button colors. Reference CSS in `docs/reference/`.
   Keep all existing DOM/class names; e2e must stay green. Likely multi-fire
   (mark `- [~]`): tokens+chrome first, then cards/tables/dialogs/forms.
-- [ ] **14. Scheduled-task duality** `[A][E]` — every periodic task gets a manual
-  "Run now" enqueuing the same command; intervals editable; running tasks cancellable.
+- [x] **14. Scheduled-task duality** `[A][E]` — System "Tasks" section makes
+  scheduled-vs-on-demand explicit: the channel-poll task shows its cadence +
+  a Run-now button (enqueues the same `PollNow` command as the timer);
+  scheduled recordings listed with cron/duration; active recordings link to
+  the dashboard Stop. (Live interval editing split to item 14b — needs daemon
+  config hot-reload since the monitor reads poll_interval once at startup.)
+- [ ] **14b. Live-editable poll interval** `[E]` — daemon config hot-reload:
+  monitor re-reads `poll_interval_secs` on a `SetPollInterval` IPC message +
+  a settings-write endpoint, so the System Tasks interval becomes editable
+  without a restart. (Deferred from 14 to avoid a config-write that silently
+  needs a restart.)
 - [ ] **15. Logs viewer polish** `[E]` — in-UI level selector + rolling/capped files
   so users never SSH for logs.
 - [ ] **16. Config/DB backup + restore** `[E]` — scheduled + on-demand backup of

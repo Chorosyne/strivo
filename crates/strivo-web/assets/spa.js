@@ -1518,15 +1518,51 @@ async function renderSystem() {
       </section>
       <section class="cfg-card">
         <h2 class="cfg-title">Tasks</h2>
-        <dl class="cfg-list">
-          <dt>Channel poll</dt><dd>every ${settings ? settings.poll_interval_secs : "?"}s</dd>
-          <dt>Active recordings</dt><dd>${activeRec}</dd>
-          <dt>Scheduled</dt><dd>${settings ? (settings.schedule || []).length : "?"}</dd>
-        </dl>
+        <div class="task-row">
+          <div class="task-info">
+            <span class="task-name">Channel poll</span>
+            <span class="task-cadence">every ${settings ? settings.poll_interval_secs : "?"}s</span>
+          </div>
+          <button id="task-poll-now" class="sm" title="Run the channel poll now">↻ Run now</button>
+        </div>
+        ${(settings && settings.schedule && settings.schedule.length
+          ? settings.schedule
+          : []
+        )
+          .map(
+            (s) => `
+        <div class="task-row">
+          <div class="task-info">
+            <span class="task-name">⏱ ${escape(s.channel || "scheduled")}</span>
+            <span class="task-cadence">${escape(s.cron || "")}${s.duration ? ` · ${escape(s.duration)}` : ""}</span>
+          </div>
+        </div>`,
+          )
+          .join("")}
+        <div class="task-row">
+          <div class="task-info">
+            <span class="task-name">Active recordings</span>
+            <span class="task-cadence">${activeRec} running${activeRec ? " · stop from the dashboard" : ""}</span>
+          </div>
+          ${activeRec ? '<a class="sm" href="#/library">View</a>' : ""}
+        </div>
       </section>
     </div>
   `);
   setupChromeHandlers();
+  // Run-now duality: poll task enqueues the same command as the scheduled poll.
+  document.getElementById("task-poll-now")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await API.pollNow();
+      Toast.success("Channel poll triggered");
+    } catch (err) {
+      Toast.error(`Poll failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 // ── Live-count ticker ────────────────────────────────────────────────
