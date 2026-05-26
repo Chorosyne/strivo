@@ -115,6 +115,7 @@ pub enum KeyAction {
 
     // Sidebar / Detail
     ToggleAutoRecord,
+    ToggleBulkDownload,
 
     // Detail
     StartRecording,
@@ -203,6 +204,7 @@ impl KeyAction {
             Self::NavBack => "back",
             Self::NavActivate => "open / activate",
             Self::ToggleAutoRecord => "toggle auto-record",
+            Self::ToggleBulkDownload => "start/stop bulk download",
             Self::StartRecording => "start recording",
             Self::StartRecordingFromStart => "record from start (YouTube)",
             Self::WatchStream => "watch in mpv",
@@ -268,6 +270,7 @@ impl KeyAction {
             Self::NavBack => "NavBack",
             Self::NavActivate => "NavActivate",
             Self::ToggleAutoRecord => "ToggleAutoRecord",
+            Self::ToggleBulkDownload => "ToggleBulkDownload",
             Self::StartRecording => "StartRecording",
             Self::StartRecordingFromStart => "StartRecordingFromStart",
             Self::WatchStream => "WatchStream",
@@ -335,6 +338,7 @@ impl KeyAction {
             "NavBack" => Self::NavBack,
             "NavActivate" => Self::NavActivate,
             "ToggleAutoRecord" => Self::ToggleAutoRecord,
+            "ToggleBulkDownload" => Self::ToggleBulkDownload,
             "StartRecording" => Self::StartRecording,
             "StartRecordingFromStart" => Self::StartRecordingFromStart,
             "WatchStream" => Self::WatchStream,
@@ -831,6 +835,12 @@ fn table() -> &'static [Chord] {
         ),
         c(
             Layer::Sidebar,
+            KeyPattern::plain(Char('b')),
+            KeyAction::ToggleBulkDownload,
+            "start/stop bulk download",
+        ),
+        c(
+            Layer::Sidebar,
             KeyPattern::plain(Char('m')),
             KeyAction::MarkSetPrompt,
             "set mark on current",
@@ -871,6 +881,12 @@ fn table() -> &'static [Chord] {
             KeyPattern::plain(Char('a')),
             KeyAction::ToggleAutoRecord,
             "toggle auto-record",
+        ),
+        c(
+            Layer::Detail,
+            KeyPattern::plain(Char('b')),
+            KeyAction::ToggleBulkDownload,
+            "start/stop bulk download",
         ),
         c(
             Layer::Detail,

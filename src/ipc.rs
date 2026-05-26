@@ -33,6 +33,19 @@ pub enum ClientMessage {
         #[serde(default)]
         payload: serde_json::Value,
     },
+    /// Start or stop a per-channel bulk back-catalog download (task #71).
+    BulkDownload {
+        channel_id: String,
+        channel_name: String,
+        platform: PlatformKind,
+        action: BulkAction,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BulkAction {
+    Start,
+    Stop,
 }
 
 /// Messages sent from daemon to TUI client.

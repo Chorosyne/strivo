@@ -149,6 +149,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
                 right_parts.push(Span::styled("◉", Theme::status_live()));
             }
 
+            // Bulk-download indicator (task #71): ⇩ with a done/total
+            // counter while a back-catalog pull is running for this channel.
+            if let Some(status) = app.bulk_downloads.get(&ch.id) {
+                if status.active {
+                    if !right_parts.is_empty() {
+                        right_parts.push(Span::raw(" "));
+                    }
+                    let label = if status.total > 0 {
+                        format!("⇩{}/{}", status.done, status.total)
+                    } else {
+                        "⇩…".to_string()
+                    };
+                    right_parts.push(Span::styled(label, Style::new().fg(Theme::secondary())));
+                }
+            }
+
             // Unwatched count
             let unwatched = app.unwatched_count_for_channel(&ch.id);
             if unwatched > 0 {

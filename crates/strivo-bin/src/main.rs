@@ -243,7 +243,7 @@ async fn handle_pull(
         crunchr_auto: !no_transcribe && config.crunchr.enabled,
     };
 
-    let report = catalog::run_pull(&db, vods, &opts, None).await?;
+    let report = catalog::run_pull(&db, vods, &opts, None, None).await?;
     println!(
         "Done. discovered={} skipped={} downloaded={} failed={}",
         report.discovered,

@@ -1,4 +1,5 @@
 pub mod adtrim;
+pub mod bulk;
 pub mod catalog;
 pub mod chapters;
 pub mod ffmpeg;

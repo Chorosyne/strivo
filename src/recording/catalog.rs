@@ -72,6 +72,7 @@ pub async fn run_pull(
     vods: Vec<VodEntry>,
     opts: &CatalogPullOptions,
     progress: Option<ProgressTx>,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> Result<CatalogReport> {
     let mut report = CatalogReport {
         discovered: vods.len(),
@@ -82,6 +83,14 @@ pub async fn run_pull(
         .map(|p| p.send(CatalogProgress::Discovered(report.discovered)));
 
     for vod in vods {
+        // Cooperative cancellation (task #71): a per-channel bulk-DL can
+        // be stopped from the TUI. We check between vods — an in-flight
+        // yt-dlp download finishes, then we stop before the next one.
+        if cancel.is_some_and(|c| c.is_cancelled()) {
+            tracing::info!("catalog: bulk pull cancelled after {} downloaded", report.downloaded);
+            break;
+        }
+
         // Always record discovery — lets future re-runs see the title even if
         // we never get to download.
         if let Err(e) = db.upsert_catalog_entry(&vod).await {

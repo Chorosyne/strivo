@@ -395,6 +395,7 @@ pub enum DaemonEventKind {
     PlatformAuthenticated,
     PatreonPostFound,
     PatreonState,
+    BulkProgress,
     ScheduleFired,
     Error,
 }
@@ -415,6 +416,7 @@ impl DaemonEventKind {
             DaemonEvent::PlatformAuthenticated { .. } => Self::PlatformAuthenticated,
             DaemonEvent::PatreonPostFound { .. } => Self::PatreonPostFound,
             DaemonEvent::PatreonState { .. } => Self::PatreonState,
+            DaemonEvent::BulkProgress { .. } => Self::BulkProgress,
             DaemonEvent::ScheduleFired { .. } => Self::ScheduleFired,
             DaemonEvent::Error(_) => Self::Error,
         }

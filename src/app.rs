@@ -61,6 +61,14 @@ pub enum DaemonEvent {
         creators: Vec<ChannelEntry>,
         posts: Vec<crate::platform::patreon::PatreonPost>,
     },
+    /// Progress of a per-channel bulk back-catalog download (task #71).
+    /// `active` is true while running, false on completion/cancel/error.
+    BulkProgress {
+        channel_id: String,
+        done: usize,
+        total: usize,
+        active: bool,
+    },
     /// A cron schedule fired and a recording was kicked off. Includes the
     /// pre-generated `job_id` so the TUI can correlate with the
     /// `RecordingStarted` that follows.
@@ -71,6 +79,14 @@ pub enum DaemonEvent {
         duration_secs: u64,
     },
     Error(String),
+}
+
+/// Per-channel bulk back-catalog download status held in the TUI (task #71).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BulkDlStatus {
+    pub done: usize,
+    pub total: usize,
+    pub active: bool,
 }
 
 /// Events handled by the TUI application.
@@ -463,6 +479,11 @@ pub struct AppState {
     /// Cursor into the selected creator's post list (detail pane).
     pub patreon_post_cursor: usize,
 
+    /// Per-channel bulk back-catalog download status (task #71):
+    /// channel_id -> (done, total, active). Drives the sidebar indicator
+    /// and the start/stop toggle.
+    pub bulk_downloads: HashMap<String, BulkDlStatus>,
+
     // Thumbnail cache (channel_id -> protocol state for rendering)
     pub thumbnail_cache: HashMap<String, PathBuf>,
     pub thumbnail_protocols: HashMap<String, StatefulProtocol>,
@@ -836,6 +857,7 @@ impl AppState {
             patreon_connected: false,
             patreon_posts: HashMap::new(),
             patreon_post_cursor: 0,
+            bulk_downloads: HashMap::new(),
             thumbnail_cache: HashMap::new(),
             thumbnail_protocols: HashMap::new(),
             picker: {
@@ -1639,6 +1661,23 @@ impl AppState {
             } => {
                 self.status_message = format!("Patreon: {creator_name} posted '{post_title}'");
             }
+            DaemonEvent::BulkProgress {
+                channel_id,
+                done,
+                total,
+                active,
+            } => {
+                if active {
+                    self.bulk_downloads.insert(
+                        channel_id,
+                        BulkDlStatus { done, total, active },
+                    );
+                } else {
+                    // Completed/cancelled — drop the row so the sidebar
+                    // indicator clears.
+                    self.bulk_downloads.remove(&channel_id);
+                }
+            }
             DaemonEvent::PatreonState { creators, posts } => {
                 // Cache posts by campaign_id, newest first.
                 let mut by_campaign: HashMap<String, Vec<crate::platform::patreon::PatreonPost>> =
@@ -2211,6 +2250,10 @@ impl AppState {
             A::NavActivate => self.pane_nav_activate(),
             A::ToggleAutoRecord => {
                 self.toggle_auto_record_on_selected();
+                None
+            }
+            A::ToggleBulkDownload => {
+                self.toggle_bulk_download_on_selected();
                 None
             }
             // Default action records from the start of the stream:
@@ -2984,6 +3027,45 @@ impl AppState {
     }
 
     // ---- Pane-action helpers ----
+
+    /// Start or stop a per-channel bulk back-catalog download on the
+    /// selected channel (task #71). Bulk DL runs in the daemon, so this
+    /// only works when connected over IPC; in standalone mode we tell the
+    /// user to use the `pull` CLI.
+    fn toggle_bulk_download_on_selected(&mut self) {
+        let Some(ch) = self.channels.get(self.selected_channel) else {
+            return;
+        };
+        let channel_id = ch.id.clone();
+        let channel_name = ch.display_name.clone();
+        let platform = ch.platform;
+
+        let Some(ref tx) = self.daemon_tx else {
+            self.status_message =
+                "Bulk download needs the daemon — run `strivo daemon` or use `strivo pull`"
+                    .to_string();
+            return;
+        };
+
+        let currently_active = self
+            .bulk_downloads
+            .get(&channel_id)
+            .map(|s| s.active)
+            .unwrap_or(false);
+        let action = if currently_active {
+            crate::ipc::BulkAction::Stop
+        } else {
+            crate::ipc::BulkAction::Start
+        };
+        let verb = if currently_active { "Stopping" } else { "Starting" };
+        let _ = tx.send(crate::ipc::ClientMessage::BulkDownload {
+            channel_id,
+            channel_name: channel_name.clone(),
+            platform,
+            action,
+        });
+        self.status_message = format!("{verb} bulk download for {channel_name}…");
+    }
 
     fn toggle_auto_record_on_selected(&mut self) {
         let Some(idx) = self

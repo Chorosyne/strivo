@@ -334,6 +334,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
         crate::recording::run_manager(rec_config, rec_twitch, recording_rx, rec_tx, rec_cancel).await;
     });
 
+    // Spawn the per-channel bulk back-catalog download manager (task #71).
+    let bulk_tx = crate::recording::bulk::spawn(config.clone(), event_tx.clone());
+
     // Spawn channel monitor
     let poll_notify = if !platforms.is_empty() {
         let mut monitor = ChannelMonitor::new(
@@ -450,6 +453,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                         let snapshot = state.snapshot();
                         let client_broadcast_rx = broadcast_tx.subscribe();
                         let rec_tx = recording_tx.clone();
+                        let bulk_tx_ref = Some(bulk_tx.clone());
                         let poll_notify = poll_notify.clone();
                         let cancel_ref = cancel.clone();
 
@@ -459,6 +463,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                                 snapshot,
                                 client_broadcast_rx,
                                 rec_tx,
+                                bulk_tx_ref,
                                 poll_notify,
                                 cancel_ref,
                             ).await {
@@ -540,6 +545,7 @@ async fn handle_client(
     snapshot: ServerMessage,
     broadcast_rx: broadcast::Receiver<DaemonEvent>,
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
+    bulk_tx: Option<mpsc::UnboundedSender<crate::recording::bulk::BulkCommand>>,
     poll_notify: Option<Arc<tokio::sync::Notify>>,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -633,6 +639,28 @@ async fn handle_client(
             ClientMessage::Shutdown => {
                 cancel.cancel();
                 break;
+            }
+            ClientMessage::BulkDownload {
+                channel_id,
+                channel_name,
+                platform,
+                action,
+            } => {
+                let cmd = match action {
+                    crate::ipc::BulkAction::Start => {
+                        crate::recording::bulk::BulkCommand::Start {
+                            channel_id,
+                            channel_name,
+                            platform,
+                        }
+                    }
+                    crate::ipc::BulkAction::Stop => {
+                        crate::recording::bulk::BulkCommand::Stop { channel_id }
+                    }
+                };
+                if let Some(ref tx) = bulk_tx {
+                    let _ = tx.send(cmd);
+                }
             }
             ClientMessage::PluginRpc {
                 plugin,
