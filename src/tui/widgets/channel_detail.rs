@@ -69,6 +69,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
         return;
     };
 
+    // Patreon creators have no live state — render a post list the user
+    // can pull from at will (task #69) instead of the stream metadata.
+    if channel.platform == crate::platform::PlatformKind::Patreon {
+        let campaign_id = channel.id.clone();
+        let display_name = channel.display_name.clone();
+        let inner = block.inner(area);
+        let block = block.title(" Patreon — Recent Posts ");
+        frame.render_widget(block, area);
+        render_patreon_posts(frame, inner, app, &campaign_id, &display_name);
+        return;
+    }
+
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -284,4 +296,70 @@ fn format_duration(dur: chrono::TimeDelta) -> String {
     } else {
         format!("{}m", mins)
     }
+}
+
+/// Render the recent-posts list for a selected Patreon creator. Each row
+/// is a video post; the cursor (app.patreon_post_cursor) highlights the
+/// one `p`/Enter will pull. Pulled posts that already have a recording
+/// on disk are marked. (task #69)
+fn render_patreon_posts(
+    frame: &mut Frame,
+    area: Rect,
+    app: &AppState,
+    campaign_id: &str,
+    display_name: &str,
+) {
+    use ratatui::widgets::{List, ListItem, ListState};
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            display_name.to_string(),
+            Style::new().fg(Theme::patreon()).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled(
+            "[p] pull  [j/k] move  [t] toggle auto-pull",
+            Style::new().fg(Theme::muted()),
+        ),
+    ]));
+
+    let [head_area, list_area] =
+        Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(area);
+    frame.render_widget(header, head_area);
+
+    let posts = app.patreon_posts.get(campaign_id);
+    let Some(posts) = posts.filter(|p| !p.is_empty()) else {
+        let empty = Paragraph::new(
+            "No video posts yet.\nThe monitor refreshes this list every poll.",
+        )
+        .style(Style::new().fg(Theme::muted()))
+        .wrap(Wrap { trim: true });
+        frame.render_widget(empty, list_area);
+        return;
+    };
+
+    let cursor = app.patreon_post_cursor.min(posts.len() - 1);
+    let items: Vec<ListItem> = posts
+        .iter()
+        .map(|post| {
+            // published_at is RFC3339; show just the date portion.
+            let date = post.published_at.get(0..10).unwrap_or("");
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{date}  "), Style::new().fg(Theme::dim())),
+                Span::styled(post.title.clone(), Style::new().fg(Theme::fg())),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(
+            Style::new()
+                .fg(Theme::bg())
+                .bg(Theme::patreon())
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+    let mut state = ListState::default();
+    state.select(Some(cursor));
+    frame.render_stateful_widget(list, list_area, &mut state);
 }

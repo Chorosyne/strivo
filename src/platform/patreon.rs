@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -32,7 +32,7 @@ pub struct PatreonCreator {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatreonPost {
     pub id: String,
     pub campaign_id: String,
@@ -40,6 +40,28 @@ pub struct PatreonPost {
     pub url: String,
     pub published_at: String,
     pub embed_url: Option<String>,
+}
+
+impl PatreonCreator {
+    /// Represent a pledged creator as a sidebar ChannelEntry so it can
+    /// live in the same list the Twitch/YT channels do. Patreon has no
+    /// live concept, so is_live is always false and the row sorts into
+    /// the dedicated Patreon section (sidebar.rs groups by platform).
+    pub fn to_channel_entry(&self) -> crate::platform::ChannelEntry {
+        crate::platform::ChannelEntry {
+            id: self.campaign_id.clone(),
+            platform: PlatformKind::Patreon,
+            name: self.vanity.clone().unwrap_or_else(|| self.campaign_id.clone()),
+            display_name: self.name.clone(),
+            is_live: false,
+            stream_title: self.tier.clone(),
+            game_or_category: None,
+            viewer_count: None,
+            started_at: None,
+            thumbnail_url: None,
+            auto_record: false,
+        }
+    }
 }
 
 pub struct PatreonClient {

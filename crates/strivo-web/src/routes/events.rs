@@ -73,6 +73,7 @@ fn daemon_event_kind(de: &strivo_core::app::DaemonEvent) -> &'static str {
         D::DeviceCodeRequired { .. } => "device-code-required",
         D::PlatformAuthenticated { .. } => "platform-authenticated",
         D::PatreonPostFound { .. } => "patreon-post",
+        D::PatreonState { .. } => "patreon-state",
         D::ScheduleFired { .. } => "schedule-fired",
         D::Error(_) => "error",
     }

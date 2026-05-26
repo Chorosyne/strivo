@@ -688,5 +688,45 @@ async fn handle_action(
             });
             app.status_message = format!("Opening {url_for_status}…");
         }
+        AppAction::PullPatreonPost {
+            embed_url,
+            creator_name,
+            post_title,
+        } => {
+            let output_path = crate::recording::build_output_path(
+                &app.config,
+                &creator_name,
+                crate::platform::PlatformKind::Patreon,
+                Some(&post_title),
+            );
+            let _ = recording_tx.send(RecordingCommand::DownloadVod {
+                url: embed_url,
+                channel_name: creator_name,
+                platform: crate::platform::PlatformKind::Patreon,
+                output_path,
+                cookies_path: None,
+                post_title: Some(post_title.clone()),
+            });
+            app.status_message = format!("Pulling '{post_title}'…");
+        }
+        AppAction::TogglePatreonAutoPull {
+            campaign_id,
+            creator_name,
+        } => {
+            let entries = &mut app.config.auto_pull_creators;
+            if let Some(pos) = entries.iter().position(|e| e.campaign_id == campaign_id) {
+                entries.remove(pos);
+                app.status_message = format!("Auto-pull OFF for {creator_name}");
+            } else {
+                entries.push(crate::config::AutoPullEntry {
+                    campaign_id,
+                    creator_name: creator_name.clone(),
+                });
+                app.status_message = format!("Auto-pull ON for {creator_name}");
+            }
+            if let Err(e) = app.config.save(None) {
+                app.status_message = format!("Config save failed: {e}");
+            }
+        }
     }
 }

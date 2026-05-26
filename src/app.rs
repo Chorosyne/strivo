@@ -51,6 +51,16 @@ pub enum DaemonEvent {
         creator_name: String,
         post_title: String,
     },
+    /// Full Patreon snapshot emitted by the monitor on every poll:
+    /// pledged creators (as sidebar rows) plus every video-bearing post
+    /// per creator. Drives the Patreon section in the sidebar and the
+    /// post list in the detail pane (task #69). Replaces the
+    /// fire-and-forget PatreonPostFound for UI purposes — that event is
+    /// kept only for the status-line ticker.
+    PatreonState {
+        creators: Vec<ChannelEntry>,
+        posts: Vec<crate::platform::patreon::PatreonPost>,
+    },
     /// A cron schedule fired and a recording was kicked off. Includes the
     /// pre-generated `job_id` so the TUI can correlate with the
     /// `RecordingStarted` that follows.
@@ -446,6 +456,13 @@ pub struct AppState {
     pub youtube_connected: bool,
     pub patreon_connected: bool,
 
+    /// Recent video posts per Patreon creator (campaign_id -> posts),
+    /// newest first. Populated by DaemonEvent::PatreonState; drives the
+    /// detail-pane post list (task #69).
+    pub patreon_posts: HashMap<String, Vec<crate::platform::patreon::PatreonPost>>,
+    /// Cursor into the selected creator's post list (detail pane).
+    pub patreon_post_cursor: usize,
+
     // Thumbnail cache (channel_id -> protocol state for rendering)
     pub thumbnail_cache: HashMap<String, PathBuf>,
     pub thumbnail_protocols: HashMap<String, StatefulProtocol>,
@@ -817,6 +834,8 @@ impl AppState {
             twitch_connected: false,
             youtube_connected: false,
             patreon_connected: false,
+            patreon_posts: HashMap::new(),
+            patreon_post_cursor: 0,
             thumbnail_cache: HashMap::new(),
             thumbnail_protocols: HashMap::new(),
             picker: {
@@ -1438,6 +1457,18 @@ impl AppState {
                             a.channel_id == ch.id && a.platform == ch.platform.to_string()
                         });
                 }
+                // The main monitor's ChannelsUpdated carries only the
+                // live platforms (Twitch/YT). Patreon creators arrive
+                // separately via PatreonState, so carry them across this
+                // wholesale replace instead of dropping them every poll
+                // (task #69).
+                let patreon_rows: Vec<ChannelEntry> = self
+                    .channels
+                    .iter()
+                    .filter(|c| c.platform == PlatformKind::Patreon)
+                    .cloned()
+                    .collect();
+                updated.extend(patreon_rows);
                 self.channels = updated;
 
                 // Restore selection by ID, fall back to clamping
@@ -1607,6 +1638,40 @@ impl AppState {
                 post_title,
             } => {
                 self.status_message = format!("Patreon: {creator_name} posted '{post_title}'");
+            }
+            DaemonEvent::PatreonState { creators, posts } => {
+                // Cache posts by campaign_id, newest first.
+                let mut by_campaign: HashMap<String, Vec<crate::platform::patreon::PatreonPost>> =
+                    HashMap::new();
+                for post in posts {
+                    by_campaign
+                        .entry(post.campaign_id.clone())
+                        .or_default()
+                        .push(post);
+                }
+                for list in by_campaign.values_mut() {
+                    list.sort_by(|a, b| b.published_at.cmp(&a.published_at));
+                }
+                self.patreon_posts = by_campaign;
+
+                // Replace the Patreon rows in the sidebar, preserving the
+                // current selection by id. Non-Patreon rows are untouched.
+                let prev_selected_id = self
+                    .channels
+                    .get(self.selected_channel)
+                    .map(|ch| ch.id.clone());
+                self.channels
+                    .retain(|c| c.platform != PlatformKind::Patreon);
+                self.channels.extend(creators);
+                if let Some(ref prev_id) = prev_selected_id {
+                    if let Some(idx) = self.channels.iter().position(|c| &c.id == prev_id) {
+                        self.selected_channel = idx;
+                    }
+                }
+                if self.selected_channel >= self.channels.len() {
+                    self.selected_channel = self.channels.len().saturating_sub(1);
+                }
+                self.rebuild_sidebar_order();
             }
             DaemonEvent::ScheduleFired {
                 channel,
@@ -2531,6 +2596,17 @@ impl AppState {
             }
         }
 
+        // Patreon detail-pane intercept (task #69): when the focused
+        // channel is a Patreon creator, j/k move the post cursor, p/Enter
+        // pull the selected post, t toggles auto-pull. `Some(_)` means the
+        // key was consumed (inner option may carry an action); `None`
+        // falls through to the normal keymap dispatch below.
+        if self.active_pane == ActivePane::Detail {
+            if let Some(consumed) = self.handle_patreon_detail_key(&key) {
+                return consumed;
+            }
+        }
+
         // Central dispatch — consult the keymap table. Layer is derived
         // from active_pane, with Global as the fallback.
         let layer = crate::tui::keymap::Layer::for_pane(&self.active_pane)
@@ -3296,6 +3372,72 @@ impl AppState {
         None
     }
 
+    /// Patreon detail-pane key handling (task #69). Returns:
+    ///   - `None`            — not a Patreon channel / key not ours; caller
+    ///                          continues to the normal keymap dispatch.
+    ///   - `Some(None)`      — key consumed, no action to dispatch.
+    ///   - `Some(Some(act))` — key consumed, run this action.
+    fn handle_patreon_detail_key(
+        &mut self,
+        key: &crossterm::event::KeyEvent,
+    ) -> Option<Option<AppAction>> {
+        use crossterm::event::KeyCode;
+
+        let channel = self.selected_channel()?;
+        if channel.platform != PlatformKind::Patreon {
+            return None;
+        }
+        let campaign_id = channel.id.clone();
+        let creator_name = channel.display_name.clone();
+        let post_count = self
+            .patreon_posts
+            .get(&campaign_id)
+            .map(|p| p.len())
+            .unwrap_or(0);
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if post_count > 0 {
+                    self.patreon_post_cursor =
+                        (self.patreon_post_cursor + 1).min(post_count - 1);
+                }
+                Some(None)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.patreon_post_cursor = self.patreon_post_cursor.saturating_sub(1);
+                Some(None)
+            }
+            KeyCode::Char('p') | KeyCode::Enter => {
+                let Some(posts) = self.patreon_posts.get(&campaign_id) else {
+                    return Some(None);
+                };
+                let cursor = self.patreon_post_cursor.min(posts.len().saturating_sub(1));
+                let Some(post) = posts.get(cursor) else {
+                    self.status_message = "No post selected".to_string();
+                    return Some(None);
+                };
+                let Some(embed_url) = post.embed_url.clone() else {
+                    self.status_message = "Post has no downloadable video".to_string();
+                    return Some(None);
+                };
+                self.status_message = format!("Pulling '{}'…", post.title);
+                Some(Some(AppAction::PullPatreonPost {
+                    embed_url,
+                    creator_name,
+                    post_title: post.title.clone(),
+                }))
+            }
+            KeyCode::Char('t') => {
+                // Toggle per-creator auto-pull (task #70 surface).
+                Some(Some(AppAction::TogglePatreonAutoPull {
+                    campaign_id,
+                    creator_name,
+                }))
+            }
+            _ => None,
+        }
+    }
+
     fn handle_recording_list_key(&mut self, _key: crossterm::event::KeyEvent) -> Option<AppAction> {
         // RecordingList bindings (nav, s/p/i/v/V/D, Shift+R/M, playback
         // overlay) all live in src/tui/keymap.rs.
@@ -3796,6 +3938,7 @@ impl AppState {
             }
         };
         self.selected_channel = nav_list[next];
+        self.patreon_post_cursor = 0;
     }
 
     fn jump_channel_to(&mut self, first: bool) {
@@ -3813,6 +3956,7 @@ impl AppState {
         } else {
             nav_list[nav_list.len() - 1]
         };
+        self.patreon_post_cursor = 0;
     }
 
     /// Rebuild the sidebar display order (call when channels or recording state changes)
@@ -4052,6 +4196,18 @@ pub enum AppAction {
     MpvSeek(f64),
     MpvSetVolume(u32),
     MpvSetSpeed(f64),
+    /// Pull a single Patreon video post on demand (task #69). Routed to
+    /// RecordingCommand::DownloadVod in the TUI loop.
+    PullPatreonPost {
+        embed_url: String,
+        creator_name: String,
+        post_title: String,
+    },
+    /// Toggle per-creator auto-pull in config + persist (task #70 surface).
+    TogglePatreonAutoPull {
+        campaign_id: String,
+        creator_name: String,
+    },
 }
 
 /// Process plugin actions, applying state mutations to app and registry.

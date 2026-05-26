@@ -87,20 +87,25 @@ impl PatreonMonitor {
         let creators = self.client.fetch_pledged_creators().await?;
         tracing::debug!("Patreon: found {} pledged creators", creators.len());
 
-        for creator in &creators {
-            let since = self.last_checked.get(&creator.campaign_id).copied();
-            let posts = self
-                .client
-                .fetch_posts(&creator.campaign_id, since.as_ref())
-                .await?;
+        // Accumulate the full snapshot for the TUI (task #69). creators
+        // become sidebar rows; posts populate the per-creator right-pane
+        // list and are cached by campaign_id.
+        let mut creator_entries = Vec::with_capacity(creators.len());
+        let mut all_posts = Vec::new();
 
-            // Per-creator opt-in to auto-download (task #70). The
-            // monitor previously unconditionally pulled every new post
-            // it saw; now creators with no auto_pull_creators entry
-            // get a notification only, and the user manually triggers
-            // pull from the right pane (task #69). Default opt-out
-            // matches the "pull at will" stance and prevents surprise
-            // downloads from large back-catalogs.
+        for creator in &creators {
+            creator_entries.push(creator.to_channel_entry());
+
+            // Fetch the recent window unconditionally (since=None) so the
+            // right pane always shows the latest posts, not just those
+            // newer than our last check. "New" detection for auto-pull is
+            // done below by comparing published_at against last_checked.
+            let last = self.last_checked.get(&creator.campaign_id).copied();
+            let posts = self.client.fetch_posts(&creator.campaign_id, None).await?;
+
+            // Per-creator opt-in to auto-download (task #70). Creators with
+            // no auto_pull_creators entry get a notification only; the user
+            // manually triggers pull from the right pane (task #69).
             let auto_pull = self
                 .config
                 .auto_pull_creators
@@ -112,48 +117,66 @@ impl PatreonMonitor {
                     continue;
                 };
 
-                tracing::info!(
-                    auto_pull = auto_pull,
-                    "Patreon new video post: {} - {}",
-                    creator.name,
-                    post.title
-                );
+                // Is this post new since we last polled this creator?
+                let is_new = match (last, post.published_at.parse::<DateTime<Utc>>()) {
+                    (Some(last), Ok(published)) => published > last,
+                    // No prior watermark (first poll) or unparseable date:
+                    // treat as not-new so a fresh auth doesn't trigger a
+                    // back-catalog stampede. Auto-pull only fires on posts
+                    // that appear after the first successful poll.
+                    _ => false,
+                };
 
-                let _ = self
-                    .event_tx
-                    .send(AppEvent::Daemon(DaemonEvent::PatreonPostFound {
-                        creator_name: creator.name.clone(),
-                        post_title: post.title.clone(),
-                    }));
-                let _ = self.event_tx.send(AppEvent::notification(
-                    format!("Patreon: {}", creator.name),
-                    post.title.clone(),
-                ));
-
-                if !auto_pull {
-                    continue;
+                if is_new {
+                    let _ = self
+                        .event_tx
+                        .send(AppEvent::Daemon(DaemonEvent::PatreonPostFound {
+                            creator_name: creator.name.clone(),
+                            post_title: post.title.clone(),
+                        }));
+                    let _ = self.event_tx.send(AppEvent::notification(
+                        format!("Patreon: {}", creator.name),
+                        post.title.clone(),
+                    ));
                 }
 
-                let output_path = crate::recording::build_output_path(
-                    &self.config,
-                    &creator.name,
-                    PlatformKind::Patreon,
-                    Some(&post.title),
-                );
-                let _ = self.recording_tx.send(RecordingCommand::DownloadVod {
-                    url: embed_url.clone(),
-                    channel_name: creator.name.clone(),
-                    platform: PlatformKind::Patreon,
-                    output_path,
-                    cookies_path: None,
-                    post_title: Some(post.title.clone()),
-                });
+                if is_new && auto_pull {
+                    tracing::info!(
+                        "Patreon auto-pull: {} - {}",
+                        creator.name,
+                        post.title
+                    );
+                    let output_path = crate::recording::build_output_path(
+                        &self.config,
+                        &creator.name,
+                        PlatformKind::Patreon,
+                        Some(&post.title),
+                    );
+                    let _ = self.recording_tx.send(RecordingCommand::DownloadVod {
+                        url: embed_url.clone(),
+                        channel_name: creator.name.clone(),
+                        platform: PlatformKind::Patreon,
+                        output_path,
+                        cookies_path: None,
+                        post_title: Some(post.title.clone()),
+                    });
+                }
             }
+
+            all_posts.extend(posts);
 
             // Update last_checked
             self.last_checked
                 .insert(creator.campaign_id.clone(), Utc::now());
         }
+
+        // Push the snapshot to the TUI.
+        let _ = self
+            .event_tx
+            .send(AppEvent::Daemon(DaemonEvent::PatreonState {
+                creators: creator_entries,
+                posts: all_posts,
+            }));
 
         // Persist state
         save_state(&self.state_path, &self.last_checked).ok();
