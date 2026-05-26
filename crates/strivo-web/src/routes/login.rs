@@ -94,29 +94,10 @@ async fn login(
     }
     state.login_limiter.record_success(ip);
 
-    // Lazily persist a session secret on first login. Re-uses the
-    // existing config-save path so the secret survives restarts.
-    let secret = match state.session_secret.as_deref() {
-        Some(s) if !s.is_empty() => s.to_string(),
-        _ => {
-            let s = crate::auth::generate_session_secret();
-            let mut cfg = match strivo_core::config::AppConfig::load(None) {
-                Ok(c) => c,
-                Err(e) => {
-                    return crate::problem::Problem::internal(format!("config load: {e}"))
-                        .into_response();
-                }
-            };
-            cfg.web.session_secret = Some(s.clone());
-            if let Err(e) = cfg.save(None) {
-                tracing::warn!("could not persist [web].session_secret: {e}");
-            }
-            s
-        }
-    };
-
+    // The secret is generated + persisted at startup (see server::serve), so
+    // it always exists here.
     let token = SessionToken::new(SESSION_TTL_SECS);
-    let cookie_value = token.encode(&secret);
+    let cookie_value = token.encode(&state.session_secret);
     let cookie = build_session_cookie(&cookie_value, SESSION_TTL_SECS, is_secure_request(&req_headers));
 
     let cookie_header = match HeaderValue::from_str(&cookie) {
@@ -159,11 +140,7 @@ async fn logout() -> impl IntoResponse {
 /// any. Returns `None` for missing / malformed / expired / bad-HMAC
 /// cookies — caller treats every failure as 401 if it also fails the
 /// X-Api-Key check.
-pub fn session_from_headers(
-    headers: &HeaderMap,
-    session_secret: Option<&str>,
-) -> Option<SessionToken> {
-    let secret = session_secret?;
+pub fn session_from_headers(headers: &HeaderMap, secret: &str) -> Option<SessionToken> {
     let cookie_header = headers.get("cookie").and_then(|v| v.to_str().ok())?;
     // Accept either the plain (HTTP) or the `__Host-` (HTTPS) name.
     for pair in cookie_header.split(';').map(|s| s.trim()) {
@@ -186,7 +163,7 @@ pub fn session_from_headers(
 pub fn check_dual(
     headers: &HeaderMap,
     api_key: &ApiKey,
-    session_secret: Option<&str>,
+    session_secret: &str,
 ) -> Result<(), StatusCode> {
     // Cookie path first — browser users hit this every request.
     if session_from_headers(headers, session_secret).is_some() {
@@ -229,10 +206,7 @@ pub async fn session_refresh(
     if path.starts_with("/api/v1/auth/") {
         return resp;
     }
-    let Some(secret) = state.session_secret.as_deref() else {
-        return resp;
-    };
-    let Some(tok) = session_from_headers(&req_headers, Some(secret)) else {
+    let Some(tok) = session_from_headers(&req_headers, &state.session_secret) else {
         return resp;
     };
     let now = std::time::SystemTime::now()
@@ -242,7 +216,7 @@ pub async fn session_refresh(
     if !should_refresh(tok.expires_at, now, SESSION_TTL_SECS) {
         return resp;
     }
-    let value = SessionToken::new(SESSION_TTL_SECS).encode(secret);
+    let value = SessionToken::new(SESSION_TTL_SECS).encode(&state.session_secret);
     let cookie = build_session_cookie(&value, SESSION_TTL_SECS, is_secure_request(&req_headers));
     if let Ok(h) = HeaderValue::from_str(&cookie) {
         resp.headers_mut().append(SET_COOKIE, h);
@@ -301,7 +275,7 @@ mod tests {
                 HeaderValue::from_str(&format!("foo=bar; {name}={value}")).unwrap(),
             );
             assert!(
-                session_from_headers(&h, Some(&secret)).is_some(),
+                session_from_headers(&h, &secret).is_some(),
                 "cookie name {name} should verify"
             );
         }
@@ -331,7 +305,7 @@ mod tests {
             "cookie",
             HeaderValue::from_str(&format!("{SESSION_COOKIE}=not-a-token")).unwrap(),
         );
-        assert!(session_from_headers(&h, Some(&secret)).is_none());
+        assert!(session_from_headers(&h, &secret).is_none());
     }
 
     // --- check_dual: the integrated auth gate (HMAC verify + header path) ---
@@ -341,7 +315,7 @@ mod tests {
         let key = crate::auth::ApiKey("secret-key".into());
         let mut h = HeaderMap::new();
         h.insert("x-api-key", HeaderValue::from_static("secret-key"));
-        assert!(check_dual(&h, &key, None).is_ok());
+        assert!(check_dual(&h, &key, "unused-secret").is_ok());
     }
 
     #[test]
@@ -349,7 +323,7 @@ mod tests {
         let key = crate::auth::ApiKey("secret-key".into());
         let mut h = HeaderMap::new();
         h.insert("x-api-key", HeaderValue::from_static("nope"));
-        assert_eq!(check_dual(&h, &key, None).unwrap_err(), StatusCode::UNAUTHORIZED);
+        assert_eq!(check_dual(&h, &key, "unused-secret").unwrap_err(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]
@@ -363,7 +337,7 @@ mod tests {
             HeaderValue::from_str(&format!("{SESSION_COOKIE}={value}")).unwrap(),
         );
         // Wrong/absent api-key, but the cookie alone authorizes.
-        assert!(check_dual(&h, &key, Some(&secret)).is_ok());
+        assert!(check_dual(&h, &key, &secret).is_ok());
     }
 
     #[test]
@@ -372,7 +346,7 @@ mod tests {
         let secret = generate_session_secret();
         let h = HeaderMap::new();
         assert_eq!(
-            check_dual(&h, &key, Some(&secret)).unwrap_err(),
+            check_dual(&h, &key, &secret).unwrap_err(),
             StatusCode::UNAUTHORIZED
         );
     }
@@ -389,7 +363,7 @@ mod tests {
             HeaderValue::from_str(&format!("{SESSION_COOKIE}={value}")).unwrap(),
         );
         assert_eq!(
-            check_dual(&h, &key, Some(&real)).unwrap_err(),
+            check_dual(&h, &key, &real).unwrap_err(),
             StatusCode::UNAUTHORIZED
         );
     }

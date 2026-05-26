@@ -15,9 +15,9 @@ pub struct AppState {
     pub ipc: Arc<IpcClient>,
     pub api_key: ApiKey,
     /// HMAC secret for browser-session cookies (W3). Loaded from
-    /// `WebConfig.session_secret`; `None` until the first /login
-    /// generates and persists one.
-    pub session_secret: Option<String>,
+    /// `WebConfig.session_secret`, or generated + persisted at startup
+    /// (see `serve`), so it always exists.
+    pub session_secret: String,
     /// Per-IP failed-login throttle (roadmap Phase 1).
     pub login_limiter: crate::ratelimit::LoginLimiter,
 }
@@ -63,7 +63,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
     let state = AppState {
         ipc,
         api_key: cfg.api_key,
-        session_secret: Some(session_secret),
+        session_secret,
         login_limiter: crate::ratelimit::LoginLimiter::new(),
     };
 

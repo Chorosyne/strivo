@@ -36,7 +36,7 @@ use crate::server::AppState;
 fn check_key(headers: &HeaderMap, state: &AppState) -> Result<(), StatusCode> {
     // Single dual-track gate: valid X-Api-Key header OR a valid session
     // cookie (plain or `__Host-` name). See login::check_dual.
-    crate::routes::login::check_dual(headers, &state.api_key, state.session_secret.as_deref())
+    crate::routes::login::check_dual(headers, &state.api_key, &state.session_secret)
 }
 
 async fn channels(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
