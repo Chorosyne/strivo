@@ -42,6 +42,12 @@ pub enum BulkCommand {
         channel_id: String,
         platform: PlatformKind,
     },
+    /// Resolve a human identifier to a channel id and emit
+    /// DaemonEvent::ChannelResolved for the Add-Channel wizard (task #19).
+    ResolveChannel {
+        platform: PlatformKind,
+        query: String,
+    },
 }
 
 /// Spawn the bulk-download manager. Returns the command sender; the daemon
@@ -129,6 +135,29 @@ pub fn spawn(
                         }));
                     });
                 }
+                BulkCommand::ResolveChannel { platform, query } => {
+                    let cfg = config.clone();
+                    let etx = event_tx.clone();
+                    tokio::spawn(async move {
+                        let event = match resolve_channel(&cfg, platform, &query).await {
+                            Ok((channel_id, display_name)) => DaemonEvent::ChannelResolved {
+                                platform,
+                                query,
+                                channel_id: Some(channel_id),
+                                display_name: Some(display_name),
+                                error: None,
+                            },
+                            Err(e) => DaemonEvent::ChannelResolved {
+                                platform,
+                                query,
+                                channel_id: None,
+                                display_name: None,
+                                error: Some(format!("{e:#}")),
+                            },
+                        };
+                        let _ = etx.send(AppEvent::Daemon(event));
+                    });
+                }
             }
         }
     });
@@ -168,6 +197,39 @@ async fn fetch_recent_vods(
             tw.fetch_channel_vods(channel_id, None, Some(30)).await
         }
         PlatformKind::Patreon => Ok(Vec::new()),
+    }
+}
+
+/// Resolve a human-entered identifier to a channel id (task #19). Twitch
+/// resolves a login to its numeric id; YouTube/Patreon have no public search
+/// wired, so the entered id is accepted as-is.
+async fn resolve_channel(
+    config: &AppConfig,
+    platform: PlatformKind,
+    query: &str,
+) -> anyhow::Result<(String, String)> {
+    use anyhow::Context;
+    let query = query.trim();
+    if query.is_empty() {
+        anyhow::bail!("empty query");
+    }
+    match platform {
+        PlatformKind::Twitch => {
+            let cfg = config
+                .twitch
+                .clone()
+                .context("twitch section missing in config")?;
+            let tw = crate::platform::twitch::TwitchPlatform::new(cfg.client_id, cfg.client_secret);
+            tw.load_stored_tokens().await.context("twitch auth")?;
+            let id = tw
+                .lookup_channel_id_by_login(query)
+                .await
+                .with_context(|| format!("no Twitch channel for login '{query}'"))?;
+            Ok((id, query.to_string()))
+        }
+        PlatformKind::YouTube | PlatformKind::Patreon => {
+            Ok((query.to_string(), query.to_string()))
+        }
     }
 }
 

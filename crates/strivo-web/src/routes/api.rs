@@ -1036,6 +1036,40 @@ struct ChannelVodsPayload {
     platform: PlatformKind,
 }
 
+#[derive(Debug, Deserialize)]
+struct ResolvePayload {
+    platform: PlatformKind,
+    query: String,
+}
+
+/// `POST /api/v1/channels/resolve` — resolve a human identifier (Twitch
+/// login, YouTube/Patreon id) for the Add-Channel wizard (task #19). The
+/// result arrives over `/events` as a `ChannelResolved` frame.
+async fn resolve_channel(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<ResolvePayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    match state
+        .ipc
+        .send_command(ClientMessage::ResolveChannel {
+            platform: body.platform,
+            query: body.query,
+        })
+        .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "requested", "note": "result arrives via /events ChannelResolved"})),
+        )
+            .into_response(),
+        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    }
+}
+
 /// `POST /api/v1/channels/{id}/vods` — request a channel's recent VODs
 /// (live broadcasts + uploads) for the detail pane. The list arrives over
 /// `/events` as `channel-vods`. (TUI-style redesign.)
@@ -1138,6 +1172,8 @@ pub fn router() -> Router<AppState> {
         )
         // #75: Patreon manual pull
         .route("/api/v1/patreon/pull", post(patreon_pull))
+        // #19: Add-Channel wizard — resolve a name/id to a channel.
+        .route("/api/v1/channels/resolve", post(resolve_channel))
 }
 
 #[cfg(test)]

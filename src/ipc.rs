@@ -64,6 +64,13 @@ pub enum ClientMessage {
         channel_id: String,
         platform: PlatformKind,
     },
+    /// Resolve a human-entered identifier (Twitch login, YouTube/Patreon id)
+    /// to a channel id for the Add-Channel wizard (task #19). Answered
+    /// asynchronously with DaemonEvent::ChannelResolved.
+    ResolveChannel {
+        platform: PlatformKind,
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

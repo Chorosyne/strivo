@@ -395,6 +395,7 @@ pub enum DaemonEventKind {
     BulkProgress,
     PlaylistList,
     ChannelVods,
+    ChannelResolved,
     ScheduleFired,
     Error,
 }
@@ -418,6 +419,7 @@ impl DaemonEventKind {
             DaemonEvent::BulkProgress { .. } => Self::BulkProgress,
             DaemonEvent::PlaylistList { .. } => Self::PlaylistList,
             DaemonEvent::ChannelVods { .. } => Self::ChannelVods,
+            DaemonEvent::ChannelResolved { .. } => Self::ChannelResolved,
             DaemonEvent::ScheduleFired { .. } => Self::ScheduleFired,
             DaemonEvent::Error(_) => Self::Error,
         }

@@ -81,6 +81,16 @@ pub enum DaemonEvent {
         channel_id: String,
         vods: Vec<crate::platform::VodEntry>,
     },
+    /// Result of ClientMessage::ResolveChannel for the Add-Channel wizard
+    /// (task #19). `channel_id`/`display_name` are set on success, `error`
+    /// on failure.
+    ChannelResolved {
+        platform: PlatformKind,
+        query: String,
+        channel_id: Option<String>,
+        display_name: Option<String>,
+        error: Option<String>,
+    },
     /// A cron schedule fired and a recording was kicked off. Includes the
     /// pre-generated `job_id` so the TUI can correlate with the
     /// `RecordingStarted` that follows.
@@ -1718,6 +1728,8 @@ impl AppState {
             }
             // Webui-only: the TUI shows channel VODs via its own panes.
             DaemonEvent::ChannelVods { .. } => {}
+            // Add-Channel wizard is webui-only; the TUI ignores resolve replies.
+            DaemonEvent::ChannelResolved { .. } => {}
             DaemonEvent::PatreonState { creators, posts } => {
                 // Cache posts by campaign_id, newest first.
                 let mut by_campaign: HashMap<String, Vec<crate::platform::patreon::PatreonPost>> =

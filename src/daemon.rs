@@ -760,6 +760,14 @@ async fn handle_client(
                     });
                 }
             }
+            ClientMessage::ResolveChannel { platform, query } => {
+                if let Some(ref tx) = bulk_tx {
+                    let _ = tx.send(crate::recording::bulk::BulkCommand::ResolveChannel {
+                        platform,
+                        query,
+                    });
+                }
+            }
             ClientMessage::BulkDownload {
                 channel_id,
                 channel_name,
