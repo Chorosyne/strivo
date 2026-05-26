@@ -154,13 +154,43 @@ async fn lookup_path(state: &AppState, id: Uuid) -> Result<PathBuf, String> {
         .ok_or_else(|| "recording not found".into())
 }
 
+/// Reject any path that, once canonicalised, escapes the recording root.
+/// `output_path` is daemon-set, but a corrupted snapshot/DB (or a future
+/// caller that does take user input) must never let the web process stream
+/// a file outside the recording directory — symlinks included. Defense in
+/// depth (roadmap Phase 1 item 2).
+fn contain_in_root(
+    candidate: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<PathBuf, StatusCode> {
+    let real_root = root
+        .canonicalize()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let real = candidate.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
+    if real.starts_with(&real_root) {
+        Ok(real)
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 async fn download(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Response {
-    let path = match lookup_path(&state, id).await {
+    let raw = match lookup_path(&state, id).await {
         Ok(p) => p,
         Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
+    };
+    // Containment check before opening: canonicalise against the configured
+    // recording root and refuse anything that escapes it.
+    let root = match strivo_core::config::AppConfig::load(None) {
+        Ok(c) => c.recording_dir,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let path = match contain_in_root(&raw, &root) {
+        Ok(p) => p,
+        Err(code) => return (code, "path outside recording directory").into_response(),
     };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
@@ -228,4 +258,57 @@ pub fn router() -> Router<AppState> {
         .route("/_partials/recordings-list", get(list_partial))
         .route("/recordings/{id}/download", get(download))
         .route("/recordings/{id}/play", get(play))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use std::fs;
+
+    /// Unique temp dir for one test, auto-namespaced by pid + a counter.
+    fn temp_root(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("strivo-contain-{}-{}", std::process::id(), tag));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn allows_file_inside_root() {
+        let root = temp_root("inside");
+        let file = root.join("rec.mkv");
+        fs::write(&file, b"x").unwrap();
+        let got = contain_in_root(&file, &root).unwrap();
+        assert!(got.starts_with(root.canonicalize().unwrap()));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_traversal_outside_root() {
+        let root = temp_root("escape");
+        // A path that climbs out of the root to a real file elsewhere.
+        let outside = root.join("..").join("..").join("etc").join("hostname");
+        let err = contain_in_root(&outside, &root).unwrap_err();
+        // Either it doesn't exist (NOT_FOUND) or resolves outside (FORBIDDEN);
+        // both refuse to stream. Never Ok.
+        assert!(err == StatusCode::FORBIDDEN || err == StatusCode::NOT_FOUND);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rejects_symlink_escape() {
+        let root = temp_root("symlink");
+        let secret = temp_root("symlink-secret");
+        let secret_file = secret.join("secret.txt");
+        fs::write(&secret_file, b"top secret").unwrap();
+        let link = root.join("link.mkv");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&secret_file, &link).unwrap();
+            assert_eq!(contain_in_root(&link, &root).unwrap_err(), StatusCode::FORBIDDEN);
+        }
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&secret).ok();
+    }
 }

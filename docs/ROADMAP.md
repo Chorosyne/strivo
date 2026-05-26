@@ -18,7 +18,7 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
 - [x] **1. Login rate-limiting** `[review]` — cap failed `POST /login` attempts
   (per-IP token bucket / sliding window); lock-out + `Retry-After`. Loopback/TS
   mitigates but doesn't remove brute-force.
-- [ ] **2. Recordings path containment** `[review]` — canonicalise the served file
+- [x] **2. Recordings path containment** `[review]` — canonicalise the served file
   path against the recordings root; reject traversal (`..`, symlink escape) with 403.
 - [ ] **3. `login.rs` Set-Cookie hardening** `[review]` — replace `.parse().unwrap()`
   with graceful error; never panic the handler on a malformed header value.
