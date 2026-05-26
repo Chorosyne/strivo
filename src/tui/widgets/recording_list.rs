@@ -89,9 +89,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
             let state_prefix = match rec.state {
                 RecordingState::Recording => {
                     // C6.7 — heartbeat: ● → ◉ alternation at 1 Hz.
-                    let glyph = if crate::tui::anim::reduce_motion() {
-                        "● "
-                    } else if (secs * 2.0) as i32 % 2 == 0 {
+                    let glyph = if crate::tui::anim::reduce_motion() || (secs * 2.0) as i32 % 2 == 0
+                    {
                         "● "
                     } else {
                         "◉ "

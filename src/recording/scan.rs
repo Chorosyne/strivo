@@ -111,7 +111,7 @@ fn try_template_parse(template: &str, filename: &str) -> ParsedFilename {
 
     // Default template: "{channel}_{date}_{title}"
     // Find the positions of placeholders and their separators
-    let parts: Vec<&str> = template.split(|c: char| c == '{').collect();
+    let parts: Vec<&str> = template.split('{').collect();
     if parts.len() < 2 {
         return result;
     }

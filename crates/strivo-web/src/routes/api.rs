@@ -112,7 +112,7 @@ async fn recordings(headers: HeaderMap, State(state): State<AppState>) -> impl I
             // recordings is a HashMap<Uuid, RecordingJob>; flatten to a list
             // so the response is stable and order-by-newest-first.
             let mut items: Vec<_> = recordings.into_values().collect();
-            items.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+            items.sort_by_key(|r| std::cmp::Reverse(r.started_at));
             Json(json!({ "recordings": items })).into_response()
         }
         Ok(_) => Json(json!({ "recordings": [] })).into_response(),

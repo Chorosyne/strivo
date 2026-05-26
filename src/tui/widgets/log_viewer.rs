@@ -69,8 +69,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &AppState) {
     let lines: Vec<Line> = app.log_lines[start..]
         .iter()
         .take(inner_height)
-        .enumerate()
-        .map(|(_, line)| colorize_log_line(line))
+        
+        .map(|line| colorize_log_line(line))
         .collect();
 
     let paragraph = Paragraph::new(lines)

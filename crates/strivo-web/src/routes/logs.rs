@@ -1,10 +1,8 @@
 //! /system/logs (webui phase 8).
 //!
-//! - GET /system/logs           full page with the last 200 lines.
-//! - GET /logs/stream           SSE: one `event: line` per newly-
-//!                              appended line. htmx swaps via
-//!                              `beforeend`, so the log stays
-//!                              chronological with no client JS.
+//! - GET /system/logs — full page with the last 200 lines.
+//! - GET /logs/stream — SSE: one `event: line` per newly-appended line. htmx
+//!   swaps via `beforeend`, so the log stays chronological with no client JS.
 //!
 //! Tail via tokio::fs polling — simple, robust, no inotify
 //! dependencies. The reader keeps a byte cursor; on each tick it
@@ -83,7 +81,7 @@ async fn stream(
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
                 Ok(_n) => {
-                    yield Ok(Event::default().event("line").data(line.trim_end().to_string()));
+                    yield Ok(Event::default().event("line").data(line.trim_end()));
                 }
                 Err(e) => {
                     yield Ok(Event::default().event("error").data(format!("{e}")));

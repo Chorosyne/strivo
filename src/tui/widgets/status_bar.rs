@@ -479,11 +479,10 @@ fn build_indicators<'a>(
 ) -> Vec<Span<'a>> {
     let bar_style = Theme::hotkey_bar();
     let mut spans = Vec::new();
-    let mut idx = 0usize;
 
     let configured = configured_platforms(app);
 
-    for kind in &configured {
+    for (idx, kind) in configured.iter().enumerate() {
         let (connected, has_errors) = match kind {
             PlatformKind::Twitch => (
                 app.twitch_connected,
@@ -535,7 +534,6 @@ fn build_indicators<'a>(
 
         spans.push(Span::styled(bullet, style));
         spans.push(Span::styled(label, label_style));
-        idx += 1;
     }
 
     spans
@@ -568,7 +566,7 @@ fn push_button<'a>(
     // When a matching key was just pressed, ramp its fg secondary → primary
     // → secondary over 240 ms so the key visibly "fires".
     let ks = match shimmer {
-        Some((c, t)) if key.chars().next() == Some(c) => {
+        Some((c, t)) if key.starts_with(c) => {
             let tri = if t < 0.5 { t * 2.0 } else { (1.0 - t) * 2.0 };
             let blended = Theme::blend_for(Theme::secondary(), Theme::primary(), tri);
             Style::new()

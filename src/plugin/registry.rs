@@ -27,6 +27,7 @@ pub enum PluginStatus {
     Disabled,
 }
 
+#[derive(Default)]
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,
     /// Per-plugin lifecycle state, parallel-indexed with `plugins`.
@@ -43,18 +44,6 @@ pub struct PluginRegistry {
     loaded_libraries: Vec<libloading::Library>,
 }
 
-impl Default for PluginRegistry {
-    fn default() -> Self {
-        Self {
-            plugins: Vec::new(),
-            statuses: Vec::new(),
-            pane_map: HashMap::new(),
-            command_map: HashMap::new(),
-            active_plugin_pane: None,
-            loaded_libraries: Vec::new(),
-        }
-    }
-}
 
 impl PluginRegistry {
     pub fn new() -> Self {
@@ -387,6 +376,7 @@ mod tests {
             self.pane = Some(pane);
             self
         }
+        #[allow(dead_code)]
         fn with_filter(mut self, kinds: Vec<DaemonEventKind>) -> Self {
             self.filter = Some(kinds);
             self

@@ -138,7 +138,7 @@ pub fn build_rows(
                 });
             }
         }
-        out.sort_by(|a, b| b.score.cmp(&a.score));
+        out.sort_by_key(|e| std::cmp::Reverse(e.score));
         return out;
     }
 
@@ -199,7 +199,7 @@ pub fn build_rows(
         }
     }
 
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|e| std::cmp::Reverse(e.score));
     out.truncate(50);
     out
 }
@@ -324,7 +324,7 @@ fn build_scoped_rows(
             });
         }
     }
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|e| std::cmp::Reverse(e.score));
     out
 }
 
@@ -466,7 +466,7 @@ pub fn render(
     if state.selected >= visible {
         start = state.selected.saturating_sub(visible.saturating_sub(1));
     }
-    let label_width = (inner.width as usize).min(28).max(16);
+    let label_width = (inner.width as usize).clamp(16, 28);
 
     let lines: Vec<Line> = rows
         .iter()

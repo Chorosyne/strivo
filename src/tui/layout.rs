@@ -197,8 +197,8 @@ fn render_playlist_picker(frame: &mut ratatui::Frame, app: &crate::app::AppState
     };
 
     let area = frame.area();
-    let w = area.width.saturating_sub(8).min(70).max(30);
-    let h = area.height.saturating_sub(6).min(20).max(6);
+    let w = area.width.saturating_sub(8).clamp(30, 70);
+    let h = area.height.saturating_sub(6).clamp(6, 20);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect { x, y, width: w, height: h };

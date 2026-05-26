@@ -42,13 +42,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &EmptyState<'_>) {
     }
 
     // Compute lines we want to show, then vertically center.
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
         state.glyph.to_string(),
         Style::new()
             .fg(Theme::primary())
             .add_modifier(Modifier::BOLD),
-    )));
+    ))];
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         state.title.to_string(),

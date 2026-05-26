@@ -117,7 +117,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut AppState) {
             PlatformKind::Patreon => ("Patreon", " ", Theme::patreon()),
         };
         // Pad to fill width: name left, icon right
-        let header_text = format!("{label}");
+        let header_text = label.to_string();
         items.push(ListItem::new(Line::from(vec![
             Span::styled(
                 format!(" {header_text}"),

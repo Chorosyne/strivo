@@ -139,66 +139,6 @@ pub fn looks_like_uc_id(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_full_line() {
-        let s = "dQw4w9WgXcQ\tNever Gonna Give You Up\tRickAstleyVEVO\n";
-        let f = parse_print_line(s).unwrap();
-        assert_eq!(f.video_id, "dQw4w9WgXcQ");
-        assert_eq!(f.title.as_deref(), Some("Never Gonna Give You Up"));
-        assert_eq!(f.uploader.as_deref(), Some("RickAstleyVEVO"));
-    }
-
-    #[test]
-    fn parse_missing_uploader() {
-        // yt-dlp's `--print` emits "NA" when a field isn't available.
-        let s = "abc12345678\tA Title\tNA\n";
-        let f = parse_print_line(s).unwrap();
-        assert_eq!(f.uploader, None);
-    }
-
-    #[test]
-    fn parse_title_with_tabs_is_truncated_at_uploader() {
-        // Real-world stream titles do not contain tabs (yt-dlp escapes
-        // them), but be defensive: splitn(3) preserves anything past
-        // the second tab in the uploader slot, which is harmless.
-        let s = "abc12345678\tWeird title\tWeirder uploader\n";
-        let f = parse_print_line(s).unwrap();
-        assert_eq!(f.title.as_deref(), Some("Weird title"));
-        assert_eq!(f.uploader.as_deref(), Some("Weirder uploader"));
-    }
-
-    #[test]
-    fn parse_rejects_bad_id() {
-        let r = parse_print_line("not-an-id\tT\tU\n");
-        assert!(r.is_err(), "should reject ids that are not 11 base64 chars");
-    }
-
-    #[test]
-    fn parse_skips_blank_leading_lines() {
-        let s = "\n\nabc12345678\tT\tU\n";
-        let f = parse_print_line(s).unwrap();
-        assert_eq!(f.video_id, "abc12345678");
-    }
-
-    #[test]
-    fn uc_id_detection() {
-        // Real UC id pulled from the user's recordings dir.
-        assert!(looks_like_uc_id("UCrPseYLGpNygVi34QpGNqpA"));
-        assert!(looks_like_uc_id(""));
-        assert!(!looks_like_uc_id("hasanabi"));
-        assert!(!looks_like_uc_id("UCshort"));
-        assert!(!looks_like_uc_id("UC with spaces in the middle!"));
-        // Twitch login names happen to be ≤ 25 chars; make sure we
-        // don't accidentally clobber a real human-readable name.
-        assert!(!looks_like_uc_id("xqc"));
-        assert!(!looks_like_uc_id("LinusTechTips_official"));
-    }
-}
-
 pub struct YtDlpProcess {
     child: Child,
     pub output_path: PathBuf,
@@ -365,5 +305,65 @@ impl Drop for YtDlpProcess {
                 let _ = self.child.start_kill();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_full_line() {
+        let s = "dQw4w9WgXcQ\tNever Gonna Give You Up\tRickAstleyVEVO\n";
+        let f = parse_print_line(s).unwrap();
+        assert_eq!(f.video_id, "dQw4w9WgXcQ");
+        assert_eq!(f.title.as_deref(), Some("Never Gonna Give You Up"));
+        assert_eq!(f.uploader.as_deref(), Some("RickAstleyVEVO"));
+    }
+
+    #[test]
+    fn parse_missing_uploader() {
+        // yt-dlp's `--print` emits "NA" when a field isn't available.
+        let s = "abc12345678\tA Title\tNA\n";
+        let f = parse_print_line(s).unwrap();
+        assert_eq!(f.uploader, None);
+    }
+
+    #[test]
+    fn parse_title_with_tabs_is_truncated_at_uploader() {
+        // Real-world stream titles do not contain tabs (yt-dlp escapes
+        // them), but be defensive: splitn(3) preserves anything past
+        // the second tab in the uploader slot, which is harmless.
+        let s = "abc12345678\tWeird title\tWeirder uploader\n";
+        let f = parse_print_line(s).unwrap();
+        assert_eq!(f.title.as_deref(), Some("Weird title"));
+        assert_eq!(f.uploader.as_deref(), Some("Weirder uploader"));
+    }
+
+    #[test]
+    fn parse_rejects_bad_id() {
+        let r = parse_print_line("not-an-id\tT\tU\n");
+        assert!(r.is_err(), "should reject ids that are not 11 base64 chars");
+    }
+
+    #[test]
+    fn parse_skips_blank_leading_lines() {
+        let s = "\n\nabc12345678\tT\tU\n";
+        let f = parse_print_line(s).unwrap();
+        assert_eq!(f.video_id, "abc12345678");
+    }
+
+    #[test]
+    fn uc_id_detection() {
+        // Real UC id pulled from the user's recordings dir.
+        assert!(looks_like_uc_id("UCrPseYLGpNygVi34QpGNqpA"));
+        assert!(looks_like_uc_id(""));
+        assert!(!looks_like_uc_id("hasanabi"));
+        assert!(!looks_like_uc_id("UCshort"));
+        assert!(!looks_like_uc_id("UC with spaces in the middle!"));
+        // Twitch login names happen to be ≤ 25 chars; make sure we
+        // don't accidentally clobber a real human-readable name.
+        assert!(!looks_like_uc_id("xqc"));
+        assert!(!looks_like_uc_id("LinusTechTips_official"));
     }
 }

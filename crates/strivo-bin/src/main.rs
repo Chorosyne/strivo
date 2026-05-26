@@ -1171,8 +1171,8 @@ fn handle_search(query: &str, config_path: Option<&std::path::Path>) -> Result<(
     }
 
     println!(
-        "{:<20} {:<10} {:<12} {:<10} {}",
-        "Channel", "Platform", "Date", "Size", "Title"
+        "{:<20} {:<10} {:<12} {:<10} Title",
+        "Channel", "Platform", "Date", "Size"
     );
     println!("{}", "─".repeat(80));
 
@@ -1269,6 +1269,7 @@ async fn run_client(args: cli::Args) -> Result<()> {
         youtube_connected,
         patreon_connected,
         pending_auth,
+        ..
     } = snapshot
     {
         app_state.channels = channels;

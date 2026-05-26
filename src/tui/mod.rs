@@ -373,7 +373,7 @@ async fn download_thumbnail(
             resized.save(&cache_path_clone)?;
 
             if let Some(picker) = picker {
-                let proto = picker.new_resize_protocol(resized.into());
+                let proto = picker.new_resize_protocol(resized);
                 Ok(Some(proto))
             } else {
                 Ok(None)

@@ -28,9 +28,9 @@ pub fn render(
     // 70% width, 70% height — same proportions as the theme picker so
     // the two overlays feel like siblings.
     let h = area.height.saturating_mul(7) / 10;
-    let h = h.min(28).max(14);
+    let h = h.clamp(14, 28);
     let w = area.width.saturating_mul(7) / 10;
-    let w = w.min(80).max(56);
+    let w = w.clamp(56, 80);
 
     let [_, row, _] = Layout::vertical([
         Constraint::Fill(1),

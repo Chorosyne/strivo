@@ -157,11 +157,10 @@ impl YouTubePlatform {
             if self.validate_token().await? {
                 return Ok(true);
             }
-            if self.refresh_token_value.read().await.is_some() {
-                if self.do_refresh_token().await.is_ok() {
+            if self.refresh_token_value.read().await.is_some()
+                && self.do_refresh_token().await.is_ok() {
                     return Ok(true);
                 }
-            }
         }
         Ok(false)
     }

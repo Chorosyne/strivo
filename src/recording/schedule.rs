@@ -233,7 +233,7 @@ pub async fn run_schedule_manager(
                     // Look at the upcoming occurrence — if it's within the next 60 seconds, start
                     if let Some(next) = sched.schedule.upcoming(Utc).next() {
                         let diff = (next - now).num_seconds();
-                        if diff <= 60 && diff >= -60 {
+                        if (-60..=60).contains(&diff) {
                             // Prevent duplicate: check if we triggered this window recently
                             // Use a window slightly larger than the poll interval to avoid edge cases
                             if state.was_triggered_recently(&sched.state_key, 120) {

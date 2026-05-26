@@ -34,17 +34,14 @@ pub enum ItemKind {
 /// - `Item` registers the command as a *verb* in the actions popup,
 ///   so pressing `a` on the focused item type surfaces it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum PluginCommandScope {
+    #[default]
     Global,
     Pane(PaneId),
     Item(ItemKind),
 }
 
-impl Default for PluginCommandScope {
-    fn default() -> Self {
-        Self::Global
-    }
-}
 
 /// A command that a plugin registers (for global keybinding + help overlay).
 #[derive(Debug, Clone)]

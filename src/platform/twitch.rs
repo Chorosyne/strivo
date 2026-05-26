@@ -137,12 +137,11 @@ impl TwitchPlatform {
                 return Ok(true);
             }
             // Try refresh
-            if self.refresh_token_value.read().await.is_some() {
-                if self.do_refresh_token().await.is_ok() {
+            if self.refresh_token_value.read().await.is_some()
+                && self.do_refresh_token().await.is_ok() {
                     self.fetch_user_id().await?;
                     return Ok(true);
                 }
-            }
         }
         Ok(false)
     }

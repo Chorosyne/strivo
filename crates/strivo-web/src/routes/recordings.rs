@@ -71,7 +71,7 @@ async fn snapshot_rows(state: &AppState, query: &str) -> Result<Vec<RecRow>, Str
 
     if query.is_empty() {
         // Default: newest first.
-        jobs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.started_at));
     } else {
         // Score every candidate; drop misses; sort by score desc.
         let mut scored: Vec<(_, i32)> = jobs
@@ -86,7 +86,7 @@ async fn snapshot_rows(state: &AppState, query: &str) -> Result<Vec<RecRow>, Str
                 Some((j, score))
             })
             .collect();
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.1));
         jobs = scored.into_iter().map(|(j, _)| j).collect();
     }
 

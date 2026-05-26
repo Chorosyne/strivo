@@ -5,10 +5,10 @@
 //! or as a sidecar next to a recording (`<recording>.edl.json`).
 //!
 //! Three kinds:
-//!   - `batch`  — list of vods + pipeline ops applied to each.
-//!   - `edit`   — clip/concat ops on one or more vods.
-//!   - `preset` — reusable op chain with no inputs bound; replayed via
-//!                `:run-preset <name>` once D4's command palette ships.
+//! - `batch` — list of vods + pipeline ops applied to each.
+//! - `edit` — clip/concat ops on one or more vods.
+//! - `preset` — reusable op chain with no inputs bound; replayed via
+//!   `:run-preset <name>` once D4's command palette ships.
 //!
 //! See plan Part 6 X2.
 

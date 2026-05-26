@@ -221,7 +221,7 @@ impl RewindResolver {
         if !status.is_success() {
             return Err(RewindError::Other(anyhow!(
                 "GQL HTTP {status}: {}",
-                json.to_string()
+                json
             )));
         }
         let tok = json

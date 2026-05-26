@@ -23,9 +23,9 @@ pub fn render(
     enter_progress: f32,
 ) {
     let h = area.height.saturating_mul(7) / 10;
-    let h = h.min(28).max(12);
+    let h = h.clamp(12, 28);
     let w = area.width.saturating_mul(7) / 10;
-    let w = w.min(90).max(56);
+    let w = w.clamp(56, 90);
 
     let [_, row, _] = Layout::vertical([
         Constraint::Fill(1),

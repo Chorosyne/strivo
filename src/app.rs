@@ -1204,7 +1204,7 @@ impl AppState {
 
     pub fn sorted_recordings(&self) -> Vec<&RecordingJob> {
         let mut recs: Vec<&RecordingJob> = self.recordings.values().collect();
-        recs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        recs.sort_by_key(|r| std::cmp::Reverse(r.started_at));
         recs
     }
 
@@ -1343,15 +1343,14 @@ impl AppState {
                 // Autoscroll stream title for selected live channel in sidebar
                 if self.active_pane == ActivePane::Sidebar {
                     if let Some(ch) = self.channels.get(self.selected_channel) {
-                        if ch.is_live && ch.stream_title.is_some() {
-                            if self.tick_counter % 6 == 0 {
+                        if ch.is_live && ch.stream_title.is_some()
+                            && self.tick_counter % 6 == 0 {
                                 let offset = self
                                     .scroll_offsets
                                     .entry(self.selected_channel)
                                     .or_insert(0);
                                 *offset += 1;
                             }
-                        }
                     }
                 }
             }
@@ -2522,8 +2521,8 @@ impl AppState {
                         self.clear_search();
                     }
                 }
-                KeyCode::Backspace => {
-                    if self.search_cursor > 0 {
+                KeyCode::Backspace
+                    if self.search_cursor > 0 => {
                         let chars: Vec<char> = self.search_query.chars().collect();
                         let new_cursor = self.search_cursor - 1;
                         self.search_query = chars
@@ -2535,7 +2534,6 @@ impl AppState {
                         self.search_cursor = new_cursor;
                         self.update_search_filter();
                     }
-                }
                 KeyCode::Delete => {
                     let chars: Vec<char> = self.search_query.chars().collect();
                     if self.search_cursor < chars.len() {
@@ -2668,11 +2666,10 @@ impl AppState {
                         self.event_log_scroll += 1;
                     }
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if self.event_log_scroll > 0 {
+                KeyCode::Char('k') | KeyCode::Up
+                    if self.event_log_scroll > 0 => {
                         self.event_log_scroll -= 1;
                     }
-                }
                 KeyCode::Char('g') | KeyCode::Home => {
                     self.event_log_scroll = 0;
                 }
@@ -2903,12 +2900,11 @@ impl AppState {
                     self.settings_selected = (self.settings_selected + 1) % n;
                 }
             }
-            ActivePane::Log => {
-                if self.log_scroll + 1 < self.log_lines.len() {
+            ActivePane::Log
+                if self.log_scroll + 1 < self.log_lines.len() => {
                     self.log_scroll += 1;
                     self.log_auto_scroll = false;
                 }
-            }
             _ => {}
         }
     }
@@ -2964,17 +2960,15 @@ impl AppState {
     fn pane_nav_top(&mut self) {
         match self.active_pane {
             ActivePane::Sidebar | ActivePane::Detail => self.jump_channel_to(true),
-            ActivePane::RecordingList => {
-                if !self.sorted_recordings().is_empty() {
+            ActivePane::RecordingList
+                if !self.sorted_recordings().is_empty() => {
                     self.selected_recording = 0;
                     self.remember_recording_selection();
                 }
-            }
-            ActivePane::Schedule => {
-                if !self.config.schedule.is_empty() {
+            ActivePane::Schedule
+                if !self.config.schedule.is_empty() => {
                     self.selected_schedule = 0;
                 }
-            }
             ActivePane::Settings => {
                 self.settings_selected = 0;
             }
@@ -3644,10 +3638,10 @@ impl AppState {
     }
 
     /// Patreon detail-pane key handling (task #69). Returns:
-    ///   - `None`            — not a Patreon channel / key not ours; caller
-    ///                          continues to the normal keymap dispatch.
-    ///   - `Some(None)`      — key consumed, no action to dispatch.
-    ///   - `Some(Some(act))` — key consumed, run this action.
+    /// - `None` — not a Patreon channel / key not ours; caller continues to
+    ///   the normal keymap dispatch.
+    /// - `Some(None)` — key consumed, no action to dispatch.
+    /// - `Some(Some(act))` — key consumed, run this action.
     fn handle_patreon_detail_key(
         &mut self,
         key: &crossterm::event::KeyEvent,
@@ -3721,9 +3715,7 @@ impl AppState {
         key: crossterm::event::KeyEvent,
     ) -> Option<AppAction> {
         use crossterm::event::KeyCode;
-        let Some(popup) = self.actions_popup.as_mut() else {
-            return None;
-        };
+        let popup = self.actions_popup.as_mut()?;
         match key.code {
             KeyCode::Esc => {
                 self.actions_popup = None;
@@ -3797,9 +3789,7 @@ impl AppState {
         use crate::app::PaletteScope;
         use crate::tui::widgets::palette::PaletteDispatch;
         use crossterm::event::KeyCode;
-        let Some(state) = self.palette.as_mut() else {
-            return None;
-        };
+        let state = self.palette.as_mut()?;
         match key.code {
             KeyCode::Esc => {
                 self.palette = None;
@@ -4321,7 +4311,7 @@ impl AppState {
                 }
             })
             .collect();
-        channel_scored.sort_by(|a, b| b.1.cmp(&a.1));
+        channel_scored.sort_by_key(|c| std::cmp::Reverse(c.1));
         self.search_filtered_channels = channel_scored.into_iter().map(|(i, _)| i).collect();
 
         let mut rec_scored: Vec<(Uuid, i32)> = self
@@ -4337,7 +4327,7 @@ impl AppState {
                 Some((*id, score))
             })
             .collect();
-        rec_scored.sort_by(|a, b| b.1.cmp(&a.1));
+        rec_scored.sort_by_key(|r| std::cmp::Reverse(r.1));
         self.search_filtered_recordings = rec_scored.into_iter().map(|(id, _)| id).collect();
 
         // If current selection is filtered out, jump to first visible

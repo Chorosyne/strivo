@@ -324,9 +324,9 @@ pub async fn run_manager(
                                     && platform == PlatformKind::Twitch
                                     && twitch_live_from_start
                                 {
-                                    twitch_handle.as_ref().and_then(|tw| {
+                                    twitch_handle.as_ref().map(|tw| {
                                         let tw = tw.clone();
-                                        Some((tw, twitch_id.clone()))
+                                        (tw, twitch_id.clone())
                                     })
                                 } else {
                                     None
@@ -817,6 +817,32 @@ pub fn write_metadata_json(episode_dir: &std::path::Path, meta: &EpisodeMetadata
     Ok(())
 }
 
+/// If `path` already exists, return `stem_1.ext`, `stem_2.ext`, ... until a
+/// free slot is found. Guards against two concurrent recordings that resolve
+/// to the same template-rendered filename silently stomping each other.
+fn disambiguate_path(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path.extension().map(|s| s.to_string_lossy().into_owned());
+    for n in 1u32.. {
+        let candidate_name = match &ext {
+            Some(e) => format!("{stem}_{n}.{e}"),
+            None => format!("{stem}_{n}"),
+        };
+        let candidate = parent.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,30 +904,4 @@ mod tests {
         let long = "x".repeat(200);
         assert_eq!(sanitize_path_component(&long).len(), 80);
     }
-}
-
-/// If `path` already exists, return `stem_1.ext`, `stem_2.ext`, ... until a
-/// free slot is found. Guards against two concurrent recordings that resolve
-/// to the same template-rendered filename silently stomping each other.
-fn disambiguate_path(path: PathBuf) -> PathBuf {
-    if !path.exists() {
-        return path;
-    }
-    let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let ext = path.extension().map(|s| s.to_string_lossy().into_owned());
-    for n in 1u32.. {
-        let candidate_name = match &ext {
-            Some(e) => format!("{stem}_{n}.{e}"),
-            None => format!("{stem}_{n}"),
-        };
-        let candidate = parent.join(candidate_name);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!()
 }
