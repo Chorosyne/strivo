@@ -22,6 +22,10 @@ pub struct ChannelMonitor {
     prev_live: HashMap<String, bool>,
     /// Auto-record channels we've already triggered for (avoid duplicate starts)
     auto_recorded: HashMap<String, bool>,
+    /// Last successfully-fetched channel list per platform, so a transient
+    /// fetch failure (e.g. YouTube 403 quotaExceeded) retains the prior set
+    /// instead of blanking the whole platform from the rail.
+    last_channels: HashMap<PlatformKind, Vec<ChannelEntry>>,
     /// Notified when a platform authenticates (triggers immediate first poll)
     auth_notify: Arc<tokio::sync::Notify>,
     /// Notified when a client requests an immediate re-poll
@@ -44,6 +48,7 @@ impl ChannelMonitor {
             cancel,
             prev_live: HashMap::new(),
             auto_recorded: HashMap::new(),
+            last_channels: HashMap::new(),
             auth_notify: Arc::new(tokio::sync::Notify::new()),
             poll_notify: Arc::new(tokio::sync::Notify::new()),
         }
@@ -233,10 +238,24 @@ impl ChannelMonitor {
                         self.prev_live.insert(ch.id.clone(), ch.is_live);
                     }
 
+                    self.last_channels.insert(kind, channels.clone());
                     all_channels.extend(channels);
                 }
                 Err(e) => {
-                    tracing::warn!("{kind}: fetch channels failed: {e}");
+                    // Retain the last-known channels for this platform so a
+                    // transient failure (e.g. YouTube 403 quotaExceeded) doesn't
+                    // blank it from the rail. Live status will be stale until the
+                    // next successful poll.
+                    match self.last_channels.get(&kind) {
+                        Some(cached) if !cached.is_empty() => {
+                            tracing::warn!(
+                                "{kind}: fetch channels failed ({e}); showing {} cached channels",
+                                cached.len()
+                            );
+                            all_channels.extend(cached.iter().cloned());
+                        }
+                        _ => tracing::warn!("{kind}: fetch channels failed: {e}"),
+                    }
                 }
             }
         }
