@@ -41,7 +41,7 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   (application/problem+json); all api.rs + login.rs error returns converted
   (the 429 rate-limit keeps its bespoke Retry-After response). — one axum `IntoResponse` error
   type (`type,title,status,detail,instance`); replace ad-hoc JSON error shapes.
-- [ ] **8. Bound the recordings map** `[review]` — evict finished/failed jobs past a
+- [x] **8. Bound the recordings map** `[review]` — evict finished/failed jobs past a
   cap or age so `app.recordings` doesn't grow unbounded for the process lifetime.
 - [ ] **9. Cap concurrent client tasks** `[review]` — bound the per-connection IPC
   task spawns in the daemon (semaphore / join-set with limit).

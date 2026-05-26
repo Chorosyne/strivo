@@ -16,6 +16,11 @@ use crate::platform::{ChannelEntry, Platform, PlatformKind};
 use crate::recording::job::RecordingJob;
 use crate::recording::RecordingCommand;
 
+/// Cap on retained terminal (Finished/Failed) recordings. Active jobs are
+/// never evicted; this only bounds the completed-history tail so the map
+/// can't grow without limit over a long-running daemon (roadmap item 8).
+const MAX_TERMINAL_RECORDINGS: usize = 200;
+
 /// Daemon state — maintained from internal events.
 struct DaemonState {
     channels: Vec<ChannelEntry>,
@@ -42,6 +47,27 @@ impl DaemonState {
             pending_auth: self.pending_auth.clone(),
             patreon_creators: self.patreon_creators.clone(),
             patreon_posts: self.patreon_posts.clone(),
+        }
+    }
+
+    /// Drop the oldest terminal recordings beyond [`MAX_TERMINAL_RECORDINGS`].
+    /// Active jobs (ResolvingUrl/Recording/Stopping) are always kept.
+    fn evict_old_terminal(&mut self) {
+        use crate::recording::job::RecordingState;
+        let mut terminal: Vec<(Uuid, chrono::DateTime<chrono::Utc>)> = self
+            .recordings
+            .iter()
+            .filter(|(_, j)| matches!(j.state, RecordingState::Finished | RecordingState::Failed))
+            .map(|(id, j)| (*id, j.started_at))
+            .collect();
+        if terminal.len() <= MAX_TERMINAL_RECORDINGS {
+            return;
+        }
+        // Oldest first; remove everything beyond the cap.
+        terminal.sort_by_key(|(_, started)| *started);
+        let remove = terminal.len() - MAX_TERMINAL_RECORDINGS;
+        for (id, _) in terminal.into_iter().take(remove) {
+            self.recordings.remove(&id);
         }
     }
 
@@ -77,6 +103,7 @@ impl DaemonState {
                     job.state = *final_state;
                     job.error = error.clone();
                 }
+                self.evict_old_terminal();
             }
             DaemonEvent::DeviceCodeRequired {
                 kind,
@@ -876,5 +903,81 @@ async fn persist_event(
     };
     if let Err(e) = result {
         tracing::warn!("daemon: persist event failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recording::job::{RecordingJob, RecordingState};
+    use crate::platform::PlatformKind;
+
+    fn empty_state() -> DaemonState {
+        DaemonState {
+            channels: Vec::new(),
+            recordings: HashMap::new(),
+            twitch_connected: false,
+            youtube_connected: false,
+            patreon_connected: false,
+            pending_auth: None,
+            auth_queue: std::collections::VecDeque::new(),
+            patreon_creators: Vec::new(),
+            patreon_posts: Vec::new(),
+        }
+    }
+
+    fn job(state: RecordingState, age_secs: i64) -> RecordingJob {
+        let mut j = RecordingJob::new(
+            "ch".into(),
+            "Chan".into(),
+            PlatformKind::Twitch,
+            std::path::PathBuf::from("/tmp/x.mkv"),
+            false,
+            None,
+        );
+        j.state = state;
+        j.started_at = chrono::Utc::now() - chrono::Duration::seconds(age_secs);
+        j
+    }
+
+    #[test]
+    fn evict_caps_terminal_keeps_active() {
+        let mut st = empty_state();
+        // One active job (must survive) plus a terminal job older than any
+        // we add below, to confirm the oldest terminal is the one dropped.
+        let active = job(RecordingState::Recording, 1);
+        let active_id = active.id;
+        st.recordings.insert(active_id, active);
+        let oldest = job(RecordingState::Finished, 1_000_000);
+        let oldest_id = oldest.id;
+        st.recordings.insert(oldest_id, oldest);
+
+        // Push terminal jobs well past the cap.
+        for i in 0..MAX_TERMINAL_RECORDINGS + 50 {
+            let j = job(RecordingState::Finished, i as i64);
+            st.recordings.insert(j.id, j);
+        }
+
+        st.evict_old_terminal();
+
+        let terminal = st
+            .recordings
+            .values()
+            .filter(|j| matches!(j.state, RecordingState::Finished | RecordingState::Failed))
+            .count();
+        assert_eq!(terminal, MAX_TERMINAL_RECORDINGS, "terminal tail capped");
+        assert!(st.recordings.contains_key(&active_id), "active job kept");
+        assert!(!st.recordings.contains_key(&oldest_id), "oldest terminal dropped");
+    }
+
+    #[test]
+    fn evict_noop_under_cap() {
+        let mut st = empty_state();
+        for i in 0..10 {
+            let j = job(RecordingState::Finished, i);
+            st.recordings.insert(j.id, j);
+        }
+        st.evict_old_terminal();
+        assert_eq!(st.recordings.len(), 10);
     }
 }
