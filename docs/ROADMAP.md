@@ -55,7 +55,9 @@ Source tags: `[review]` = code-quality review High/Medium finding; `[F]`/`[A]`/`
   daemon (IPC snapshot), jobs DB (open), and free disk; 200 when all ok, 503
   when degraded, with a per-check breakdown for monitors. — machine-readable: recorder up, DB
   reachable, disk free; separate from the UI panel, for CI/monitoring.
-- [ ] **12. Visible SSE liveness** `[A]` — set `X-Accel-Buffering: no` + no response
+- [x] **12. Visible SSE liveness** `[A]` — `X-Accel-Buffering: no` on
+  `/events` so proxies don't buffer SSE; the SPA's reconnecting pill +
+  degraded re-poll were already in place. — set `X-Accel-Buffering: no` + no response
   buffering on `/events`; confirm/finish the "reconnecting" badge so a dropped SSE is
   never silently stale.
 

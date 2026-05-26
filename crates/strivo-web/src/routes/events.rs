@@ -15,15 +15,14 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use futures::stream::{Stream, StreamExt};
+use futures::stream::StreamExt;
 
 use crate::server::AppState;
 
-async fn events(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+async fn events(State(state): State<AppState>) -> impl IntoResponse {
     let mut event_stream = state.ipc.events();
     let stream = async_stream::stream! {
         while let Some(item) = event_stream.next().await {
@@ -38,7 +37,7 @@ async fn events(
                     // needed event names are retired.)
                     match serde_json::to_string(&de) {
                         Ok(body) => {
-                            yield Ok(Event::default().data(body));
+                            yield Ok::<_, Infallible>(Event::default().data(body));
                         }
                         Err(e) => {
                             tracing::warn!("event JSON encode failed: {e}");
@@ -55,11 +54,16 @@ async fn events(
             }
         }
     };
-    Sse::new(stream).keep_alive(
+    let sse = Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("ping"),
-    )
+    );
+    // X-Accel-Buffering: no tells nginx (and other reverse proxies, e.g.
+    // behind `tailscale serve`) not to buffer the response, so SSE frames
+    // reach the browser immediately instead of the connection going silently
+    // stale. Harmless on a direct loopback connection.
+    ([("X-Accel-Buffering", "no")], sse)
 }
 
 pub fn router() -> Router<AppState> {
