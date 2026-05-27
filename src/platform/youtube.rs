@@ -117,6 +117,13 @@ pub struct YouTubePlatform {
     refresh_token_value: Arc<RwLock<Option<String>>>,
     pub pending_device_code: Arc<RwLock<Option<DeviceCodeInfo>>>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>,
+    /// Cached subscription list + when it was fetched. Subs barely change, so
+    /// we refresh on a long TTL instead of every poll (quota: 1 unit/page).
+    subs_cache: Arc<RwLock<Option<(std::time::Instant, Vec<ChannelEntry>)>>>,
+    /// Video IDs confirmed NOT live (ended/VOD). The RSS-first live check
+    /// skips these so `videos.list` only fires for new or still-live videos —
+    /// the fix for the 10k/day quota exhaustion.
+    dead_videos: Arc<RwLock<std::collections::HashSet<String>>>,
 }
 
 #[allow(dead_code)]
@@ -141,6 +148,8 @@ impl YouTubePlatform {
             refresh_token_value: Arc::new(RwLock::new(None)),
             pending_device_code: Arc::new(RwLock::new(None)),
             event_tx: None,
+            subs_cache: Arc::new(RwLock::new(None)),
+            dead_videos: Arc::new(RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -354,7 +363,8 @@ impl YouTubePlatform {
     }
 
     /// Check if specific videos are currently live (1 API unit per call)
-    async fn check_videos_live(&self, video_ids: &[String]) -> Result<Vec<ChannelEntry>> {
+    /// Returns `(video_id, ChannelEntry)` for each currently-live video.
+    async fn check_videos_live(&self, video_ids: &[String]) -> Result<Vec<(String, ChannelEntry)>> {
         if video_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -367,6 +377,7 @@ impl YouTubePlatform {
 
         if let Some(items) = resp.items {
             for item in items {
+                let video_id = item.id.clone().unwrap_or_default();
                 let details = item.live_streaming_details.as_ref();
                 // A video is live if it has liveStreamingDetails with an activeLiveChatId
                 // or has a start time but no end time
@@ -401,7 +412,7 @@ impl YouTubePlatform {
                     .and_then(|s| s.channel_title.clone())
                     .unwrap_or_default();
 
-                live_channels.push(ChannelEntry {
+                live_channels.push((video_id, ChannelEntry {
                     id: channel_id.clone(),
                     platform: PlatformKind::YouTube,
                     name: channel_id,
@@ -414,7 +425,7 @@ impl YouTubePlatform {
                     thumbnail_url: thumbnail,
                     auto_record: false,
                     last_live_at: None,
-                });
+                }));
             }
         }
 
@@ -687,6 +698,18 @@ impl Platform for YouTubePlatform {
     }
 
     async fn fetch_followed_channels(&self) -> Result<Vec<ChannelEntry>> {
+        // Subscriptions change rarely — serve from cache for 6h instead of
+        // re-fetching every poll (saves quota + survives transient 403s).
+        const SUBS_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+        {
+            let guard = self.subs_cache.read().await;
+            if let Some((at, cached)) = guard.as_ref() {
+                if at.elapsed() < SUBS_TTL {
+                    return Ok(cached.clone());
+                }
+            }
+        }
+
         let mut channels = Vec::new();
         let mut page_token: Option<String> = None;
 
@@ -736,29 +759,64 @@ impl Platform for YouTubePlatform {
             }
         }
 
+        *self.subs_cache.write().await = Some((std::time::Instant::now(), channels.clone()));
         Ok(channels)
     }
 
     async fn check_live_status(&self, channel_ids: &[String]) -> Result<Vec<ChannelEntry>> {
-        let mut all_live = Vec::new();
-
-        // RSS-first approach: check RSS feeds (free), then confirm via API (1 unit per call)
-        for channel_id in channel_ids {
-            match self.check_rss_for_live(channel_id).await {
-                Ok(video_ids) if !video_ids.is_empty() => {
-                    match self.check_videos_live(&video_ids).await {
-                        Ok(mut live) => all_live.append(&mut live),
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to check video live status for {channel_id}: {e}"
-                            );
+        // RSS-first (free): collect recent video ids across all channels, then
+        // confirm live state in ONE batched videos.list per 50 ids — and skip
+        // ids already confirmed dead (ended/VOD) so quota is spent only on new
+        // or still-live videos. This is the fix for the 10k/day exhaustion:
+        // previously this made one videos.list call PER channel, every poll.
+        let mut candidates: Vec<String> = Vec::new();
+        {
+            let dead = self.dead_videos.read().await;
+            for channel_id in channel_ids {
+                match self.check_rss_for_live(channel_id).await {
+                    Ok(video_ids) => {
+                        for v in video_ids {
+                            if !dead.contains(&v) {
+                                candidates.push(v);
+                            }
                         }
                     }
+                    Err(e) => tracing::warn!("Failed to check RSS for {channel_id}: {e}"),
                 }
-                Ok(_) => {} // No recent videos
-                Err(e) => {
-                    tracing::warn!("Failed to check RSS for {channel_id}: {e}");
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_live = Vec::new();
+        let mut live_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for chunk in candidates.chunks(50) {
+            match self.check_videos_live(chunk).await {
+                Ok(pairs) => {
+                    for (vid, entry) in pairs {
+                        live_ids.insert(vid);
+                        all_live.push(entry);
+                    }
                 }
+                Err(e) => tracing::warn!("youtube: videos.list live check failed: {e}"),
+            }
+        }
+
+        // Anything we checked that isn't live is an ended stream / VOD — cache
+        // it so we never spend quota re-checking it. (Live ids stay uncached so
+        // we keep re-checking them to detect when they end.)
+        {
+            let mut dead = self.dead_videos.write().await;
+            for id in &candidates {
+                if !live_ids.contains(id) {
+                    dead.insert(id.clone());
+                }
+            }
+            if dead.len() > 20_000 {
+                dead.clear(); // bound memory; warms back up via RSS
             }
         }
 
