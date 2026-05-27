@@ -1131,7 +1131,9 @@ select[aria-invalid="true"] {
   color: var(--fg);
   transition: transform 0.12s ease, border-color 0.12s ease;
 }
-a.media-pill:hover { transform: translateY(-1px); border-color: var(--accent); }
+a.media-pill:hover,
+.media-pill[data-action]:hover { transform: translateY(-1px); border-color: var(--accent); }
+.media-pill[data-action] { cursor: pointer; }
 .mp-thumb {
   position: relative;
   flex: none;

@@ -986,6 +986,7 @@ fn config_set(cfg: &mut config::AppConfig, key: &str, value: &str) -> Result<()>
                     client_id: value.to_string(),
                     client_secret: String::new(),
                     poll_interval_secs: 300,
+                    cookies_path: None,
                 });
             }
         }
@@ -997,6 +998,7 @@ fn config_set(cfg: &mut config::AppConfig, key: &str, value: &str) -> Result<()>
                     client_id: String::new(),
                     client_secret: value.to_string(),
                     poll_interval_secs: 300,
+                    cookies_path: None,
                 });
             }
         }
@@ -1011,6 +1013,19 @@ fn config_set(cfg: &mut config::AppConfig, key: &str, value: &str) -> Result<()>
                     client_id: String::new(),
                     client_secret: String::new(),
                     poll_interval_secs: secs,
+                    cookies_path: None,
+                });
+            }
+        }
+        "patreon.cookies_path" => {
+            if let Some(ref mut pa) = cfg.patreon {
+                pa.cookies_path = Some(std::path::PathBuf::from(value));
+            } else {
+                cfg.patreon = Some(config::PatreonConfig {
+                    client_id: String::new(),
+                    client_secret: String::new(),
+                    poll_interval_secs: 300,
+                    cookies_path: Some(std::path::PathBuf::from(value)),
                 });
             }
         }

@@ -763,7 +763,9 @@ async fn handle_client(
                     channel_name: creator_name,
                     platform: crate::platform::PlatformKind::Patreon,
                     output_path,
-                    cookies_path: None,
+                    // Patreon posts are gated; the patron's cookies are needed
+                    // to download them (same cookies used to list them).
+                    cookies_path: config.patreon.as_ref().and_then(|p| p.cookies_path.clone()),
                     post_title: Some(post_title),
                 });
             }

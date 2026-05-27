@@ -101,7 +101,25 @@ impl PatreonMonitor {
             // newer than our last check. "New" detection for auto-pull is
             // done below by comparing published_at against last_checked.
             let last = self.last_checked.get(&creator.campaign_id).copied();
-            let posts = self.client.fetch_posts(&creator.campaign_id, None).await?;
+            // The Patreon API returns no posts for campaigns you only patron;
+            // when cookies are configured, list them via yt-dlp instead.
+            let cookies = self.config.patreon.as_ref().and_then(|p| p.cookies_path.clone());
+            let posts = match (cookies.as_deref(), creator.vanity.as_deref()) {
+                (Some(cp), Some(vanity)) => {
+                    match self
+                        .client
+                        .fetch_posts_ytdlp(&creator.campaign_id, vanity, Some(cp), 15)
+                        .await
+                    {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!("Patreon yt-dlp post fetch for {vanity} failed: {e:#}");
+                            Vec::new()
+                        }
+                    }
+                }
+                _ => self.client.fetch_posts(&creator.campaign_id, None).await.unwrap_or_default(),
+            };
 
             // Per-creator opt-in to auto-download (task #70). Creators with
             // no auto_pull_creators entry get a notification only; the user

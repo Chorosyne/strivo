@@ -284,6 +284,12 @@ pub struct PatreonConfig {
     pub client_secret: String,
     #[serde(default = "default_patreon_poll_interval")]
     pub poll_interval_secs: u64,
+    /// Path to a Netscape cookies.txt for the patron's logged-in Patreon
+    /// session. Required to list/download a pledged creator's video posts —
+    /// the Patreon API doesn't expose them to patrons, so StriVo falls back
+    /// to yt-dlp + these cookies (mirrors the YouTube cookies_path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies_path: Option<PathBuf>,
 }
 
 fn default_patreon_poll_interval() -> u64 {

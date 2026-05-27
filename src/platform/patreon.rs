@@ -40,6 +40,8 @@ pub struct PatreonPost {
     pub url: String,
     pub published_at: String,
     pub embed_url: Option<String>,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
 }
 
 impl PatreonCreator {
@@ -454,11 +456,99 @@ impl PatreonClient {
                         url: post_url,
                         published_at,
                         embed_url,
+                        thumbnail_url: None,
                     });
                 }
             }
         }
 
+        Ok(posts)
+    }
+
+    /// List a campaign's recent video posts via yt-dlp + the patron's Patreon
+    /// cookies. The Patreon API does not expose a creator's posts to patrons
+    /// (it only serves campaigns you own), so this scrapes the campaign page
+    /// the way the website does. `cookies_path` is required to see paid posts.
+    pub async fn fetch_posts_ytdlp(
+        &self,
+        campaign_id: &str,
+        vanity: &str,
+        cookies_path: Option<&std::path::Path>,
+        limit: usize,
+    ) -> Result<Vec<PatreonPost>> {
+        let url = format!("https://www.patreon.com/c/{vanity}/posts");
+        let mut cmd = tokio::process::Command::new("yt-dlp");
+        cmd.arg("-J")
+            .arg("--playlist-end")
+            .arg(limit.to_string())
+            .arg("--ignore-errors")
+            .arg("--no-warnings");
+        if let Some(cp) = cookies_path {
+            cmd.arg("--cookies").arg(cp);
+        }
+        cmd.arg(&url);
+
+        // Bound the call: yt-dlp does a full per-post extraction, so a hung
+        // request must not stall the monitor poll.
+        let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+            .await
+            .context("yt-dlp timed out")?
+            .context("failed to spawn yt-dlp")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let data: serde_json::Value = serde_json::from_str(stdout.trim())
+            .with_context(|| format!("parse yt-dlp output for {vanity}"))?;
+
+        let mut posts = Vec::new();
+        if let Some(entries) = data.get("entries").and_then(|v| v.as_array()) {
+            for e in entries {
+                if e.is_null() {
+                    continue; // inaccessible post skipped via --ignore-errors
+                }
+                let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let webpage = e
+                    .get("webpage_url")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| e.get("url").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                if id.is_empty() || webpage.is_empty() {
+                    continue;
+                }
+                let title = e
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Untitled")
+                    .to_string();
+                let thumbnail_url = e
+                    .get("thumbnail")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                // upload_date is YYYYMMDD; normalise to YYYY-MM-DD for display.
+                let published_at = e
+                    .get("upload_date")
+                    .and_then(|v| v.as_str())
+                    .map(|d| {
+                        if d.len() == 8 {
+                            format!("{}-{}-{}", &d[0..4], &d[4..6], &d[6..8])
+                        } else {
+                            d.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                posts.push(PatreonPost {
+                    id,
+                    campaign_id: campaign_id.to_string(),
+                    title,
+                    // The post page URL is the stable handle; the pull path
+                    // re-runs yt-dlp on it (with cookies) to download.
+                    url: webpage.clone(),
+                    published_at,
+                    embed_url: Some(webpage),
+                    thumbnail_url,
+                });
+            }
+        }
         Ok(posts)
     }
 

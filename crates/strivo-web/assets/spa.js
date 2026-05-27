@@ -1140,20 +1140,26 @@ function renderPatreonPosts(c) {
   const posts = patreonState.posts[c.id] || [];
   const rows = posts.length
     ? posts
-        .map(
-          (p) => `
-      <div class="vod-row" data-action="patreon-pull"
+        .map((p) => {
+          const thumb = p.thumbnail_url
+            ? `<img class="mp-thumb-img" loading="lazy" alt="" src="${escape(p.thumbnail_url)}" onerror="this.remove()">`
+            : "";
+          return `
+      <div class="media-pill" data-action="patreon-pull"
            data-embed="${escape(p.embed_url || "")}"
            data-creator="${escape(c.display_name || c.name)}"
            data-title="${escape(p.title)}">
-        <span class="vod-date">${escape((p.published_at || "").slice(0, 10))}</span>
-        <span class="vod-title">${escape(p.title)}</span>
-        ${p.embed_url ? '<span class="vod-pull">⇩ pull</span>' : ""}
-      </div>`,
-        )
+        <div class="mp-thumb">${thumb}</div>
+        <div class="mp-info">
+          <div class="mp-title">${escape(p.title)}</div>
+          <div class="mp-sub">${escape((p.published_at || "").slice(0, 10))}</div>
+        </div>
+        <div class="mp-meta">${p.embed_url ? '<span class="vod-pull mp-badge">⇩ pull</span>' : ""}</div>
+      </div>`;
+        })
         .join("")
     : '<div class="empty sm">No video posts.</div>';
-  el.innerHTML = `<h2 class="cd-section-title">Posts</h2><div class="vod-list">${rows}</div>`;
+  el.innerHTML = `<h2 class="cd-section-title">Posts</h2><div class="media-list">${rows}</div>`;
   el.querySelectorAll("[data-action=patreon-pull]").forEach((row) => {
     if (!row.dataset.embed) return;
     row.addEventListener("click", async () => {
