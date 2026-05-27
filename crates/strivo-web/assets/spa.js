@@ -409,8 +409,6 @@ function chrome(content) {
         <a class="brand" href="#/library" id="brand-home" title="Home">StriVo</a>
         <span id="live-pill" class="live-pill" style="display: none"
               aria-label="Live recording count"></span>
-        <span id="storage-pill" class="storage-pill" style="display: none"
-              aria-label="Storage usage"></span>
         <span id="conn-status" class="conn-status" role="status" hidden
               title="Live updates connection">● reconnecting…</span>
         <a id="health-pill" class="health-pill" href="#/system" hidden
@@ -449,29 +447,10 @@ function setupChromeHandlers() {
     await API.logout().catch(() => {});
     route("login");
   });
-  // W5 — refresh the topbar storage pill on every chrome mount.
-  refreshStoragePill();
   // Health pill — amber/red when any check is degraded (roadmap item 13).
   refreshHealthPill();
   // Channel list lives in the left rail on every page.
   paintChannelList();
-}
-
-// Storage pill refresh — debounced to once per chrome render.
-async function refreshStoragePill() {
-  const pill = document.getElementById("storage-pill");
-  if (!pill) return;
-  try {
-    const s = await API.storage();
-    const used = s.bytes_used_by_recordings || 0;
-    const avail = s.filesystem_avail_bytes || 0;
-    if (avail > 0 || used > 0) {
-      pill.textContent = `💾 ${formatBytes(used)} used · ${formatBytes(avail)} free`;
-      pill.style.display = "";
-    }
-  } catch (_) {
-    pill.style.display = "none";
-  }
 }
 
 // Topbar health pill: only shown when the worst check is warn/error, so a
@@ -534,9 +513,14 @@ function paintChannelList() {
       ? '<span class="ch-rec" title="recording">●</span>'
       : "";
     const liveDot = c.is_live ? '<span class="ch-live">◉</span>' : "";
-    const viewers = c.is_live && c.viewer_count
-      ? `<span class="ch-viewers">${formatCount(c.viewer_count)}</span>`
-      : "";
+    // Live → viewer count; offline Twitch/YT → "last live: N ago" in the same
+    // slot (when StriVo has observed it live at least once).
+    let viewers = "";
+    if (c.is_live && c.viewer_count) {
+      viewers = `<span class="ch-viewers">${formatCount(c.viewer_count)}</span>`;
+    } else if (!c.is_live && !isPatreon && c.last_live_at) {
+      viewers = `<span class="ch-lastlive" title="last live: ${escape(lastLiveLong(c.last_live_at))}">${escape(relTime(c.last_live_at))}</span>`;
+    }
     // Patreon rows are visually distinct (item 6): a pledged-tier chip
     // (stored in stream_title) and a patreon-accented platform glyph.
     const tier = isPatreon && c.stream_title
@@ -752,9 +736,10 @@ async function renderHome() {
       )
     : null;
 
+  // The recordings dashboard (In progress / Recent / Upcoming) lives only on
+  // the home view; opening a channel shows just its detail.
   const center = selected
-    ? `${channelDetailHtml(selected)}
-       <div class="dash-band"><div id="dash">${recordingsDashboardHtml(true)}</div></div>`
+    ? channelDetailHtml(selected)
     : `<div id="dash">${recordingsDashboardHtml(false)}</div>`;
 
   root.innerHTML = chrome(center);
@@ -787,41 +772,50 @@ function recordingsDashboardHtml(compact) {
     .filter((s) => s.next_fire)
     .sort((a, b) => new Date(a.next_fire) - new Date(b.next_fire));
 
-  const recCardEl = (r) => {
-    const cls = stateClassName(r.state);
-    const stopBtn = isInProgress(r.state)
-      ? `<button class="danger sm" data-action="stop" data-job-id="${r.id}">Stop</button>`
-      : "";
-    return `<div class="rec-card ${cls}">
-      <div class="rec-card-title">${escape(r.stream_title || r.channel_name || "(recording)")}</div>
-      <div class="rec-card-meta">
-        <span class="state-pill ${cls}">${escape(stateLabel(r.state))}</span>
-        <span>${escape(r.channel_name || "")}</span>
-        <span>${formatBytes(r.bytes_written || 0)}</span>
+  const schedPillEl = (s) => `
+    <div class="media-pill">
+      <div class="mp-thumb"></div>
+      <div class="mp-info">
+        <div class="mp-title">${escape(s.channel)}</div>
+        <div class="mp-sub">${escape(new Date(s.next_fire).toLocaleString())}${s.duration ? ` · ${escape(s.duration)}` : ""}</div>
       </div>
-      ${stopBtn}
-    </div>`;
-  };
-  const schedCardEl = (s) => `
-    <div class="rec-card upcoming">
-      <div class="rec-card-title">${escape(s.channel)}</div>
-      <div class="rec-card-meta">
-        <span>${new Date(s.next_fire).toLocaleString()}</span>
-        <span>${escape(s.duration || "")}</span>
-      </div>
+      <div class="mp-meta"><span class="mp-badge">scheduled</span></div>
     </div>`;
 
   const rowEl = (title, count, html, empty) => `
     <section class="dash-row">
       <h2 class="dash-row-title">${title}${count != null ? ` <span class="dash-count">${count}</span>` : ""}</h2>
-      <div class="dash-strip">${html || `<div class="empty sm">${empty}</div>`}</div>
+      <div class="media-list">${html || `<div class="empty sm">${empty}</div>`}</div>
     </section>`;
 
   const heading = compact ? "" : `<h1 class="page-title">Recordings dashboard</h1>`;
   return `${heading}
-    ${rowEl("In progress", inProgress.length, inProgress.map(recCardEl).join(""), "Nothing recording")}
-    ${rowEl("Recent", null, recent.map(recCardEl).join(""), "No recordings yet")}
-    ${rowEl("Upcoming", upcoming.length, upcoming.map(schedCardEl).join(""), "No scheduled recordings")}`;
+    ${rowEl("In progress", inProgress.length, inProgress.map(recordingPillHtml).join(""), "Nothing recording")}
+    ${rowEl("Recent", null, recent.map(recordingPillHtml).join(""), "No recordings yet")}
+    ${rowEl("Upcoming", upcoming.length, upcoming.map(schedPillEl).join(""), "No scheduled recordings")}`;
+}
+
+// Shared recording media-pill (used by the home dashboard + History): cover
+// thumbnail + title + channel·date + state/size, with a Stop on active rows.
+function recordingPillHtml(j) {
+  const when = j.started_at ? new Date(j.started_at).toLocaleString() : "—";
+  const stop = isInProgress(j.state)
+    ? `<button class="danger sm" data-action="stop" data-job-id="${escape(j.id)}">Stop</button>`
+    : "";
+  return `
+    <div class="media-pill">
+      <div class="mp-thumb"><img class="mp-thumb-img" loading="lazy" alt=""
+        src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
+      <div class="mp-info">
+        <div class="mp-title">${escape(j.stream_title || j.channel_name || "(recording)")}</div>
+        <div class="mp-sub">${escape(j.channel_name || "")} · ${escape(when)}</div>
+      </div>
+      <div class="mp-meta">
+        <span class="state-pill ${stateClassName(j.state)}">${escape(stateLabel(j.state))}</span>
+        <span class="mp-size">${formatBytes(j.bytes_written || 0)}</span>
+        ${stop}
+      </div>
+    </div>`;
 }
 
 function wireDashboard() {
@@ -2269,25 +2263,7 @@ async function renderHistory() {
   } catch (_) {}
   root.removeAttribute("aria-busy");
   const body = rows.length
-    ? rows
-        .map((j) => {
-          const when = j.started_at ? new Date(j.started_at).toLocaleString() : "—";
-          const size = formatBytes(j.bytes_written || 0);
-          return `
-      <div class="media-pill">
-        <div class="mp-thumb"><img class="mp-thumb-img" loading="lazy" alt=""
-          src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
-        <div class="mp-info">
-          <div class="mp-title">${escape(j.stream_title || "(no title)")}</div>
-          <div class="mp-sub">${escape(j.channel_name || "")} · ${escape(when)}</div>
-        </div>
-        <div class="mp-meta">
-          <span class="state-pill ${stateClassName(j.state)}">${escape(stateLabel(j.state))}</span>
-          <span class="mp-size">${size}</span>
-        </div>
-      </div>`;
-        })
-        .join("")
+    ? rows.map(recordingPillHtml).join("")
     : '<div class="empty">No recording history yet.</div>';
   root.innerHTML = chrome(`
     <h1 class="page-title">History</h1>
@@ -2329,6 +2305,25 @@ function formatBytes(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
   if (n >= 1e3) return (n / 1e3).toFixed(0) + " KB";
   return n + " B";
+}
+// Compact relative age for the rail "last live" slot: 3d / 2w / 4mo / 1y.
+function relTime(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return "";
+  const d = Math.floor((Date.now() - t) / 86400000);
+  if (d <= 0) return "today";
+  if (d < 7) return `${d}d`;
+  if (d < 30) return `${Math.floor(d / 7)}w`;
+  if (d < 365) return `${Math.floor(d / 30)}mo`;
+  return `${Math.floor(d / 365)}y`;
+}
+function lastLiveLong(iso) {
+  const t = new Date(iso).getTime();
+  if (!t) return "unknown";
+  const d = Math.floor((Date.now() - t) / 86400000);
+  if (d <= 0) return "earlier today";
+  const unit = d === 1 ? "day" : "days";
+  return `${d} ${unit} ago`;
 }
 
 // ── W6 keyboard shortcuts ────────────────────────────────────────────

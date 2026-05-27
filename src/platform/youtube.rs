@@ -413,6 +413,7 @@ impl YouTubePlatform {
                     started_at,
                     thumbnail_url: thumbnail,
                     auto_record: false,
+                    last_live_at: None,
                 });
             }
         }
@@ -724,6 +725,7 @@ impl Platform for YouTubePlatform {
                         started_at: None,
                         thumbnail_url: None,
                         auto_record: false,
+                        last_live_at: None,
                     });
                 }
             }

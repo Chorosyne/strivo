@@ -38,6 +38,11 @@ pub struct ChannelMonitor {
     /// Read-only persistence handle for capture-profile cutoff checks
     /// (roadmap item 21). `None` when the daemon has no DB.
     persist: Option<Arc<crate::recording::persist::PersistDb>>,
+    /// Last time each channel was observed live (persisted), for the
+    /// "last live: N ago" label on offline rows.
+    last_live: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Path backing `last_live`.
+    last_live_path: PathBuf,
 }
 
 impl ChannelMonitor {
@@ -49,6 +54,11 @@ impl ChannelMonitor {
         cancel: CancellationToken,
     ) -> Self {
         let interval_secs = config.poll_interval_secs;
+        let last_live_path = AppConfig::state_dir().join("last_live.json");
+        let last_live = std::fs::read_to_string(&last_live_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
         Self {
             platforms,
             config,
@@ -63,6 +73,8 @@ impl ChannelMonitor {
             poll_interval_secs: Arc::new(std::sync::atomic::AtomicU64::new(interval_secs)),
             interval_notify: Arc::new(tokio::sync::Notify::new()),
             persist: None,
+            last_live,
+            last_live_path,
         }
     }
 
@@ -228,6 +240,13 @@ impl ChannelMonitor {
                                 ch.auto_record = self.config.auto_record_channels.iter().any(|a| {
                                     a.channel_id == ch.id && a.platform == kind.to_string()
                                 });
+
+                                // Track/stamp last-seen-live for the offline
+                                // "last live: N ago" label.
+                                if ch.is_live {
+                                    self.last_live.insert(ch.id.clone(), chrono::Utc::now());
+                                }
+                                ch.last_live_at = self.last_live.get(&ch.id).copied();
                             }
                         }
                         Err(e) => {
@@ -311,6 +330,12 @@ impl ChannelMonitor {
         });
 
         let _ = self.event_tx.send(AppEvent::channels_updated(all_channels));
+
+        // Persist last-seen-live so the "last live: N ago" label survives
+        // restarts. Best-effort.
+        if let Ok(json) = serde_json::to_string(&self.last_live) {
+            let _ = std::fs::write(&self.last_live_path, json);
+        }
 
         Ok(())
     }

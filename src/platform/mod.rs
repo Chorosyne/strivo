@@ -73,6 +73,11 @@ pub struct ChannelEntry {
     pub started_at: Option<DateTime<Utc>>,
     pub thumbnail_url: Option<String>,
     pub auto_record: bool,
+    /// When StriVo last observed this channel live (for the "last live: N ago"
+    /// label on offline rows). Stamped by the monitor from its persisted
+    /// last-live tracking; platform builders leave it None.
+    #[serde(default)]
+    pub last_live_at: Option<DateTime<Utc>>,
 }
 
 /// One past video / VOD / video-bearing post returned from a channel's back catalog.

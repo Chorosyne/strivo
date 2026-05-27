@@ -50,6 +50,25 @@
   box-sizing: border-box;
 }
 
+/* Themed scrollbars (JellySkin palette). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -168,17 +187,19 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   text-decoration: none;
   font-size: 1.1rem;
-  color: var(--muted);
+  color: var(--accent2);
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .topnav-link:hover {
   background: var(--overlay);
+  color: var(--accent);
 }
 .topnav-link.active {
-  background: var(--overlay);
-  box-shadow: inset 0 -2px 0 var(--primary);
+  background: var(--gradient);
+  color: #fff;
 }
 
 .topbar {
@@ -412,6 +433,12 @@ th[data-sort]:hover {
   font-size: 0.7rem;
   color: var(--muted);
   font-family: var(--mono);
+}
+.ch-lastlive {
+  font-size: 0.68rem;
+  color: var(--dim);
+  font-family: var(--mono);
+  white-space: nowrap;
 }
 .ch-live {
   color: var(--live);
