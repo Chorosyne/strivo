@@ -20,6 +20,12 @@ use tokio_util::sync::CancellationToken;
 const WS_URL: &str = "wss://eventsub.wss.twitch.tv/ws";
 const SUB_URL: &str = "https://api.twitch.tv/helix/eventsub/subscriptions";
 
+/// Twitch caps a WebSocket session at a max total subscription cost of 10, and
+/// a `stream.online` sub for a broadcaster who hasn't authorized our app costs
+/// 1 — so 10 is the hard ceiling on push-monitored channels. The bootstrap
+/// prioritizes the auto-record set; polling backstops everyone else.
+pub const MAX_EVENTSUB_SUBS: usize = 10;
+
 pub struct EventSubClient {
     pub client_id: String,
     /// Shared with the TwitchPlatform so subscription creation always uses the
@@ -142,45 +148,38 @@ impl EventSubClient {
                 "condition": { "broadcaster_user_id": id },
                 "transport": { "method": "websocket", "session_id": session_id },
             });
-            // Twitch rate-limits subscription creation; pace the calls and
-            // retry once on 429 so a large follow list doesn't get dropped.
-            let mut attempt = 0;
-            loop {
-                attempt += 1;
-                let resp = client
-                    .post(SUB_URL)
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("Client-Id", &self.client_id)
-                    .json(&body)
-                    .send()
-                    .await;
-                match resp {
-                    Ok(r) if r.status().is_success() => {
-                        ok += 1;
-                        break;
+            let resp = client
+                .post(SUB_URL)
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Client-Id", &self.client_id)
+                .json(&body)
+                .send()
+                .await;
+            match resp {
+                Ok(r) if r.status().is_success() => ok += 1,
+                Ok(r) if r.status().as_u16() == 429 => {
+                    // Hit Twitch's max total subscription cost (10). Retrying
+                    // won't recover — the cap is per client, not per request.
+                    // The bootstrap caps us at MAX_EVENTSUB_SUBS, so this only
+                    // fires if the cost accounting drifts; stop quietly.
+                    tracing::warn!(
+                        "twitch eventsub: subscription cost cap reached at {ok} subs; remaining channels rely on polling"
+                    );
+                    break;
+                }
+                Ok(r) => {
+                    fail += 1;
+                    if fail <= 3 {
+                        tracing::warn!("twitch eventsub: subscribe {id} -> HTTP {}", r.status());
                     }
-                    Ok(r) if r.status().as_u16() == 429 && attempt < 4 => {
-                        tokio::time::sleep(Duration::from_millis(800 * attempt)).await;
-                        continue;
-                    }
-                    Ok(r) => {
-                        fail += 1;
-                        if fail <= 3 {
-                            tracing::warn!("twitch eventsub: subscribe {id} -> HTTP {}", r.status());
-                        }
-                        break;
-                    }
-                    Err(e) => {
-                        fail += 1;
-                        if fail <= 3 {
-                            tracing::warn!("twitch eventsub: subscribe {id} failed: {e}");
-                        }
-                        break;
+                }
+                Err(e) => {
+                    fail += 1;
+                    if fail <= 3 {
+                        tracing::warn!("twitch eventsub: subscribe {id} failed: {e}");
                     }
                 }
             }
-            // Gentle pacing between channels to stay under the create limit.
-            tokio::time::sleep(Duration::from_millis(120)).await;
         }
         tracing::info!(
             "twitch eventsub: subscribed stream.online for {ok} channels ({fail} failed)"

@@ -429,6 +429,12 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
         (twitch_handle.clone(), config.twitch.clone(), poll_notify.clone())
     {
         let client_id = tcfg.client_id.clone();
+        let auto: std::collections::HashSet<String> = config
+            .auto_record_channels
+            .iter()
+            .filter(|a| a.platform == "Twitch")
+            .map(|a| a.channel_id.clone())
+            .collect();
         let cancel_es = cancel.clone();
         tokio::spawn(async move {
             // Wait for Twitch auth (token present) before subscribing.
@@ -442,15 +448,38 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             };
-            let ids: Vec<String> = match th.read().await.fetch_followed_channels().await {
+            let all_ids: Vec<String> = match th.read().await.fetch_followed_channels().await {
                 Ok(chs) => chs.into_iter().map(|c| c.id).collect(),
                 Err(e) => {
                     tracing::warn!("twitch eventsub: could not list follows: {e:#}");
                     return;
                 }
             };
-            if ids.is_empty() {
+            if all_ids.is_empty() {
                 return;
+            }
+            // Twitch caps WebSocket EventSub at a max total cost of 10, and a
+            // stream.online subscription for a broadcaster who hasn't authorized
+            // our app costs 1 — so we can only push-subscribe to 10 channels.
+            // Prioritize the auto-record set (the channels we actually PVR) so
+            // they get sub-second detection; ordinary polling backstops the rest.
+            let mut ids: Vec<String> = all_ids.iter().filter(|id| auto.contains(*id)).cloned().collect();
+            for id in &all_ids {
+                if ids.len() >= crate::platform::twitch_eventsub::MAX_EVENTSUB_SUBS {
+                    break;
+                }
+                if !auto.contains(id) {
+                    ids.push(id.clone());
+                }
+            }
+            ids.truncate(crate::platform::twitch_eventsub::MAX_EVENTSUB_SUBS);
+            if ids.len() < all_ids.len() {
+                tracing::info!(
+                    "twitch eventsub: real-time push for {} of {} follows (Twitch caps WebSocket subs at {}); polling backstops the rest",
+                    ids.len(),
+                    all_ids.len(),
+                    crate::platform::twitch_eventsub::MAX_EVENTSUB_SUBS
+                );
             }
             crate::platform::twitch_eventsub::EventSubClient {
                 client_id,
