@@ -63,6 +63,9 @@ pub enum RecordingCommand {
         /// If provided, the recording manager uses this ID instead of generating a new one.
         /// Used by the schedule manager to track job IDs for timed Stop commands.
         job_id: Option<Uuid>,
+        /// Source stream thumbnail URL (snapshotted to local cache at start).
+        #[serde(default)]
+        thumbnail_url: Option<String>,
     },
     Stop {
         job_id: Uuid,
@@ -149,7 +152,7 @@ pub async fn run_manager(
         tokio::select! {
             Some(cmd) = cmd_rx.recv() => {
                 match cmd {
-                    RecordingCommand::Start { channel_id, channel_name, display_name, platform, transcode, cookies_path, stream_title, from_start, job_id: requested_id } => {
+                    RecordingCommand::Start { channel_id, channel_name, display_name, platform, transcode, cookies_path, stream_title, from_start, job_id: requested_id, thumbnail_url } => {
                         // Check if already recording this channel
                         let already = active.values().any(|r| {
                             r.job.channel_id == channel_id
@@ -181,7 +184,15 @@ pub async fn run_manager(
                         if let Some(id) = requested_id {
                             job.id = id;
                         }
+                        job.thumbnail_url = thumbnail_url.clone();
                         let job_id = job.id;
+                        // Snapshot the source thumbnail to a local cache so it
+                        // survives the upstream URL expiring (Twitch live
+                        // previews go stale once the stream ends).
+                        if let Some(url) = thumbnail_url {
+                            let dest = thumbnail_cache_path(&config, job_id);
+                            tokio::spawn(async move { snapshot_thumbnail(&url, &dest).await; });
+                        }
                         let _ = event_tx.send(AppEvent::recording_started(job.clone()));
 
                         active.insert(job_id, ActiveRecording {
@@ -686,6 +697,32 @@ pub async fn run_manager(
                 }
             }
         }
+    }
+}
+
+/// Local cache path for a recording's source thumbnail (item: recording
+/// cover art). Keyed by job id under `data_dir/thumbs/`.
+pub fn thumbnail_cache_path(_config: &AppConfig, job_id: uuid::Uuid) -> PathBuf {
+    AppConfig::data_dir().join("thumbs").join(format!("{job_id}.jpg"))
+}
+
+/// Download the source thumbnail to `dest` (best-effort). Snapshotting a local
+/// copy means the webui cover art survives the upstream URL expiring.
+async fn snapshot_thumbnail(url: &str, dest: &std::path::Path) {
+    if let Some(parent) = dest.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    match reqwest::get(url).await {
+        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+            Ok(bytes) => {
+                if let Err(e) = tokio::fs::write(dest, &bytes).await {
+                    tracing::warn!("thumbnail cache write failed: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("thumbnail download failed: {e}"),
+        },
+        Ok(resp) => tracing::warn!("thumbnail fetch {}: {}", url, resp.status()),
+        Err(e) => tracing::warn!("thumbnail fetch failed: {e}"),
     }
 }
 

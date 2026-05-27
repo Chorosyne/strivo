@@ -42,6 +42,10 @@ pub struct RecordingJob {
     /// Optional playlist/group this recording belongs to.
     #[serde(default)]
     pub playlist: Option<String>,
+    /// Source stream/VOD thumbnail URL captured at record-start; snapshotted
+    /// to a local cache for the webui cover art (upstream URL can expire).
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
 }
 
 impl RecordingJob {
@@ -68,6 +72,7 @@ impl RecordingJob {
             stream_title,
             watched: false,
             playlist: None,
+            thumbnail_url: None,
         }
     }
 
@@ -95,6 +100,7 @@ impl RecordingJob {
             stream_title,
             watched: false,
             playlist: None,
+            thumbnail_url: None,
         }
     }
 

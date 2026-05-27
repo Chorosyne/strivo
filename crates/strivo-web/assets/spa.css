@@ -1112,6 +1112,19 @@ select[aria-invalid="true"] {
 }
 
 /* System page — checks grouped by domain (item 13). */
+/* Recording cover thumbnails (source stream thumbnail). */
+.rec-title-cell { display: flex; align-items: center; gap: 0.6rem; }
+.rec-thumb {
+  width: 84px;
+  height: 47px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  flex: none;
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow);
+}
+.recordings-table.compact .rec-thumb { width: 56px; height: 32px; }
+
 /* Recordings index density + multi-select mass-edit (item 22). */
 .rec-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
 .rec-toolbar .grid-filter { flex: 1; }

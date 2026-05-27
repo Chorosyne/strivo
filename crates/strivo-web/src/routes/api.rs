@@ -453,6 +453,8 @@ struct StartRecordingPayload {
     from_start: bool,
     #[serde(default)]
     stream_title: Option<String>,
+    #[serde(default)]
+    thumbnail_url: Option<String>,
 }
 
 /// `POST /api/v1/recordings` — start a new recording. Equivalent to
@@ -475,10 +477,38 @@ async fn start_recording(
         stream_title: body.stream_title,
         from_start: body.from_start,
         job_id: None,
+        thumbnail_url: body.thumbnail_url,
     });
     match state.ipc.send_command(cmd).await {
         Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "queued"}))).into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    }
+}
+
+/// `GET /api/v1/recordings/{id}/thumb` — serve the recording's cached source
+/// thumbnail (snapshotted at record-start). 404 when none exists so the SPA
+/// falls back to a placeholder. Authenticated; id is a Uuid so no traversal.
+async fn recording_thumb(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let path = strivo_core::config::AppConfig::data_dir()
+        .join("thumbs")
+        .join(format!("{id}.jpg"));
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "image/jpeg"),
+                (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => crate::problem::Problem::not_found("no thumbnail").into_response(),
     }
 }
 
@@ -1175,6 +1205,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/recordings/{id}",
             get(recording_one).delete(stop_recording),
         )
+        .route("/api/v1/recordings/{id}/thumb", get(recording_thumb))
         .route("/api/v1/recordings/stop_all", post(stop_all_recordings))
         .route("/api/v1/schedule", get(schedule))
         .route("/api/v1/settings", get(settings))

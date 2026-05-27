@@ -553,6 +553,7 @@ async fn handle_action(
                 stream_title,
                 from_start,
                 job_id: None,
+                thumbnail_url: None,
             });
             app.status_message = if from_start {
                 "Starting recording from stream start...".to_string()

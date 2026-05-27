@@ -263,6 +263,7 @@ impl ChannelMonitor {
                                     stream_title: ch.stream_title.clone(),
                                     from_start: true,
                                     job_id: None,
+                                    thumbnail_url: ch.thumbnail_url.clone(),
                                 });
                             }
                         } else if !ch.is_live && was_live {

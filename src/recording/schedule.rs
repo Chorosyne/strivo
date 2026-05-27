@@ -272,6 +272,7 @@ pub async fn run_schedule_manager(
                                 stream_title: Some("Scheduled recording".to_string()),
                                 from_start: false,
                                 job_id: Some(job_id),
+                                thumbnail_url: None,
                             });
 
                             let _ = event_tx.send(AppEvent::schedule_fired(

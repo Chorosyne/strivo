@@ -852,11 +852,13 @@ function channelDetailHtml(c) {
                 data-channel-name="${escape(c.name)}"
                 data-display-name="${escape(c.display_name || c.name)}"
                 data-platform="${c.platform}"
+                data-thumbnail="${escape(c.thumbnail_url || "")}"
                 data-stream-title="${escape(c.stream_title || "")}">● Record</button>
         <button data-action="record" data-from-start="true" data-channel-id="${c.id}"
                 data-channel-name="${escape(c.name)}"
                 data-display-name="${escape(c.display_name || c.name)}"
                 data-platform="${c.platform}"
+                data-thumbnail="${escape(c.thumbnail_url || "")}"
                 data-stream-title="${escape(c.stream_title || "")}">● From start</button>
       ` : ""}
       ${!isPatreon ? `
@@ -1356,6 +1358,7 @@ async function startRecordingFromCard(d) {
       platform: d.platform,
       from_start: d.fromStart === "true",
       stream_title: d.streamTitle || null,
+      thumbnail_url: d.thumbnail || null,
       transcode: false,
     });
     Toast.success(
@@ -1596,6 +1599,14 @@ function updateMassbar() {
   });
 }
 
+// Cover thumbnail for a recording (source stream thumbnail, cached at
+// record-start). Hidden on 404 so failed/old recordings show no broken image.
+function recThumb(r) {
+  return `<img class="rec-thumb" loading="lazy" alt=""
+    src="/api/v1/recordings/${encodeURIComponent(r.id)}/thumb"
+    onerror="this.remove()" />`;
+}
+
 function recordingRow(r) {
   const state = stateLabel(r.state);
   const stateClass = stateClassName(r.state);
@@ -1605,7 +1616,7 @@ function recordingRow(r) {
       <td class="rec-check"><input type="checkbox" class="rec-row-check" data-job-id="${escape(r.id)}" ${recSelected.has(r.id) ? "checked" : ""} aria-label="Select recording"></td>
       <td><span class="state-pill ${stateClass}">${state}</span></td>
       <td>${escape(r.channel_name)}</td>
-      <td>${escape(r.stream_title || "(no title)")}</td>
+      <td><div class="rec-title-cell">${recThumb(r)}<span>${escape(r.stream_title || "(no title)")}</span></div></td>
       <td>${new Date(r.started_at).toLocaleString()}</td>
       <td>${formatBytes(r.bytes_written || 0)}</td>
       <td>
@@ -2234,7 +2245,7 @@ async function renderHistory() {
       <tr>
         <td><span class="state-pill ${stateClassName(j.state)}">${escape(stateLabel(j.state))}</span></td>
         <td>${escape(j.channel_name || "")}</td>
-        <td>${escape(j.stream_title || "")}</td>
+        <td><div class="rec-title-cell">${recThumb(j)}<span>${escape(j.stream_title || "")}</span></div></td>
         <td>${escape(when)}</td>
         <td>${formatBytes(j.bytes_written || 0)}</td>
       </tr>`;
