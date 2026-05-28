@@ -35,6 +35,7 @@ strivo-brandsafe = { path = "../brandsafe" }
 strivo-reuse = { path = "../reuse" }
 strivo-casebook = { path = "../casebook" }
 strivo-heatmap = { path = "../heatmap" }
+strivo-editor = { path = "../editor" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

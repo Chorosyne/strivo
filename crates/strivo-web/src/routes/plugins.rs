@@ -1401,6 +1401,116 @@ async fn heatmap_compute(
     .into_response()
 }
 
+fn editor_store_path() -> std::path::PathBuf {
+    strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("editor")
+        .join("editor.db")
+}
+
+/// `GET /api/v1/plugins/editor/<recording_id>` — load the cached EDL,
+/// initialising a default whole-source EDL when none exists.
+async fn editor_load(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("editor") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    let store = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open store: {e}")).into_response(),
+    };
+    let edl = match store.load(&recording_id).ok().flatten() {
+        Some(e) => e,
+        None => {
+            let dur = probe_duration(&input).unwrap_or(0.0);
+            strivo_editor::Edl::from_source(
+                &recording_id,
+                &input.to_string_lossy(),
+                dur,
+            )
+        }
+    };
+    Json(json!({
+        "edl": edl,
+        "total_duration": edl.total_duration(),
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/editor/<recording_id>` — save the EDL the SPA
+/// has been editing locally.
+async fn editor_save(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<strivo_editor::Edl>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("editor") { return r; }
+    let mut edl = body;
+    edl.recording_id = recording_id.clone();
+    edl.compact();
+    let store = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open store: {e}")).into_response(),
+    };
+    if let Err(e) = store.save(&edl) {
+        return Problem::internal(format!("save: {e}")).into_response();
+    }
+    Json(json!({ "ok": true, "total_duration": edl.total_duration() })).into_response()
+}
+
+/// `POST /api/v1/plugins/editor/<recording_id>/render` — bake the EDL
+/// into a final file under `<recording_parent>/edl/<recording_id>.mkv`.
+async fn editor_render(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("editor") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    let store = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open store: {e}")).into_response(),
+    };
+    let edl = match store.load(&recording_id).ok().flatten() {
+        Some(e) => e,
+        None => return Problem::not_found("no EDL saved yet").into_response(),
+    };
+    let out_dir = input
+        .parent()
+        .map(|p| p.join("edl"))
+        .unwrap_or_else(|| std::path::PathBuf::from("./edl"));
+    let safe = recording_id.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+    let output = out_dir.join(format!("{safe}.mkv"));
+    match strivo_editor::render_edl(&edl, &output) {
+        Ok(bytes) => Json(json!({
+            "ok": true,
+            "output_path": output.to_string_lossy(),
+            "bytes": bytes,
+            "total_duration": edl.total_duration(),
+        }))
+        .into_response(),
+        Err(e) => Problem::internal(format!("render: {e}")).into_response(),
+    }
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -2127,4 +2237,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/reuse/{id}", get(reuse_list))
         .route("/api/v1/plugins/casebook/{id}", get(casebook_generate))
         .route("/api/v1/plugins/heatmap/{id}", get(heatmap_compute))
+        .route("/api/v1/plugins/editor/{id}", get(editor_load).post(editor_save))
+        .route("/api/v1/plugins/editor/{id}/render", axum::routing::post(editor_render))
 }

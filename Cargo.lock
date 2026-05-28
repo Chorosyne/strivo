@@ -3951,6 +3951,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-editor"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-heatmap"
 version = "0.3.0"
 dependencies = [
@@ -4053,6 +4064,7 @@ dependencies = [
  "strivo-clipper",
  "strivo-core",
  "strivo-cuepoints",
+ "strivo-editor",
  "strivo-heatmap",
  "strivo-insights-compare",
  "strivo-multitrack",

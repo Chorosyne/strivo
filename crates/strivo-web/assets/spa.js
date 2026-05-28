@@ -177,6 +177,12 @@ const API = {
     `/api/v1/plugins/casebook/${encodeURIComponent(recordingId)}?fmt=markdown`,
   heatmapCompute: (recordingId, bucketSecs = 30) =>
     API._fetch(`/plugins/heatmap/${encodeURIComponent(recordingId)}?bucket_secs=${bucketSecs}`),
+  editorLoad: (recordingId) =>
+    API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}`),
+  editorSave: (recordingId, edl) =>
+    API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}`, { method: "POST", body: edl }),
+  editorRender: (recordingId) =>
+    API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}/render`, { method: "POST" }),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -3444,6 +3450,24 @@ function fmtClock(sec) {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
+// Parse a clock-shaped input ("1:30:00", "1:30", "90", "90.5s") into
+// seconds. Falls back to the raw numeric value when the format is
+// loose. Used by the EDL editor prompts.
+function parseTimeInput(raw, max) {
+  const s = String(raw || "").trim().replace(/s$/i, "");
+  if (!s) return NaN;
+  if (s.includes(":")) {
+    const parts = s.split(":").map((x) => parseFloat(x));
+    if (parts.some((p) => !isFinite(p))) return NaN;
+    let n = 0;
+    for (const p of parts) n = n * 60 + p;
+    return Math.min(Math.max(n, 0), max ?? n);
+  }
+  const n = parseFloat(s);
+  if (!isFinite(n)) return NaN;
+  return Math.min(Math.max(n, 0), max ?? n);
+}
+
 // ── Recording info modal + in-app player ─────────────────────────────
 //
 // Two overlays — `#rec-info-modal` (stats + plugin quick-actions) and
@@ -3636,12 +3660,14 @@ async function openRecordingInfo(jobId) {
       ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-editor-btn" data-action="rec-info-editor" title="Open the EDL editor — cut, ripple-delete, render">✄ EDL editor</button>` : ""}
       <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
       <div class="rec-clipper" id="rec-clipper" hidden></div>
       <div class="rec-thumbs" id="rec-thumbs" hidden></div>
       <div class="rec-tracks" id="rec-tracks" hidden></div>
       <div class="rec-reuse" id="rec-reuse" hidden></div>
       <div class="rec-casebook" id="rec-casebook" hidden></div>
+      <div class="rec-editor" id="rec-editor" hidden></div>
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
@@ -3798,6 +3824,160 @@ async function openRecordingInfo(jobId) {
         </div>`;
       Toast.success(`Generated ${candidates.length} thumbnail candidate(s)`);
     }).catch((err) => Toast.error(`Thumbnails failed: ${err.message}`));
+  });
+
+  overlay.querySelector("[data-action=rec-info-editor]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Loading EDL…", async () => {
+      const host = document.getElementById("rec-editor");
+      if (!host) return;
+      let { edl, total_duration } = await API.editorLoad(jobId);
+      host.hidden = false;
+
+      const paint = () => {
+        const dur = edl.cuts.reduce((a, c) => a + Math.max(0, c.end_sec - c.start_sec), 0);
+        const sourceDur = total_duration || dur || 1;
+        host.innerHTML = `
+          <h4 class="rec-cp-title">EDL editor <span class="pg-cap-hint">${edl.cuts.length} cut${edl.cuts.length === 1 ? "" : "s"} · output ${fmtClock(dur)}</span></h4>
+          <div class="rec-ed-actions">
+            <button class="sm rec-ed-add-split" type="button">Split at time…</button>
+            <button class="sm rec-ed-delete" type="button">Ripple-delete range…</button>
+            <button class="btn-primary rec-ed-render" type="button">⚡ Render to MKV</button>
+          </div>
+          <div class="rec-ed-list">
+            ${edl.cuts
+              .map(
+                (c, i) => `
+              <div class="rec-ed-row" data-i="${i}">
+                <span class="rec-ed-idx">${i + 1}</span>
+                <span class="rec-ed-kind ${escape(c.kind.kind || "source")}">${escape(c.kind.kind || "source")}</span>
+                <span class="rec-ed-src">${escape((c.kind.source_path || c.kind.broll_path || "").split("/").slice(-1)[0])}</span>
+                <span class="rec-ed-time">${fmtClock(c.start_sec)} → ${fmtClock(c.end_sec)} · ${fmtClock(c.end_sec - c.start_sec)}</span>
+                <button class="sm rec-ed-trim" data-i="${i}" type="button" title="Trim this cut">trim</button>
+                <button class="sm danger rec-ed-rm" data-i="${i}" type="button" title="Remove this cut">✕</button>
+              </div>`,
+              )
+              .join("")}
+          </div>
+          <p class="pg-cap-hint">All edits are non-destructive — original recording stays intact. Render writes &lt;recording_parent&gt;/edl/&lt;id&gt;.mkv.</p>`;
+
+        const persist = async () => {
+          try {
+            await API.editorSave(jobId, edl);
+          } catch (err) {
+            Toast.error(`Save failed: ${err.message}`);
+          }
+        };
+        host.querySelector(".rec-ed-add-split")?.addEventListener("click", async () => {
+          const s = prompt("Split at output time (HH:MM:SS or seconds):");
+          if (!s) return;
+          const t = parseTimeInput(s, sourceDur);
+          if (!isFinite(t)) {
+            Toast.error("Could not parse time");
+            return;
+          }
+          // Local split — same algorithm as server. Walk and split.
+          let elapsed = 0;
+          for (let i = 0; i < edl.cuts.length; i++) {
+            const c = edl.cuts[i];
+            const cd = c.end_sec - c.start_sec;
+            const out_hi = elapsed + cd;
+            if (t > elapsed + 0.001 && t < out_hi - 0.001) {
+              const offset = t - elapsed;
+              const right = JSON.parse(JSON.stringify(c));
+              const newSplit = c.start_sec + offset;
+              right.start_sec = newSplit;
+              c.end_sec = newSplit;
+              edl.cuts.splice(i + 1, 0, right);
+              break;
+            }
+            elapsed = out_hi;
+          }
+          await persist();
+          paint();
+          Toast.success("Split");
+        });
+        host.querySelector(".rec-ed-delete")?.addEventListener("click", async () => {
+          const range = prompt("Range to delete (e.g. 1:30-2:45 or 90-165):");
+          if (!range) return;
+          const m = range.match(/(.+?)\s*[-–]\s*(.+)/);
+          if (!m) { Toast.error("Use lo-hi format"); return; }
+          const lo = parseTimeInput(m[1], sourceDur);
+          const hi = parseTimeInput(m[2], sourceDur);
+          if (!isFinite(lo) || !isFinite(hi) || hi <= lo) {
+            Toast.error("Invalid range");
+            return;
+          }
+          // Mirror server-side delete_range — walk and trim.
+          let elapsed = 0;
+          const next = [];
+          for (const cut of edl.cuts) {
+            const cd = cut.end_sec - cut.start_sec;
+            const out_lo = elapsed;
+            const out_hi = elapsed + cd;
+            elapsed = out_hi;
+            if (out_hi <= lo || out_lo >= hi) { next.push(cut); continue; }
+            if (out_lo >= lo && out_hi <= hi) { continue; }
+            if (out_lo < lo && out_hi <= hi) {
+              const trim = JSON.parse(JSON.stringify(cut));
+              trim.end_sec = cut.start_sec + (lo - out_lo);
+              next.push(trim);
+              continue;
+            }
+            if (out_lo >= lo && out_hi > hi) {
+              const trim = JSON.parse(JSON.stringify(cut));
+              trim.start_sec = cut.start_sec + (hi - out_lo);
+              next.push(trim);
+              continue;
+            }
+            const left = JSON.parse(JSON.stringify(cut));
+            left.end_sec = cut.start_sec + (lo - out_lo);
+            const right = JSON.parse(JSON.stringify(cut));
+            right.start_sec = cut.start_sec + (hi - out_lo);
+            next.push(left, right);
+          }
+          edl.cuts = next.filter((c) => c.end_sec - c.start_sec > 0.001);
+          await persist();
+          paint();
+          Toast.success("Range deleted");
+        });
+        host.querySelectorAll(".rec-ed-rm").forEach((b) => {
+          b.addEventListener("click", async () => {
+            const i = +b.dataset.i;
+            edl.cuts.splice(i, 1);
+            await persist();
+            paint();
+          });
+        });
+        host.querySelectorAll(".rec-ed-trim").forEach((b) => {
+          b.addEventListener("click", async () => {
+            const i = +b.dataset.i;
+            const c = edl.cuts[i];
+            const s = prompt(`Trim cut ${i + 1} — start..end (seconds or HH:MM:SS), e.g. "10-60"`, `${c.start_sec}-${c.end_sec}`);
+            if (!s) return;
+            const m = s.match(/(.+?)\s*[-–]\s*(.+)/);
+            if (!m) { Toast.error("Use start-end format"); return; }
+            const lo = parseTimeInput(m[1], sourceDur);
+            const hi = parseTimeInput(m[2], sourceDur);
+            if (!isFinite(lo) || !isFinite(hi) || hi <= lo) { Toast.error("Invalid"); return; }
+            c.start_sec = lo;
+            c.end_sec = hi;
+            await persist();
+            paint();
+          });
+        });
+        host.querySelector(".rec-ed-render")?.addEventListener("click", async (e2) => {
+          const btnR = e2.currentTarget;
+          if (!confirm(`Render EDL to MKV? ${edl.cuts.length} cut(s), total ${fmtClock(dur)}. ffmpeg pass per cut + concat.`)) return;
+          await withBusy(btnR, "Rendering…", async () => {
+            const res = await API.editorRender(jobId);
+            Toast.success(`Rendered ${formatBytes(res.bytes)} → ${res.output_path}`);
+          }).catch((err) => Toast.error(`Render failed: ${err.message}`));
+        });
+      };
+      paint();
+      Toast.success("EDL loaded");
+    }).catch((err) => Toast.error(`Editor failed: ${err.message}`));
   });
 
   overlay.querySelector("[data-action=rec-info-casebook]")?.addEventListener("click", async (e) => {
