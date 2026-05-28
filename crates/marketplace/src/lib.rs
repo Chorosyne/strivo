@@ -312,6 +312,28 @@ pub fn default_catalog() -> Catalog {
             },
             CatalogEntry {
                 manifest: PluginManifest {
+                    name: "scenes".into(),
+                    version: "0.1.0".into(),
+                    author: "Chorosyne".into(),
+                    license: Some("MIT".into()),
+                    description:
+                        "DAW-style session snapshots — bundle EDL + branding + automation + captions style as a named scene with optional thumbnail."
+                            .into(),
+                    capabilities: vec!["x.scenes".into()],
+                    consumes: vec!["recording".into()],
+                    entry_point: EntryPoint::Cdylib { path: "scenes.so".into() },
+                    min_host_version: "0.3.0".into(),
+                    price_cents: None,
+                    repository: Some("https://github.com/Chorosyne/scenes".into()),
+                    icon: None,
+                    screenshots: vec![],
+                    category: Some("Editor".into()),
+                },
+                source: "first_party".into(),
+                installed: true,
+            },
+            CatalogEntry {
+                manifest: PluginManifest {
                     name: "automation".into(),
                     version: "0.1.0".into(),
                     author: "Chorosyne".into(),

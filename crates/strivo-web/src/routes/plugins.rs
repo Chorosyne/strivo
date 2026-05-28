@@ -2001,6 +2001,206 @@ async fn multistream_tiles(
     .into_response()
 }
 
+fn scenes_db_path() -> std::path::PathBuf {
+    strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("scenes")
+        .join("scenes.db")
+}
+
+/// Read every per-recording plugin state file we know about into a
+/// component map. Missing files map to JSON null (compose() filters
+/// nulls so the manifest stays tight). Keeps the list in one place so
+/// adding a new plugin's state to a Scene is a one-line change.
+fn read_recording_components(recording_id: &str) -> std::collections::BTreeMap<String, serde_json::Value> {
+    let mut out = std::collections::BTreeMap::new();
+    let load = |p: std::path::PathBuf| -> serde_json::Value {
+        std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null)
+    };
+    out.insert("branding".into(), load(branding_path(recording_id)));
+    out.insert("automation".into(), load(automation_path(recording_id)));
+    out.insert("captions_style".into(), load(captions_style_path(recording_id)));
+    // EDL state lives in a SQLite shared by all recordings; pull just this
+    // one's row via the existing helper.
+    let edl_json = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
+        Ok(store) => store
+            .load(recording_id)
+            .ok()
+            .flatten()
+            .and_then(|edl| serde_json::to_value(&edl).ok())
+            .unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::Null,
+    };
+    out.insert("editor".into(), edl_json);
+    out
+}
+
+/// Write each component in the manifest back to its plugin's storage.
+/// Returns the names of components that were restored vs skipped.
+fn write_recording_components(
+    recording_id: &str,
+    manifest: &strivo_scenes::SceneManifest,
+) -> (Vec<String>, Vec<String>) {
+    let mut restored = Vec::new();
+    let mut skipped = Vec::new();
+    let write_file = |p: std::path::PathBuf, v: &serde_json::Value| -> bool {
+        if let Some(parent) = p.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return false;
+            }
+        }
+        serde_json::to_string_pretty(v)
+            .ok()
+            .and_then(|s| std::fs::write(&p, s).ok())
+            .is_some()
+    };
+    for (name, value) in strivo_scenes::decompose(manifest) {
+        let ok = match name {
+            "branding" => write_file(branding_path(recording_id), value),
+            "automation" => write_file(automation_path(recording_id), value),
+            "captions_style" => write_file(captions_style_path(recording_id), value),
+            "editor" => {
+                // EDL deserialises through the editor crate to validate
+                // shape before we commit it to the shared store.
+                match serde_json::from_value::<strivo_editor::Edl>(value.clone()) {
+                    Ok(mut edl) => {
+                        edl.recording_id = recording_id.to_string();
+                        edl.compact();
+                        if let Ok(store) = strivo_editor::store::EdlStore::open(&editor_store_path()) {
+                            store
+                                .save_with_label(&edl, "restored from scene")
+                                .is_ok()
+                        } else {
+                            false
+                        }
+                    }
+                    Err(_) => false,
+                }
+            }
+            _ => false, // Unknown component — preserve forward-compat by
+                       // listing it as skipped rather than crashing.
+        };
+        if ok {
+            restored.push(name.to_string());
+        } else {
+            skipped.push(name.to_string());
+        }
+    }
+    (restored, skipped)
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SceneCaptureBody {
+    pub name: String,
+    #[serde(default)]
+    pub thumbnail_data_url: Option<String>,
+}
+
+/// `GET /api/v1/plugins/scenes/<recording_id>` — newest-first list of
+/// every scene saved for this recording.
+async fn scenes_list(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("scenes") { return r; }
+    let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
+    };
+    let list = store.list(&recording_id, 100).unwrap_or_default();
+    Json(json!({ "recording_id": recording_id, "scenes": list })).into_response()
+}
+
+/// `POST /api/v1/plugins/scenes/<recording_id>` — capture every current
+/// per-recording plugin state into a named scene.
+async fn scenes_capture(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<SceneCaptureBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("scenes") { return r; }
+    let id = uuid::Uuid::new_v4().to_string();
+    let comps = read_recording_components(&recording_id);
+    let manifest = strivo_scenes::compose(&id, body.name, &recording_id, comps, body.thumbnail_data_url);
+    let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
+    };
+    if let Err(e) = store.save(&manifest) {
+        return Problem::internal(format!("save: {e}")).into_response();
+    }
+    Json(json!({
+        "ok": true,
+        "id": manifest.id,
+        "name": manifest.name,
+        "component_keys": manifest.components.keys().collect::<Vec<_>>(),
+        "size_bytes": manifest.approx_size_bytes(),
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/scenes/<recording_id>/<scene_id>/restore` —
+/// write every component back to its plugin store. Returns the names
+/// of restored + skipped components so the SPA can toast which plugins
+/// were touched.
+async fn scenes_restore(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path((recording_id, scene_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("scenes") { return r; }
+    let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
+    };
+    let manifest = match store.load(&recording_id, &scene_id) {
+        Ok(Some(m)) => m,
+        Ok(None) => return Problem::not_found("scene not found").into_response(),
+        Err(e) => return Problem::internal(format!("load: {e}")).into_response(),
+    };
+    let (restored, skipped) = write_recording_components(&recording_id, &manifest);
+    Json(json!({
+        "ok": true,
+        "id": manifest.id,
+        "name": manifest.name,
+        "restored": restored,
+        "skipped": skipped,
+    }))
+    .into_response()
+}
+
+/// `DELETE /api/v1/plugins/scenes/<recording_id>/<scene_id>` — idempotent.
+async fn scenes_delete(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path((recording_id, scene_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("scenes") { return r; }
+    let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
+    };
+    let did = store.delete(&recording_id, &scene_id).unwrap_or(false);
+    Json(json!({ "ok": true, "removed": did })).into_response()
+}
+
 fn captions_style_path(recording_id: &str) -> std::path::PathBuf {
     strivo_core::config::AppConfig::data_dir()
         .join("plugins")
@@ -3062,4 +3262,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
         .route("/api/v1/plugins/structure/{id}", axum::routing::post(structure_classify))
         .route("/api/v1/plugins/automation/{id}", get(automation_load).post(automation_save))
+        .route("/api/v1/plugins/scenes/{id}", get(scenes_list).post(scenes_capture))
+        .route("/api/v1/plugins/scenes/{id}/{scene_id}/restore", axum::routing::post(scenes_restore))
+        .route("/api/v1/plugins/scenes/{id}/{scene_id}", axum::routing::delete(scenes_delete))
 }
