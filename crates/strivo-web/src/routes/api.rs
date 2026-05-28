@@ -1792,6 +1792,42 @@ async fn monitor_state(
     .into_response()
 }
 
+/// `GET /api/v1/plugins/capabilities` — the DAW-vision capability
+/// matrix: which plugins (or roadmap slots) fulfil each capability
+/// tag. First-party providers are hard-coded here today; once the
+/// daemon exposes the registry over IPC we'll switch to that. The
+/// SPA renders this as the cross-plugin pipeline graph and lets
+/// users discover "who does what".
+async fn plugin_capabilities() -> impl IntoResponse {
+    use strivo_core::plugin::capability as cap;
+    // (capability, [(plugin, status)]) where status is "available"
+    // if the plugin is shipped or "roadmap" if the slot is reserved
+    // for an upcoming plugin (matches the DAW-vision plan).
+    let matrix = json!([
+        { "capability": cap::TRANSCRIPTION,        "providers": [{"plugin": "crunchr", "status": "available"}] },
+        { "capability": cap::WORD_TIMESTAMPS,      "providers": [{"plugin": "crunchr", "status": "available"}] },
+        { "capability": cap::DIARISATION,          "providers": [{"plugin": "crunchr", "status": "available"}] },
+        { "capability": cap::TOPIC_SEGMENTATION,   "providers": [{"plugin": "crunchr", "status": "available"}] },
+        { "capability": cap::CHAPTERS,             "providers": [{"plugin": "chapters", "status": "roadmap"}] },
+        { "capability": cap::SCENE_DETECTION,      "providers": [{"plugin": "cuepoints", "status": "roadmap"}] },
+        { "capability": cap::THUMBNAIL_RANKING,    "providers": [{"plugin": "thumbnails", "status": "roadmap"}] },
+        { "capability": cap::HIGHLIGHT_DETECTION,  "providers": [{"plugin": "clipper", "status": "roadmap"}] },
+        { "capability": cap::CLIP_EXTRACTION,      "providers": [{"plugin": "clipper", "status": "roadmap"}] },
+        { "capability": cap::TRANSLATION,          "providers": [{"plugin": "captions", "status": "roadmap"}] },
+        { "capability": cap::CAPTIONS,             "providers": [{"plugin": "captions", "status": "roadmap"}] },
+        { "capability": cap::AUDIENCE_RETENTION,   "providers": [{"plugin": "heatmap", "status": "roadmap"}] },
+        { "capability": cap::FRAUD_DETECTION,      "providers": [{"plugin": "viewguard", "status": "available"}] },
+        { "capability": cap::STREAM_COMPARISON,    "providers": [{"plugin": "insights", "status": "available"}] },
+        { "capability": cap::REPORTING,            "providers": [{"plugin": "casebook", "status": "roadmap"}] },
+        { "capability": cap::BRAND_SAFETY,         "providers": [{"plugin": "brandsafe", "status": "roadmap"}] },
+        { "capability": cap::ASSET_CATALOG,        "providers": [{"plugin": "archiver", "status": "available"}] },
+        { "capability": cap::SOURCE_TRACK_SPLIT,   "providers": [{"plugin": "multitrack", "status": "roadmap"}] },
+        { "capability": cap::PUBLISH_QUEUE,        "providers": [{"plugin": "reuse", "status": "roadmap"}] },
+        { "capability": cap::EDL_EDITOR,           "providers": [{"plugin": "editor", "status": "available"}] },
+    ]);
+    Json(matrix)
+}
+
 // ── W2: plugin RPC ───────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Default)]
@@ -2084,6 +2120,7 @@ pub fn router() -> Router<AppState> {
             put(put_archiver_playlists),
         )
         .route("/api/v1/monitor", get(monitor_state))
+        .route("/api/v1/plugins/capabilities", get(plugin_capabilities))
         .route("/api/v1/plugins/{plugin}/{verb}", post(plugin_rpc))
         // W5: stream-recorder surfaces
         .route("/api/v1/storage", get(storage))

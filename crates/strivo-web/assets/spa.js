@@ -134,6 +134,8 @@ const API = {
       method: "PUT",
       body: { playlists },
     }),
+  // DAW-vision capability matrix.
+  pluginCapabilities: () => API._fetch("/plugins/capabilities"),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -2533,9 +2535,14 @@ async function renderPluginHub() {
         : `<div class="pg-card pg-card-idle" data-plugin="${p.name}">${body}</div>`;
     })
     .join("");
+  // Capability matrix is a separate (fast) fetch; render the hub
+  // first and patch it in once it arrives so the page doesn't wait
+  // on the matrix to display the plugin grid.
+  API.pluginCapabilities().then(renderCapabilityMatrix).catch(() => {});
   root.innerHTML = chrome(`
     ${pluginHeader("Plugins", "First-party plugins. Pick one to browse what it has produced.")}
     ${upgrade}
+    <div id="pg-capability-matrix"></div>
     <div class="pg-grid">${
       cards ||
       (upgrade
@@ -2545,6 +2552,34 @@ async function renderPluginHub() {
   `);
   setupChromeHandlers();
   wireUpgradeCard();
+}
+
+// Render the DAW-vision capability matrix into #pg-capability-matrix.
+// Built lazily so the plugin grid paints first. Groups roadmap vs.
+// available providers so the user can see the trajectory at a glance.
+function renderCapabilityMatrix(matrix) {
+  const host = document.getElementById("pg-capability-matrix");
+  if (!host || !Array.isArray(matrix)) return;
+  const rows = matrix
+    .map((row) => {
+      const chips = (row.providers || [])
+        .map(
+          (p) =>
+            `<a class="pg-cap-chip pg-cap-${escape(p.status)}" href="#/plugins/${escape(p.plugin)}" title="${escape(p.plugin)}">${escape(p.plugin)}<span class="pg-cap-state">${escape(p.status)}</span></a>`,
+        )
+        .join("");
+      const label = row.capability.replace(/_/g, " ");
+      return `<div class="pg-cap-row">
+        <span class="pg-cap-label">${escape(label)}</span>
+        <span class="pg-cap-providers">${chips}</span>
+      </div>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <details class="pg-cap-matrix" open>
+      <summary><strong>Capability matrix</strong> <span class="pg-cap-hint">— what each plugin contributes toward the DAW-for-streaming vision</span></summary>
+      <div class="pg-cap-grid">${rows}</div>
+    </details>`;
 }
 
 // Upgrade card — shown on the Plugins hub when the user is not entitled.

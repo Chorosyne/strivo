@@ -2493,6 +2493,57 @@ body.modal-open { overflow: hidden; }
   font-size: 0.85rem;
   padding: 0.25rem 0;
 }
+.pg-cap-matrix {
+  margin: 0 0 1.4rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 0.7rem 1rem;
+}
+.pg-cap-matrix summary { cursor: pointer; padding: 0.2rem 0; color: var(--text); }
+.pg-cap-hint { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+.pg-cap-grid { display: grid; gap: 0.35rem; margin-top: 0.7rem; }
+.pg-cap-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.04);
+}
+.pg-cap-row:last-child { border-bottom: 0; }
+.pg-cap-label {
+  font-size: 0.85rem;
+  color: var(--text);
+  text-transform: capitalize;
+}
+.pg-cap-providers { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.pg-cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  text-decoration: none;
+  background: rgba(0, 188, 212, 0.1);
+  color: var(--text);
+  border: 1px solid rgba(0, 188, 212, 0.3);
+}
+.pg-cap-chip.pg-cap-roadmap {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-light);
+  color: var(--muted);
+}
+.pg-cap-state {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.pg-cap-chip.pg-cap-available .pg-cap-state { background: rgba(0, 188, 212, 0.25); color: var(--accent2); }
 .mon-cron-hint {
   margin: 0.6rem 0 0;
   font-size: 0.78rem;
