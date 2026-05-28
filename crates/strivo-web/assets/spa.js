@@ -3212,19 +3212,35 @@ async function renderChat() {
 // the requested container size + mode, plus each stream's ready-to-mount
 // embed URL. Mode is kept in URL params so refresh / share preserves the
 // view.
+// Background poll handle so route switches can cancel the previous
+// timer before mounting a new one.
+let _watchRefreshTimer = null;
+
+// Append the muted-state parameter Twitch / YouTube embeds use. Sticky-
+// muted by default keeps every tile silent on mount (browsers block
+// autoplay-with-audio anyway), and the per-tile Unmute button forces
+// the solo stream to audible via a src reload.
+function withMuted(url, muted) {
+  if (!url) return url;
+  const param = url.includes("youtube.com") ? `mute=${muted ? 1 : 0}` : `muted=${muted}`;
+  return url + (url.includes("?") ? "&" : "?") + param;
+}
+
 async function renderWatch() {
+  // Stop any prior refresh poll before we mount a new stage.
+  if (_watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
+
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
   const modeName = params.get("mode") || "auto";
   const focusId = params.get("focus") || "";
   const sideId = params.get("side") || "";
+  const soloId = params.get("solo") || "";
   let mode;
   if (modeName === "focus" && focusId) mode = { mode: "focus", stream_id: focusId };
   else if (modeName === "pip" && focusId) mode = { mode: "pip", main: focusId, side: sideId };
   else mode = { mode: "auto" };
   root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading live streams…</div></div>`);
   const watch = document.getElementById("watch");
-  // Reserve the full viewport below the topbar for the tile area.
-  // Integer pixels — the backend's u32 Query<> rejects floats.
   const cw = Math.max(320, Math.floor(watch.clientWidth));
   const ch = Math.max(180, Math.floor(window.innerHeight - watch.getBoundingClientRect().top - 32));
   let resp;
@@ -3244,12 +3260,18 @@ async function renderWatch() {
   const tiles = resp.tiles || [];
   const modeBtn = (m, label, target) =>
     `<button class="sm watch-mode-btn ${modeName === m ? "active" : ""}" data-mode="${m}" data-target="${target || ""}">${label}</button>`;
+  // Resolve the solo stream — defaults to none, but if the URL says
+  // 'solo=<id>' the matching tile is the only one audible.
+  const effectiveSolo = soloId && streams.find((s) => s.stream_id === soloId) ? soloId : "";
+  const muteAllPressed = effectiveSolo ? "" : "active";
   const toolbar = `
     <div class="watch-toolbar">
       <span class="watch-count pg-cap-hint">${streams.length} live</span>
       ${modeBtn("auto", "▦ Auto")}
       ${streams.map((s) => modeBtn("focus", `◉ ${escape(s.channel_name)}`, s.stream_id)).join("")}
       ${streams.length >= 2 ? modeBtn("pip", "⧉ PiP", `${streams[0].stream_id}|${streams[1].stream_id}`) : ""}
+      <span class="watch-tb-sep" aria-hidden="true">·</span>
+      <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>
     </div>`;
   const stage = document.createElement("div");
   stage.className = "watch-stage";
@@ -3261,22 +3283,41 @@ async function renderWatch() {
     if (!s) continue;
     const tile = document.createElement("div");
     tile.className = "watch-tile";
+    tile.dataset.streamId = s.stream_id;
     Object.assign(tile.style, {
       position: "absolute", left: `${t.x}px`, top: `${t.y}px`,
       width: `${t.w}px`, height: `${t.h}px`, zIndex: t.z,
     });
+    const muted = effectiveSolo ? s.stream_id !== effectiveSolo : true;
+    const audioBtn = muted
+      ? `<button class="watch-tile-btn watch-tile-unmute" title="Unmute this stream (mutes all others)" data-stream="${escape(s.stream_id)}">🔇</button>`
+      : `<button class="watch-tile-btn watch-tile-mute" title="Mute this stream" data-stream="${escape(s.stream_id)}">🔊</button>`;
     tile.innerHTML = `
       <div class="watch-tile-head">
         <span class="watch-tile-name">${escape(s.channel_name)}</span>
-        <span class="watch-tile-plat pg-cap-hint">${escape(s.platform)}${s.viewer_count != null ? ` · ${formatCount(s.viewer_count)}` : ""}</span>
+        <span class="watch-tile-meta">
+          <span class="watch-tile-plat pg-cap-hint" data-watch-meta="plat">${escape(s.platform)}${s.viewer_count != null ? ` · <span data-watch-meta="viewers">${formatCount(s.viewer_count)}</span>` : ""}</span>
+          ${audioBtn}
+          <button class="watch-tile-btn watch-tile-fs" title="Fullscreen this tile" data-stream="${escape(s.stream_id)}">⛶</button>
+        </span>
       </div>
-      <iframe class="watch-tile-iframe" loading="lazy"
-              src="${escape(s.embed_url)}" allowfullscreen frameborder="0"></iframe>`;
+      <iframe class="watch-tile-iframe" loading="lazy" allow="autoplay; fullscreen"
+              src="${escape(withMuted(s.embed_url, muted))}" allowfullscreen frameborder="0"></iframe>`;
     stage.appendChild(tile);
   }
   watch.innerHTML = "";
   watch.insertAdjacentHTML("beforeend", toolbar);
   watch.appendChild(stage);
+
+  // Helper: rewrite the hash with a new param key/value, preserving
+  // every other key. Re-renders the route automatically via hashchange.
+  const setHashParam = (key, value) => {
+    const p = new URLSearchParams(window.location.hash.split("?")[1] || "");
+    if (value == null || value === "") p.delete(key);
+    else p.set(key, value);
+    window.location.hash = `#/watch${p.toString() ? "?" + p.toString() : ""}`;
+  };
+
   watch.querySelectorAll(".watch-mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const m = btn.dataset.mode;
@@ -3289,9 +3330,73 @@ async function renderWatch() {
         p.set("focus", main || "");
         p.set("side", side || "");
       }
+      // Preserve solo across mode changes.
+      if (effectiveSolo) p.set("solo", effectiveSolo);
       window.location.hash = `#/watch?${p.toString()}`;
     });
   });
+
+  // Unmute → solo this stream (mutes all others). Pure URL-state
+  // transition; re-render swaps each iframe's muted param.
+  watch.querySelectorAll(".watch-tile-unmute").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setHashParam("solo", btn.dataset.stream);
+    });
+  });
+  watch.querySelectorAll(".watch-tile-mute").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Mute the currently-soloed stream → mute-all state.
+      setHashParam("solo", "");
+    });
+  });
+  document.getElementById("watch-mute-all")?.addEventListener("click", () => {
+    setHashParam("solo", "");
+  });
+  // Per-tile fullscreen. Use the tile container rather than the iframe so
+  // the head row stays visible inside the fullscreen overlay.
+  watch.querySelectorAll(".watch-tile-fs").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const tile = btn.closest(".watch-tile");
+      if (!tile) return;
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.();
+      } else {
+        tile.requestFullscreen?.();
+      }
+    });
+  });
+
+  // Background refresh: poll the tiles endpoint every 30s and patch the
+  // per-tile viewer counts in place. Avoids tearing the iframes (the
+  // streams keep playing) but keeps the meta-line fresh.
+  const liveRefresh = async () => {
+    try {
+      const r = await API.multistreamTiles(cw, ch, mode, window.location.host);
+      const byId = new Map((r.streams || []).map((s) => [s.stream_id, s]));
+      // If the live-set changed (someone went offline / live), trigger a
+      // full re-render so the toolbar + tile grid match reality.
+      const have = new Set(streams.map((s) => s.stream_id));
+      const got = new Set([...byId.keys()]);
+      const sameSet = have.size === got.size && [...have].every((x) => got.has(x));
+      if (!sameSet) {
+        renderWatch().catch(() => {});
+        return;
+      }
+      // Same streams, just patch viewer counts.
+      watch.querySelectorAll(".watch-tile").forEach((tile) => {
+        const s = byId.get(tile.dataset.streamId);
+        if (!s) return;
+        const meta = tile.querySelector('[data-watch-meta="viewers"]');
+        if (meta && s.viewer_count != null) {
+          meta.textContent = formatCount(s.viewer_count);
+        }
+      });
+    } catch (_) { /* one bad poll shouldn't tear the page */ }
+  };
+  _watchRefreshTimer = setInterval(liveRefresh, 30000);
 }
 
 function toTitleCase(slug) {

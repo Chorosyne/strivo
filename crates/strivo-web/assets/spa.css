@@ -3848,3 +3848,36 @@ body.modal-open { overflow: hidden; }
 .pl-picker-channel { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-picker-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-picker-meta { font-size: 0.78em; opacity: 0.7; }
+
+/* Watch tile controls — solo-audio, fullscreen. Floats at the right
+ * of the head row; only the unmuted tile shows the speaker glyph. */
+.watch-tile-meta { display: inline-flex; gap: 0.4rem; align-items: center; }
+.watch-tile-btn {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+  font-size: 0.78em;
+  padding: 0.05rem 0.4rem;
+}
+.watch-tile-btn:hover {
+  background: rgba(110,86,207,0.4);
+}
+.watch-tile-unmute, .watch-tile-mute, .watch-tile-fs {
+  line-height: 1;
+}
+.watch-mute-all.active {
+  background: rgba(245,158,11,0.25);
+  border-color: rgba(245,158,11,0.5);
+}
+.watch-tb-sep { opacity: 0.4; padding: 0 0.2rem; }
+
+/* Fullscreen polish: drop the head row when the tile is the fullscreen
+ * element so the iframe takes the whole viewport. */
+.watch-tile:fullscreen .watch-tile-head,
+.watch-tile:-webkit-full-screen .watch-tile-head { display: none; }
+.watch-tile:fullscreen .watch-tile-iframe,
+.watch-tile:-webkit-full-screen .watch-tile-iframe {
+  width: 100vw; height: 100vh;
+}
