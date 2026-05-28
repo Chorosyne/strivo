@@ -136,6 +136,8 @@ const API = {
     }),
   // DAW-vision capability matrix.
   pluginCapabilities: () => API._fetch("/plugins/capabilities"),
+  chaptersGenerate: (recordingId) =>
+    API._fetch(`/plugins/chapters/${encodeURIComponent(recordingId)}`, { method: "POST" }),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -2799,7 +2801,17 @@ async function renderCrunchrRecording(id) {
       <a class="pg-linkbtn" href="#/plugins/insights/rec/${encodeURIComponent(d.recording_id)}">View insights →</a>
       <button id="cr-export-vtt" class="pg-linkbtn" type="button">Export .vtt</button>
       <button id="cr-export-md" class="pg-linkbtn" type="button">Copy as markdown</button>
+      <button id="cr-chapters" class="pg-linkbtn" type="button" title="Generate YouTube/Twitch chapter markers from the transcript">Generate chapters</button>
     </div>
+    <section class="cfg-card" id="cr-chapters-card" hidden>
+      <h2 class="cfg-title">Chapters</h2>
+      <p class="pg-cap-hint">Heuristic chapter markers derived from the transcript topic-shift. Paste straight into a YouTube/Twitch description.</p>
+      <div class="cr-chapters-list" id="cr-chapters-list"></div>
+      <details class="cr-chapters-block"><summary>Description block</summary><pre id="cr-chapters-pre"></pre></details>
+      <div class="cr-chapters-actions">
+        <button id="cr-chapters-copy" class="pg-linkbtn" type="button">Copy</button>
+      </div>
+    </section>
     ${analysis}
     <section class="cfg-card">
       <h2 class="cfg-title">Transcript <span class="pg-cap-hint">${speakers.length} speaker${speakers.length === 1 ? "" : "s"} · ${blocks.length} block${blocks.length === 1 ? "" : "s"}</span></h2>
@@ -2882,6 +2894,41 @@ async function renderCrunchrRecording(id) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     Toast.success("WebVTT exported");
+  });
+
+  // Chapters — POST to /api/v1/plugins/chapters/<id>, render the result.
+  document.getElementById("cr-chapters")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Generating…", async () => {
+      const resp = await API.chaptersGenerate(d.recording_id);
+      const card = document.getElementById("cr-chapters-card");
+      const list = document.getElementById("cr-chapters-list");
+      const pre = document.getElementById("cr-chapters-pre");
+      if (!card || !list || !pre) return;
+      list.innerHTML = (resp.chapters || [])
+        .map(
+          (c) =>
+            `<a class="cr-chapter" href="#" data-seek="${c.start_sec}"><span class="cr-chapter-time">${fmtClock(c.start_sec)}</span><span class="cr-chapter-title">${escape(c.title)}</span></a>`,
+        )
+        .join("") || '<div class="empty sm">No chapter boundaries detected.</div>';
+      pre.textContent = resp.description || "";
+      card.hidden = false;
+      list.querySelectorAll(".cr-chapter").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          seek(parseFloat(el.dataset.seek || "0"));
+        });
+      });
+      document.getElementById("cr-chapters-copy")?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(resp.description || "");
+          Toast.success("Description copied");
+        } catch (_) {
+          Toast.error("Couldn't copy");
+        }
+      });
+      Toast.success(`Generated ${(resp.chapters || []).length} chapter(s)`);
+    }).catch((err) => Toast.error(`Chapters failed: ${err.message}`));
   });
 
   // Markdown export — copy to clipboard, ready to paste into a notes

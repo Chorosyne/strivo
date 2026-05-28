@@ -2607,6 +2607,39 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 720px) {
   .cr-block { grid-template-columns: 1fr; }
 }
+.cr-chapters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.4rem 0 0.6rem;
+}
+.cr-chapter {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 0.8rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+}
+.cr-chapter:hover { background: rgba(0, 188, 212, 0.08); color: var(--accent2); }
+.cr-chapter-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--accent2);
+}
+.cr-chapter-title { font-size: 0.92rem; }
+.cr-chapters-block summary { color: var(--muted); cursor: pointer; font-size: 0.82rem; }
+.cr-chapters-block pre {
+  margin: 0.4rem 0 0;
+  padding: 0.5rem 0.8rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cr-chapters-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .mon-cron-hint {
   margin: 0.6rem 0 0;
   font-size: 0.78rem;

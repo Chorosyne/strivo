@@ -64,6 +64,44 @@ fn viewguard_db() -> Option<PathBuf> {
     }
 }
 
+/// `POST /api/v1/plugins/chapters/<recording_id>` — generate (or
+/// re-generate) chapter markers for the given recording. Reads the
+/// Crunchr SQLite, runs the heuristic chapter builder, caches result
+/// in chapters.db, returns the chapter set inline.
+async fn chapters_generate(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("chapters") { return r; }
+    let crunchr_path = crunchr_db();
+    if !crunchr_path.exists() {
+        return Problem::not_found("crunchr DB not initialised").into_response();
+    }
+    let req = strivo_chapters::ChapterRequest {
+        recording_id: recording_id.clone(),
+        min_seconds: None,
+        cos_threshold: None,
+    };
+    let chapters = match strivo_chapters::generate_chapters(
+        &crunchr_path,
+        &req,
+        &strivo_chapters::KeywordTitler,
+    ) {
+        Ok(c) => c,
+        Err(e) => return Problem::internal(format!("chapters: {e}")).into_response(),
+    };
+    let description = strivo_chapters::format_for_description(&chapters);
+    Json(json!({
+        "recording_id": recording_id,
+        "chapters": chapters,
+        "description": description,
+    })).into_response()
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -772,4 +810,5 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/plugins/insights/export", get(insights_export))
         .route("/api/v1/recordings/{id}/captions.vtt", get(recording_captions))
+        .route("/api/v1/plugins/chapters/{id}", axum::routing::post(chapters_generate))
 }

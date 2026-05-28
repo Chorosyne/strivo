@@ -3853,6 +3853,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-chapters"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "strivo-core"
 version = "0.3.0"
 dependencies = [
@@ -3936,6 +3948,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "strivo-chapters",
  "strivo-core",
  "strivo-plugins",
  "tempfile",

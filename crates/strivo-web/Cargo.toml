@@ -24,6 +24,7 @@ strivo-core = { path = "../.." }
 # to surface transcripts, catalogs, verdicts, and insights. Actions still go
 # through the daemon over IPC (PluginRpc verb dispatch).
 strivo-plugins = { git = "https://github.com/Chorosyne/strivo-plugins", branch = "main", optional = true }
+strivo-chapters = { path = "../chapters" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP
