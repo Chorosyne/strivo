@@ -126,6 +126,8 @@ const API = {
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
     API._fetch("/vods/download", { method: "POST", body }),
+  remuxRecording: (id) =>
+    API._fetch(`/recordings/${encodeURIComponent(id)}/remux`, { method: "POST" }),
   login: (apiKey) =>
     API._fetch("/auth/login", { method: "POST", body: { api_key: apiKey } }),
   logout: () => API._fetch("/auth/logout", { method: "POST" }),
@@ -2121,10 +2123,16 @@ function updateMassbar() {
   }
   const active = sel.filter((r) => stateClassName(r.state) === "recording");
   bar.hidden = false;
+  // Pre-compute which selected rows are finished + look browser-broken,
+  // so the Remux button is only offered when it could actually help.
+  const remuxable = sel.filter((r) => stateClassName(r.state) === "finished" && r.file_exists !== false);
+  const deletable = sel.filter((r) => r.file_exists !== false || stateClassName(r.state) !== "recording");
   bar.innerHTML = `
     <span class="massbar-count">${sel.length} selected</span>
     ${active.length ? `<button id="mass-stop" class="danger sm">Stop ${active.length} active</button>` : ""}
     <button id="mass-rerecord" class="sm">Re-record ${sel.length}</button>
+    ${remuxable.length ? `<button id="mass-remux" class="sm" title="Remux for browser playback (matroska + aac_adtstoasc)">Remux ${remuxable.length}</button>` : ""}
+    ${deletable.length ? `<button id="mass-delete" class="danger sm">Delete ${deletable.length}</button>` : ""}
     <button id="mass-clear" class="sm">Clear</button>`;
   document.getElementById("mass-clear")?.addEventListener("click", () => {
     recSelected.clear();
@@ -2160,6 +2168,34 @@ function updateMassbar() {
       } catch (_) {}
     }
     Toast.success(`Re-record queued ${ok}/${sel.length}`);
+    recSelected.clear();
+    setTimeout(() => render().catch(() => {}), 500);
+  });
+  document.getElementById("mass-remux")?.addEventListener("click", async () => {
+    if (!(await confirmDialog(`Remux ${remuxable.length} recording(s) for browser playback? Originals are kept as <name>.orig until success.`, { ok: "Remux" })))
+      return;
+    let ok = 0;
+    for (const r of remuxable) {
+      try {
+        await API.remuxRecording(r.id);
+        ok++;
+      } catch (_) {}
+    }
+    Toast.success(`Remuxed ${ok}/${remuxable.length}`);
+    recSelected.clear();
+    setTimeout(() => render().catch(() => {}), 500);
+  });
+  document.getElementById("mass-delete")?.addEventListener("click", async () => {
+    if (!(await confirmDialog(`Delete ${deletable.length} recording(s)? Files move to the 7-day trash.`, { ok: "Delete", danger: true })))
+      return;
+    let ok = 0;
+    for (const r of deletable) {
+      try {
+        await API.deleteRecordingFile(r.id);
+        ok++;
+      } catch (_) {}
+    }
+    Toast.success(`Deleted ${ok}/${deletable.length}`);
     recSelected.clear();
     setTimeout(() => render().catch(() => {}), 500);
   });
@@ -3077,6 +3113,7 @@ async function openRecordingInfo(jobId) {
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
+      ${isFinished ? `<button class="sm" data-action="rec-info-remux" title="Remux to matroska + aac_adtstoasc so the in-browser player can decode it. Keeps the original as .orig.">⟳ Remux for browser</button>` : ""}
       <button class="danger" data-action="rec-info-delete">✕ Delete</button>
     </footer>`;
 
@@ -3085,6 +3122,18 @@ async function openRecordingInfo(jobId) {
   overlay.querySelector("[data-action=rec-info-play]")?.addEventListener("click", () => {
     closeRecordingModals();
     openRecordingPlayer(jobId);
+  });
+  overlay.querySelector("[data-action=rec-info-remux]")?.addEventListener("click", async (e) => {
+    if (!(await confirmDialog(
+      "Remux this recording into a matroska container with the aac_adtstoasc filter? The original is kept as <name>.orig.<ext> until success.",
+      { ok: "Remux" },
+    )))
+      return;
+    const btn = e.currentTarget;
+    await withBusy(btn, "Remuxing…", async () => {
+      await API.remuxRecording(jobId);
+      Toast.success("Remuxed — try Play again");
+    }).catch((err) => Toast.error(`Remux failed: ${err.message}`));
   });
   overlay.querySelector("[data-action=rec-info-delete]")?.addEventListener("click", async (e) => {
     if (!(await confirmDialog("Delete this recording? File moves to the 7-day trash.", { ok: "Delete", danger: true })))
@@ -4271,11 +4320,27 @@ async function renderSchedule() {
 // ── Durable History (item 17) — completed/failed audit from the jobs DB,
 // survives restarts (unlike the in-memory /recordings snapshot). ──
 async function renderHistory() {
-  let rows = [];
+  // Fetch history alongside the live /recordings snapshot so we can
+  // overlay file_exists state (audit B4). Without this, History happily
+  // reports 'Finished, 9 GB' for files the Recordings page knows are
+  // long gone.
+  let [hist, recs] = [[], []];
   try {
-    const r = await API.history();
-    rows = r.history || [];
+    const [h, r] = await Promise.all([
+      API.history().catch(() => ({ history: [] })),
+      API.recordings().catch(() => ({ recordings: [] })),
+    ]);
+    hist = h.history || [];
+    recs = r.recordings || [];
   } catch (_) {}
+  const liveById = new Map(recs.map((r) => [r.id, r]));
+  const rows = hist.map((row) => {
+    const live = liveById.get(row.id);
+    if (live && live.file_exists === false) {
+      return { ...row, file_exists: false, state: "Failed" };
+    }
+    return row;
+  });
   root.removeAttribute("aria-busy");
   const body = rows.length
     ? rows.map(recordingPillHtml).join("")

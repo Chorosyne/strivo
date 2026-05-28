@@ -895,6 +895,70 @@ async fn delete_recording_file(
     }
 }
 
+/// `POST /api/v1/recordings/<id>/remux` — remux an existing recording
+/// in place so the browser can play it. ffmpeg copies streams into a
+/// Matroska container with the `aac_adtstoasc` bitstream filter — the
+/// same combination newer recordings use by default. The original is
+/// kept as `<base>.orig.<ext>` until the remux exits clean, then
+/// dropped. No transcode, no quality loss.
+async fn remux_recording(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let jobs_path = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    let path = match strivo_core::recording::persist::PersistDb::open(&jobs_path) {
+        Ok(db) => match db.load_recording_jobs().await {
+            Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    let Some(input) = path else {
+        return crate::problem::Problem::not_found("recording not found").into_response();
+    };
+    if !input.exists() {
+        return crate::problem::Problem::not_found("file missing on disk").into_response();
+    }
+    let orig = input.with_extension(format!(
+        "orig.{}",
+        input.extension().and_then(|e| e.to_str()).unwrap_or("mkv"),
+    ));
+    let tmp = input.with_extension("remuxed.mkv");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-y", "-hide_banner", "-loglevel", "warning"])
+        .arg("-i")
+        .arg(&input)
+        .args(["-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "matroska"])
+        .arg(&tmp)
+        .status();
+    let ok = matches!(status, Ok(s) if s.success());
+    if !ok {
+        let _ = std::fs::remove_file(&tmp);
+        return crate::problem::Problem::internal("ffmpeg remux failed").into_response();
+    }
+    // Atomic swap: input → orig (keep), tmp → input.
+    if let Err(e) = std::fs::rename(&input, &orig) {
+        let _ = std::fs::remove_file(&tmp);
+        return crate::problem::Problem::internal(format!("rename original: {e}"))
+            .into_response();
+    }
+    if let Err(e) = std::fs::rename(&tmp, &input) {
+        let _ = std::fs::rename(&orig, &input); // best-effort restore
+        return crate::problem::Problem::internal(format!("install remuxed: {e}"))
+            .into_response();
+    }
+    Json(json!({
+        "ok": true,
+        "kept": orig.to_string_lossy(),
+        "remuxed": input.to_string_lossy(),
+    }))
+    .into_response()
+}
+
 /// `POST /api/v1/recordings/clear_errored` — bulk-delete every recording
 /// whose state is failed or interrupted. Same trash-then-drop semantics
 /// as `delete_recording_file` per row.
@@ -1851,6 +1915,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/recordings/stop_all", post(stop_all_recordings))
         .route("/api/v1/recordings/clear_errored", post(clear_errored_recordings))
         .route("/api/v1/recordings/{id}/file", axum::routing::delete(delete_recording_file))
+        .route("/api/v1/recordings/{id}/remux", post(remux_recording))
         .route("/api/v1/schedule", get(schedule).post(schedule_add))
         .route("/api/v1/schedule/{index}", axum::routing::delete(schedule_delete))
         .route("/api/v1/settings", get(settings))
