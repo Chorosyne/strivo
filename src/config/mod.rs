@@ -63,6 +63,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub notifications: NotificationsConfig,
 
+    /// Capture-time safety knobs surfaced on the Monitor page. Zero in
+    /// either field disables the corresponding cap; defaults are also
+    /// zero so existing users see no behaviour change without explicit
+    /// opt-in.
+    #[serde(default)]
+    pub monitor_limits: MonitorLimits,
+
     /// Tracks the path this config was loaded from, so save() can use it
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
@@ -646,6 +653,24 @@ impl Default for NotificationsConfig {
     }
 }
 
+/// Capture-time safety knobs. Both fields default to 0 (= disabled) so
+/// existing config files keep the previous unlimited behaviour. Set
+/// either to a positive value to opt in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MonitorLimits {
+    /// Maximum number of recordings (live + VOD pull combined) StriVo
+    /// will run concurrently. New live broadcasts beyond this limit are
+    /// surfaced but not started until a slot opens. 0 = unlimited.
+    #[serde(default)]
+    pub max_concurrent_recordings: u32,
+
+    /// Reserved disk space in GB. When free space on the recording
+    /// filesystem drops below this watermark, new captures are deferred.
+    /// 0 = no circuit breaker.
+    #[serde(default)]
+    pub disk_budget_reserved_gb: u32,
+}
+
 /// Motion / accessibility / verbosity preferences.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UiConfig {
@@ -702,6 +727,7 @@ impl Default for AppConfig {
             archiver: ArchiverConfig::default(),
             web: WebConfig::default(),
             notifications: NotificationsConfig::default(),
+            monitor_limits: MonitorLimits::default(),
             config_path: None,
         }
     }

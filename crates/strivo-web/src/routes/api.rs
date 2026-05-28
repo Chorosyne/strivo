@@ -385,6 +385,7 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
                 "schedule": cfg.schedule,
                 "archiver": cfg.archiver,
                 "notifications": cfg.notifications,
+                "monitor_limits": cfg.monitor_limits,
                 "twitch_configured": cfg.twitch.is_some(),
                 "youtube_configured": cfg.youtube.is_some(),
                 "patreon_configured": cfg.patreon.is_some(),
@@ -1087,6 +1088,25 @@ async fn update_setting(
         "notifications.on_vod_ready" => {
             take_bool(&body.value).map(|v| cfg.notifications.on_vod_ready = v)
         }
+        // Monitor safety knobs. 0 disables; we clamp upper bounds at sane
+        // values so a fat-fingered '999999' doesn't accidentally pin the
+        // daemon trying to start a thousand simultaneous captures.
+        "monitor_limits.max_concurrent_recordings" => take_u32(&body.value).and_then(|v| {
+            if v <= 64 {
+                cfg.monitor_limits.max_concurrent_recordings = v;
+                Ok(())
+            } else {
+                Err("max_concurrent_recordings must be 0..=64".into())
+            }
+        }),
+        "monitor_limits.disk_budget_reserved_gb" => take_u32(&body.value).and_then(|v| {
+            if v <= 100_000 {
+                cfg.monitor_limits.disk_budget_reserved_gb = v;
+                Ok(())
+            } else {
+                Err("disk_budget_reserved_gb must be 0..=100000".into())
+            }
+        }),
         "archiver.concurrent_fragments" => {
             // Clamp to 1..=16 — yt-dlp accepts more but past 16 you're
             // just thrashing the platform's rate limiter.

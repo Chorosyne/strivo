@@ -6458,15 +6458,21 @@ async function renderSchedule() {
   let monitor = { auto_record: [], auto_download: [] };
   let channels = [];
   let cronEntries = [];
+  let settings = {};
+  let health = {};
   try {
-    const [m, c, s] = await Promise.all([
+    const [m, c, s, st, h] = await Promise.all([
       API.monitor().catch(() => ({ auto_record: [], auto_download: [] })),
       API.channels().then((r) => r.channels || []).catch(() => []),
       API.schedule().then((r) => r.schedule || []).catch(() => []),
+      API.settings().catch(() => ({})),
+      API.health().catch(() => ({})),
     ]);
     monitor = m;
     channels = c;
     cronEntries = s;
+    settings = st;
+    health = h;
   } catch (_) {}
   root.removeAttribute("aria-busy");
 
@@ -6549,9 +6555,58 @@ async function renderSchedule() {
     return c ? `${c.platform}:${c.id}` : null;
   };
 
+  // Live capture status: active recordings + disk free + current limits.
+  // Recordings cache is shared across the SPA so we can read in-progress
+  // count without a separate fetch.
+  const activeCount = recCache.filter((r) => isInProgress(r.state)).length;
+  const limits = settings.monitor_limits || {};
+  const maxConcurrent = limits.max_concurrent_recordings || 0;
+  const diskBudgetGb = limits.disk_budget_reserved_gb || 0;
+  const diskAvailBytes = (health.disk && health.disk.filesystem_avail_bytes) || 0;
+  const diskTotalBytes = (health.disk && health.disk.filesystem_total_bytes) || 0;
+  const availPct = diskTotalBytes > 0 ? (diskAvailBytes / diskTotalBytes) * 100 : 0;
+  // Reserve budget vs free: warn when free < reserved + 5 GB headroom.
+  const reservedBytes = diskBudgetGb * 1024 * 1024 * 1024;
+  const diskOverBudget = reservedBytes > 0 && diskAvailBytes < reservedBytes;
+  const concurrentSaturated = maxConcurrent > 0 && activeCount >= maxConcurrent;
+  const statusBanner = (concurrentSaturated || diskOverBudget)
+    ? `<div class="mon-status-banner warn">
+         ${concurrentSaturated ? `<span>⚠ Concurrent cap hit: ${activeCount}/${maxConcurrent} recordings in flight — new live captures will queue.</span>` : ""}
+         ${diskOverBudget ? `<span>⚠ Disk free (${formatBytes(diskAvailBytes)}) is below the reserved ${diskBudgetGb} GB — new captures will defer.</span>` : ""}
+       </div>`
+    : `<div class="mon-status-banner ok">
+         <span>✓ ${activeCount} recording${activeCount === 1 ? "" : "s"} in flight${maxConcurrent ? ` / ${maxConcurrent}` : ""} · ${formatBytes(diskAvailBytes)} free</span>
+       </div>`;
+
   root.innerHTML = chrome(`
     <h1 class="page-title">Monitor</h1>
     <p class="page-subtitle">Channels StriVo is watching. Record live broadcasts as they happen, or auto-download new YouTube uploads.</p>
+
+    ${statusBanner}
+
+    <section class="cfg-card">
+      <h2 class="cfg-title">Capture limits <a href="#/settings/notifications" class="stg-linkbtn" style="margin-left:auto;font-size:0.78em">Configure go-live banners →</a></h2>
+      <p class="mon-help">Safety knobs that defer new captures when StriVo is already busy or disk is tight. Zero in either field disables that cap.</p>
+      <div class="mon-limits-grid">
+        <label class="mon-limit">
+          <span class="mon-limit-label">Max concurrent recordings</span>
+          <input class="mon-limit-input" type="number" min="0" max="64" step="1"
+                 id="mon-limit-concurrent" value="${maxConcurrent}" />
+          <span class="mon-limit-hint">${maxConcurrent === 0 ? "unlimited" : `${activeCount} of ${maxConcurrent} in use`}</span>
+        </label>
+        <label class="mon-limit">
+          <span class="mon-limit-label">Reserved disk budget (GB)</span>
+          <input class="mon-limit-input" type="number" min="0" max="100000" step="1"
+                 id="mon-limit-disk" value="${diskBudgetGb}" />
+          <span class="mon-limit-hint">${diskBudgetGb === 0 ? "no circuit breaker" : diskOverBudget ? "ENGAGED" : "armed"}</span>
+        </label>
+        <div class="mon-disk-gauge" title="Recording filesystem usage">
+          <span class="mon-disk-label">Free disk</span>
+          <div class="mon-disk-bar"><div class="mon-disk-fill" style="width:${(100 - availPct).toFixed(1)}%"></div></div>
+          <span class="mon-disk-meta">${formatBytes(diskAvailBytes)} free of ${formatBytes(diskTotalBytes)}</span>
+        </div>
+      </div>
+    </section>
 
     <section class="cfg-card">
       <h2 class="cfg-title">Record when live</h2>
@@ -6577,6 +6632,31 @@ async function renderSchedule() {
     ${cronGroup}
   `);
   setupChromeHandlers();
+
+  // Capture-limit inputs — debounced save to /settings/update so each
+  // keystroke doesn't fire a round-trip. Repaint on save so the gauge
+  // and banner reflect the new state.
+  const wireLimit = (id, path, max) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let timer;
+    el.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const v = Math.max(0, Math.min(max, parseInt(el.value, 10) || 0));
+        if (v !== parseInt(el.value, 10)) el.value = v;
+        try {
+          await API.updateSetting(path, v);
+          Toast.success(`Saved · ${path}`);
+          renderSchedule().catch(() => {});
+        } catch (err) {
+          Toast.error(`Save failed: ${err.message}`);
+        }
+      }, 600);
+    });
+  };
+  wireLimit("mon-limit-concurrent", "monitor_limits.max_concurrent_recordings", 64);
+  wireLimit("mon-limit-disk", "monitor_limits.disk_budget_reserved_gb", 100000);
 
   // Record-when-live row delete.
   document.querySelectorAll(".mon-rec-rm").forEach((btn) => {
