@@ -1087,6 +1087,185 @@ async fn resolve_recording_meta(recording_id: &str) -> Option<(String, String)> 
     })
 }
 
+/// `GET /api/v1/plugins/casebook/<recording_id>?fmt=json|markdown` —
+/// compose the post-stream Casebook. Pulls Crunchr/Insights/Chapters/
+/// Clipper/Brandsafe/Viewguard results and folds them into a report.
+async fn casebook_generate(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<CasebookQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("casebook") { return r; }
+
+    let crunchr_conn = open_ro(&crunchr_db());
+    // Title + channel + started_at from persist; duration from ffprobe.
+    let (mut title, channel_name, started_at) = match resolve_recording_meta_full(&recording_id).await {
+        Some((t, c, s)) => (t, c, s),
+        None => (recording_id.clone(), String::new(), None),
+    };
+    let input_path = match resolve_recording_path(&recording_id).await {
+        Ok(p) => Some(p),
+        Err(_) => None,
+    };
+    let duration_sec = input_path.as_ref().and_then(|p| probe_duration(p)).unwrap_or(0.0);
+
+    // Crunchr summary + topics.
+    let mut summary = String::new();
+    let mut topics: Vec<String> = Vec::new();
+    let mut top_words: Vec<strivo_casebook::WordCount> = Vec::new();
+    if let Some(conn) = &crunchr_conn {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+            summary = detail.summary.unwrap_or_default();
+            topics = detail.topics;
+            if title == recording_id || title.is_empty() {
+                title = detail.title;
+            }
+        }
+        if let Ok(words) = strivo_plugins::insights::frequency::top_words_for_recording(conn, &recording_id, 30, false) {
+            top_words = words
+                .into_iter()
+                .map(|w| strivo_casebook::WordCount { word: w.word, count: w.count as u64 })
+                .collect();
+        }
+    }
+
+    // Chapters.
+    let chapters: Vec<strivo_casebook::Chapter> = if crunchr_db().exists() {
+        let req = strivo_chapters::ChapterRequest {
+            recording_id: recording_id.clone(),
+            min_seconds: None,
+            cos_threshold: None,
+        };
+        strivo_chapters::generate_chapters(&crunchr_db(), &req, &strivo_chapters::KeywordTitler)
+            .ok()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| strivo_casebook::Chapter { start_sec: c.start_sec, title: c.title })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Clipper highlights — cached.
+    let clipper_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    let highlights: Vec<strivo_casebook::Highlight> = strivo_clipper::store::ClipperStore::open(&clipper_path)
+        .ok()
+        .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| strivo_casebook::Highlight { time_sec: h.time_sec, score: h.score })
+        .collect();
+
+    // Brandsafe — best-effort scan now so the count is fresh.
+    let mut bs_counts = strivo_casebook::BrandsafeCounts::default();
+    if let Some(conn) = &crunchr_conn {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+            let segments: Vec<strivo_brandsafe::Segment> = detail
+                .segments
+                .iter()
+                .map(|s| strivo_brandsafe::Segment {
+                    start_sec: s.start_sec as f32,
+                    end_sec: s.end_sec as f32,
+                    text: s.text.clone(),
+                })
+                .collect();
+            let verdicts = strivo_brandsafe::scan_all(&segments, &channel_name, &["Twitch", "YouTube"]);
+            for v in &verdicts {
+                match v.severity {
+                    strivo_brandsafe::Severity::Critical => bs_counts.critical += 1,
+                    strivo_brandsafe::Severity::High => bs_counts.high += 1,
+                    strivo_brandsafe::Severity::Medium => bs_counts.medium += 1,
+                    strivo_brandsafe::Severity::Low => bs_counts.low += 1,
+                }
+            }
+        }
+    }
+
+    // Viewguard: try the viewguard DB if it's there.
+    let viewbot_score: Option<f32> = viewguard_db()
+        .as_deref()
+        .and_then(open_ro)
+        .and_then(|c| {
+            // We can't reach into strivo_plugins::viewguard without a stable
+            // shape — use the SQL we know lives in the DB. Fall back to
+            // None if the schema isn't there yet.
+            c.query_row(
+                "SELECT final_score FROM verdicts ORDER BY stream_started_at DESC LIMIT 1",
+                [],
+                |r| r.get::<_, f64>(0),
+            )
+            .ok()
+        })
+        .map(|s| s as f32);
+
+    let inputs = strivo_casebook::CasebookInputs {
+        recording_id: recording_id.clone(),
+        title,
+        channel_name,
+        started_at,
+        duration_sec,
+        summary,
+        topics,
+        top_words,
+        chapters,
+        highlights,
+        viewbot_score,
+        brandsafe_counts: bs_counts,
+    };
+    let report = strivo_casebook::compose_report(&inputs);
+
+    let fmt = q.fmt.unwrap_or_else(|| "json".to_string());
+    if fmt == "markdown" || fmt == "md" {
+        let body = strivo_casebook::to_markdown(&report);
+        let safe = recording_id
+            .replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+        let filename = format!("casebook_{safe}.md");
+        return (
+            [
+                (axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    Box::leak(format!("attachment; filename=\"{filename}\"").into_boxed_str()),
+                ),
+            ],
+            body,
+        )
+            .into_response();
+    }
+    Json(json!({
+        "report": report,
+        "markdown": strivo_casebook::to_markdown(&report),
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct CasebookQuery {
+    #[serde(default)]
+    fmt: Option<String>,
+}
+
+async fn resolve_recording_meta_full(recording_id: &str) -> Option<(String, String, Option<String>)> {
+    let id = uuid::Uuid::parse_str(recording_id).ok()?;
+    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    let db = strivo_core::recording::persist::PersistDb::open(&jobs_db).ok()?;
+    let rows = db.load_recording_jobs().await.ok()?;
+    rows.into_iter().find(|j| j.id == id).map(|j| {
+        (
+            j.stream_title.clone().unwrap_or_else(|| j.channel_name.clone()),
+            j.channel_name.clone(),
+            Some(j.started_at.to_rfc3339()),
+        )
+    })
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -1811,4 +1990,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/brandsafe/{id}", get(brandsafe_scan))
         .route("/api/v1/plugins/reuse/{id}/generate", axum::routing::post(reuse_generate))
         .route("/api/v1/plugins/reuse/{id}", get(reuse_list))
+        .route("/api/v1/plugins/casebook/{id}", get(casebook_generate))
 }

@@ -33,6 +33,7 @@ strivo-captions = { path = "../captions" }
 strivo-multitrack = { path = "../multitrack" }
 strivo-brandsafe = { path = "../brandsafe" }
 strivo-reuse = { path = "../reuse" }
+strivo-casebook = { path = "../casebook" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

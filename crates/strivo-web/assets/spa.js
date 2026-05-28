@@ -171,6 +171,10 @@ const API = {
     API._fetch(`/plugins/reuse/${encodeURIComponent(recordingId)}/generate`, { method: "POST" }),
   reuseList: (recordingId) =>
     API._fetch(`/plugins/reuse/${encodeURIComponent(recordingId)}`),
+  casebookFetch: (recordingId) =>
+    API._fetch(`/plugins/casebook/${encodeURIComponent(recordingId)}?fmt=json`),
+  casebookMarkdownUrl: (recordingId) =>
+    `/api/v1/plugins/casebook/${encodeURIComponent(recordingId)}?fmt=markdown`,
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -3580,11 +3584,13 @@ async function openRecordingInfo(jobId) {
       ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
       <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
       <div class="rec-clipper" id="rec-clipper" hidden></div>
       <div class="rec-thumbs" id="rec-thumbs" hidden></div>
       <div class="rec-tracks" id="rec-tracks" hidden></div>
       <div class="rec-reuse" id="rec-reuse" hidden></div>
+      <div class="rec-casebook" id="rec-casebook" hidden></div>
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
@@ -3741,6 +3747,46 @@ async function openRecordingInfo(jobId) {
         </div>`;
       Toast.success(`Generated ${candidates.length} thumbnail candidate(s)`);
     }).catch((err) => Toast.error(`Thumbnails failed: ${err.message}`));
+  });
+
+  overlay.querySelector("[data-action=rec-info-casebook]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Composing…", async () => {
+      const resp = await API.casebookFetch(jobId);
+      const host = document.getElementById("rec-casebook");
+      if (!host) return;
+      const report = resp.report;
+      const md = resp.markdown || "";
+      host.hidden = false;
+      const sectionHtml = (report.sections || [])
+        .map(
+          (s) => `<details class="rec-cb-section" open>
+            <summary><span class="rec-cb-h">${escape(s.heading)}</span></summary>
+            <div class="rec-cb-body">${md_to_html(s.body)}</div>
+          </details>`,
+        )
+        .join("");
+      const titlesHtml = (report.suggested_titles || [])
+        .map((t) => `<li>${escape(t)}</li>`)
+        .join("");
+      host.innerHTML = `
+        <h4 class="rec-cp-title">Casebook · ${escape(report.title || "")} <span class="pg-cap-hint">${report.sections.length} sections · ${report.suggested_titles.length} title ideas</span></h4>
+        <div class="rec-cb-actions">
+          <a class="pg-linkbtn" href="${escape(API.casebookMarkdownUrl(jobId))}" download>Download .md</a>
+          <button class="sm rec-cb-copy" type="button">Copy markdown</button>
+        </div>
+        ${titlesHtml ? `<details class="rec-cb-section"><summary><span class="rec-cb-h">Suggested titles</span></summary><ul class="rec-cb-titles">${titlesHtml}</ul></details>` : ""}
+        ${sectionHtml}`;
+      host.querySelector(".rec-cb-copy")?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(md);
+          Toast.success("Markdown copied");
+        } catch (_) {
+          Toast.error("Couldn't copy");
+        }
+      });
+      Toast.success(`Casebook composed (${report.sections.length} sections)`);
+    }).catch((err) => Toast.error(`Casebook failed: ${err.message}`));
   });
 
   overlay.querySelector("[data-action=rec-info-reuse]")?.addEventListener("click", async (e) => {
@@ -5353,6 +5399,38 @@ function escape(s) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+// md_to_html — tiny subset of markdown for Casebook section bodies.
+// Handles **bold**, `code`, leading-dash unordered lists, and newlines.
+// Not a full markdown parser — Casebook only emits a tight subset.
+function md_to_html(text) {
+  if (!text) return "";
+  const escaped = escape(text);
+  // Lists first: turn lines starting with "- " into <ul><li>.
+  const lines = escaped.split("\n");
+  const out = [];
+  let inUl = false;
+  for (const raw of lines) {
+    if (raw.startsWith("- ")) {
+      if (!inUl) {
+        out.push("<ul>");
+        inUl = true;
+      }
+      out.push(`<li>${raw.slice(2)}</li>`);
+    } else {
+      if (inUl) {
+        out.push("</ul>");
+        inUl = false;
+      }
+      out.push(raw + "<br/>");
+    }
+  }
+  if (inUl) out.push("</ul>");
+  return out
+    .join("")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
 // niceTitle — strip filename-derived noise from a recording title so the
 // UI shows the semantic title only. The on-disk filename is untouched.
 //

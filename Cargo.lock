@@ -3871,6 +3871,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-casebook"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-chapters"
 version = "0.3.0"
 dependencies = [
@@ -4030,6 +4040,7 @@ dependencies = [
  "sha2",
  "strivo-brandsafe",
  "strivo-captions",
+ "strivo-casebook",
  "strivo-chapters",
  "strivo-clipper",
  "strivo-core",
