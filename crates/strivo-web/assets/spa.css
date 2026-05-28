@@ -1352,18 +1352,51 @@ a.media-pill:hover,
 }
 .mp-badge.live { background: color-mix(in srgb, var(--recording) 25%, transparent); color: var(--recording); }
 
-/* Recording cover thumbnails (source stream thumbnail). */
+/* Recording cover thumbnails (source stream thumbnail; falls through to a
+ * channel-initials placeholder when the cached jpg is missing). */
 .rec-title-cell { display: flex; align-items: center; gap: 0.6rem; }
-.rec-thumb {
+.rec-thumb-wrap {
+  position: relative;
+  display: inline-block;
   width: 84px;
   height: 47px;
-  object-fit: cover;
   border-radius: var(--radius-sm);
+  overflow: hidden;
   flex: none;
-  background: rgba(0, 0, 0, 0.3);
   box-shadow: var(--shadow);
+  /* Channel-coloured gradient under the (eventual) jpg. */
+  background: linear-gradient(
+    135deg,
+    hsl(var(--ch-hue, 285deg), 55%, 32%),
+    hsl(calc(var(--ch-hue, 285deg) + 40deg), 60%, 18%)
+  );
+  vertical-align: middle;
 }
-.recordings-table.compact .rec-thumb { width: 56px; height: 32px; }
+.rec-thumb-wrap::before {
+  content: attr(data-init);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.rec-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Stays above the initials placeholder; img is removed on 404 so the
+   * initials show through. */
+  z-index: 1;
+}
+.recordings-table.compact .rec-thumb-wrap { width: 56px; height: 32px; }
+.recordings-table.compact .rec-thumb-wrap::before { font-size: 0.7rem; }
 
 /* Recordings index density + multi-select mass-edit (item 22). */
 .rec-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }

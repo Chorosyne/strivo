@@ -1978,12 +1978,36 @@ function updateMassbar() {
   });
 }
 
-// Cover thumbnail for a recording (source stream thumbnail, cached at
-// record-start). Hidden on 404 so failed/old recordings show no broken image.
+// Cover thumbnail for a recording. The wrapper renders a channel-initials
+// tile coloured by a hash of the channel name; the inner <img> sits on top
+// and covers it when /thumb returns a real jpg. On 404 the img self-removes
+// and the initials show through, so old recordings (made before the source-
+// thumbnail snapshot landed, and missed by ffmpeg fallback on the server)
+// still look intentional rather than broken.
 function recThumb(r) {
-  return `<img class="rec-thumb" loading="lazy" alt=""
-    src="/api/v1/recordings/${encodeURIComponent(r.id)}/thumb"
-    onerror="this.remove()" />`;
+  const initials = (r.channel_name || r.stream_title || "?")
+    .trim()
+    .replace(/[^\p{L}\p{N} ]/gu, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("") || "?";
+  const hue = thumbHue(r.channel_name || r.id || "");
+  return `<span class="rec-thumb-wrap" data-init="${escape(initials)}"
+    style="--ch-hue:${hue}deg">
+    <img class="rec-thumb" loading="lazy" alt=""
+      src="/api/v1/recordings/${encodeURIComponent(r.id)}/thumb"
+      onerror="this.remove()" />
+  </span>`;
+}
+
+// Stable hash → hue so the same channel always gets the same colour, but
+// different channels get different ones across the rail.
+function thumbHue(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
 }
 
 function recordingRow(r) {
