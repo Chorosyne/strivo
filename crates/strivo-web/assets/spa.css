@@ -1615,6 +1615,33 @@ a.media-pill:hover,
   background: rgba(0, 188, 212, 0.08);
   border-left-color: var(--accent2);
 }
+.mp-missing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #f97171;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: inherit;
+}
+.mp-thumb { position: relative; }
+.mp-broken .mp-title,
+.mp-broken .mp-sub { opacity: 0.6; }
+.mp-source {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  background: rgba(0, 188, 212, 0.18);
+  color: var(--accent2);
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
 .cmd-hint {
   margin: 0;
   padding: 0.5rem 1.1rem;

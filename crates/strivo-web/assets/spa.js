@@ -919,12 +919,26 @@ function recordingPillHtml(j) {
   const stop = isInProgress(j.state)
     ? `<button class="danger sm" data-action="stop" data-job-id="${escape(j.id)}">Stop</button>`
     : "";
+  // FILE MISSING overlay on the thumbnail mirrors the Recordings page
+  // treatment so the Library dashboard doesn't quietly hide broken
+  // rows (audit U2).
+  const missingOverlay = j.file_exists === false
+    ? '<span class="mp-missing">FILE MISSING</span>'
+    : "";
+  // Twitch live-pull + auto-VOD-backfill produces two rows per
+  // broadcast — surface a small chip when the source is the
+  // backfill path so the user can tell them apart at a glance
+  // (audit B5). source_url is set when the recording was created
+  // via DownloadVod (the backfill path).
+  const sourceBadge = j.source_url
+    ? '<span class="mp-source" title="From Twitch/YouTube VOD backfill">VOD</span>'
+    : "";
   return `
-    <div class="media-pill">
-      <div class="mp-thumb"><img class="mp-thumb-img" loading="lazy" alt=""
+    <div class="media-pill${j.file_exists === false ? " mp-broken" : ""}">
+      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" alt=""
         src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
       <div class="mp-info">
-        <div class="mp-title">${escape(niceTitle(j.stream_title) || j.channel_name || "(recording)")}</div>
+        <div class="mp-title">${escape(niceTitle(j.stream_title) || j.channel_name || "(recording)")} ${sourceBadge}</div>
         <div class="mp-sub">${escape(j.channel_name || "")} · ${escape(when)}</div>
       </div>
       <div class="mp-meta">
@@ -3552,7 +3566,7 @@ function renderSettingsPane(slug, s) {
     </div>`;
   const group = (title, rows) => `
     <section class="stg-group">
-      <h2 class="stg-group-title">${escape(title)}</h2>
+      <h3 class="stg-group-title">${escape(title)}</h3>
       <div class="stg-rows">${rows}</div>
     </section>`;
 
