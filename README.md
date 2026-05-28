@@ -355,3 +355,11 @@ Roadmap, milestones, and explicit deferrals live in
 ## License
 
 [MIT](./LICENSE)
+
+## Credits
+
+The web UI's topbar icons are vendored from
+[EliverLara/candy-icons](https://github.com/EliverLara/candy-icons)
+(GPL-3.0) by Eliver Lara — see
+`crates/strivo-web/assets/icons/candy/` for the upstream LICENSE and
+per-icon attribution.
