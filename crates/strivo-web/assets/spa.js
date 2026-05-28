@@ -191,6 +191,10 @@ const API = {
     const qs = p.toString() ? `?${p.toString()}` : "";
     return API._fetch(`/plugins/deadair/${encodeURIComponent(recordingId)}${qs}`, { method: "POST" });
   },
+  brandingLoad: (recordingId) =>
+    API._fetch(`/plugins/branding/${encodeURIComponent(recordingId)}`),
+  brandingSave: (recordingId, spec) =>
+    API._fetch(`/plugins/branding/${encodeURIComponent(recordingId)}`, { method: "POST", body: spec }),
   viewguardTrend: () => API._fetch("/plugins/viewguard/trend"),
   pipelinesDag: () => API._fetch("/pipelines/dag"),
   marketplaceCatalog: () => API._fetch("/marketplace/catalog"),
@@ -4029,8 +4033,10 @@ async function openRecordingInfo(jobId) {
             <button class="sm rec-ed-add-split" type="button">Split at time…</button>
             <button class="sm rec-ed-delete" type="button">Ripple-delete range…</button>
             <button class="sm rec-ed-deadair" type="button" title="Detect dead air (silencedetect) and trim spans longer than 6s">▢ Trim dead air…</button>
+            <button class="sm rec-ed-branding" type="button" title="Watermark + intro/outro banner overlay applied at render">★ Branding…</button>
             <button class="btn-primary rec-ed-render" type="button">⚡ Render to MKV</button>
           </div>
+          <div class="rec-branding" hidden></div>
           <div class="rec-ed-list">
             ${edl.cuts
               .map(
@@ -4208,6 +4214,93 @@ async function openRecordingInfo(jobId) {
             paint();
             Toast.success(`Trimmed ${cuts.length} dead-air span(s) · saved ${fmtClock(totalTrim)}.`);
           }).catch((err) => Toast.error(`Dead-air scan failed: ${err.message}`));
+        });
+        host.querySelector(".rec-ed-branding")?.addEventListener("click", async (e2) => {
+          const bbtn = e2.currentTarget;
+          await withBusy(bbtn, "Loading…", async () => {
+            const r = await API.brandingLoad(jobId);
+            const panel = host.querySelector(".rec-branding");
+            if (!panel) return;
+            const spec = r.spec || { watermark: null, banners: [] };
+            const wm = spec.watermark || { source: { kind: "text", text: "", font_size: 32, color_rgba: "white" }, anchor: "bottom_right", inset_px: 24, opacity: 0.7 };
+            const ANCHORS = [
+              "top_left","top_center","top_right",
+              "middle_left","middle_center","middle_right",
+              "bottom_left","bottom_center","bottom_right",
+            ];
+            const anchorOpts = (sel) => ANCHORS.map((a) => `<option value="${a}"${a === sel ? " selected" : ""}>${a.replace(/_/g, " ")}</option>`).join("");
+            const renderBanners = () => (spec.banners || []).map((b, i) => `
+              <div class="rec-br-banner" data-i="${i}">
+                <select class="rec-br-slot"><option value="intro"${b.slot==="intro"?" selected":""}>intro</option><option value="outro"${b.slot==="outro"?" selected":""}>outro</option></select>
+                <input class="rec-br-text" type="text" value="${escape(b.text||"")}" placeholder="Banner text"/>
+                <select class="rec-br-anchor">${anchorOpts(b.anchor)}</select>
+                <input class="rec-br-dur" type="number" step="0.5" min="0.5" max="60" value="${b.duration_secs||3}" title="Visible duration (sec)"/>
+                <button class="sm danger rec-br-rmb" type="button" title="Remove banner">✕</button>
+              </div>`).join("");
+            panel.hidden = false;
+            panel.innerHTML = `
+              <h5>Branding overlay</h5>
+              <div class="rec-br-wm">
+                <label class="rec-br-on"><input type="checkbox" class="rec-br-enabled" ${spec.watermark ? "checked" : ""}/> Watermark</label>
+                <input class="rec-br-wtext" type="text" value="${escape(wm.source?.text||"@channel")}" placeholder="Watermark text"/>
+                <select class="rec-br-wanchor">${anchorOpts(wm.anchor)}</select>
+                <input class="rec-br-wop" type="number" step="0.05" min="0" max="1" value="${wm.opacity ?? 0.7}" title="Opacity (0–1)"/>
+              </div>
+              <div class="rec-br-banners">${renderBanners()}</div>
+              <div class="rec-br-actions">
+                <button class="sm rec-br-addb" type="button">+ Banner</button>
+                <button class="btn-primary rec-br-save" type="button">Save</button>
+                <span class="rec-br-preview pg-cap-hint"></span>
+              </div>
+              <pre class="rec-br-filter" title="filter_complex this spec produces">${escape(r.filter_complex||"")}</pre>
+            `;
+            const collect = () => {
+              const enabled = panel.querySelector(".rec-br-enabled").checked;
+              const newSpec = {
+                watermark: enabled ? {
+                  source: { kind: "text", text: panel.querySelector(".rec-br-wtext").value || "@channel", font_size: 32, color_rgba: "white" },
+                  anchor: panel.querySelector(".rec-br-wanchor").value,
+                  inset_px: 24,
+                  opacity: parseFloat(panel.querySelector(".rec-br-wop").value) || 0.7,
+                } : null,
+                banners: Array.from(panel.querySelectorAll(".rec-br-banner")).map((row) => ({
+                  slot: row.querySelector(".rec-br-slot").value,
+                  text: row.querySelector(".rec-br-text").value || "",
+                  font_size: 48,
+                  color_rgba: "white",
+                  anchor: row.querySelector(".rec-br-anchor").value,
+                  inset_px: 40,
+                  duration_secs: parseFloat(row.querySelector(".rec-br-dur").value) || 3,
+                })),
+              };
+              return newSpec;
+            };
+            panel.querySelector(".rec-br-addb").addEventListener("click", () => {
+              spec.banners = collect().banners;
+              spec.banners.push({ slot: "intro", text: "Welcome", font_size: 48, color_rgba: "white", anchor: "top_center", inset_px: 40, duration_secs: 3.0 });
+              panel.querySelector(".rec-br-banners").innerHTML = renderBanners();
+            });
+            panel.addEventListener("click", (ev) => {
+              const t = ev.target;
+              if (t && t.classList && t.classList.contains("rec-br-rmb")) {
+                const idx = parseInt(t.closest(".rec-br-banner").dataset.i, 10);
+                const next = collect();
+                next.banners.splice(idx, 1);
+                spec.banners = next.banners;
+                spec.watermark = next.watermark;
+                panel.querySelector(".rec-br-banners").innerHTML = renderBanners();
+              }
+            });
+            panel.querySelector(".rec-br-save").addEventListener("click", async (ev) => {
+              const sb = ev.currentTarget;
+              const newSpec = collect();
+              await withBusy(sb, "Saving…", async () => {
+                const saved = await API.brandingSave(jobId, newSpec);
+                panel.querySelector(".rec-br-filter").textContent = saved.filter_complex || "";
+                Toast.success("Branding saved · applied at next render");
+              }).catch((err) => Toast.error(`Save failed: ${err.message}`));
+            });
+          }).catch((err) => Toast.error(`Branding failed: ${err.message}`));
         });
         host.querySelector(".rec-ed-render")?.addEventListener("click", async (e2) => {
           const btnR = e2.currentTarget;

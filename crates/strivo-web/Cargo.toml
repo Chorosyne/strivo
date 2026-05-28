@@ -42,6 +42,7 @@ strivo-marketplace = { path = "../marketplace" }
 strivo-broll = { path = "../broll" }
 strivo-chat-density = { path = "../chat-density" }
 strivo-deadair = { path = "../deadair" }
+strivo-branding = { path = "../branding" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

@@ -226,6 +226,18 @@ impl Edl {
 /// (fast path) or `-c:v libx264 -c:a aac` when B-roll mixes codecs.
 /// We pass each cut as a sub-clip via the concat list.
 pub fn render_edl(edl: &Edl, output: &Path) -> Result<u64> {
+    render_edl_with_filter(edl, output, None)
+}
+
+/// Same as [`render_edl`], but applies an extra `-filter_complex` chain on
+/// the final concat step. The chain must consume `[0:v]` (the concat output)
+/// and produce `[vout]`; we pass `-map [vout] -map 0:a?` to keep audio.
+/// The branding crate emits exactly that shape.
+pub fn render_edl_with_filter(
+    edl: &Edl,
+    output: &Path,
+    extra_filter_complex: Option<&str>,
+) -> Result<u64> {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent).ok();
     }
@@ -290,12 +302,29 @@ pub fn render_edl(edl: &Edl, output: &Path) -> Result<u64> {
         list.push_str(&format!("file '{}'\n", p.display()));
     }
     std::fs::write(&list_path, list).context("write concat list")?;
-    let status = Command::new("ffmpeg")
+    let mut concat = Command::new("ffmpeg");
+    concat
         .args(["-y", "-hide_banner", "-loglevel", "error"])
         .args(["-f", "concat", "-safe", "0"])
         .arg("-i")
-        .arg(&list_path)
-        .args(["-c", "copy"])
+        .arg(&list_path);
+    if let Some(fc) = extra_filter_complex {
+        // Passthrough chain is `[0:v]copy[vout]` — equivalent to `-c copy`
+        // but forces a video re-encode, so we only swap to filter mode when
+        // the chain actually does something.
+        let passthrough = fc.trim() == "[0:v]copy[vout]";
+        if passthrough {
+            concat.args(["-c", "copy"]);
+        } else {
+            concat
+                .args(["-filter_complex", fc])
+                .args(["-map", "[vout]", "-map", "0:a?"])
+                .args(["-c:v", "libx264", "-c:a", "aac"]);
+        }
+    } else {
+        concat.args(["-c", "copy"]);
+    }
+    let status = concat
         .arg(output)
         .status()
         .context("ffmpeg concat")?;

@@ -1499,7 +1499,16 @@ async fn editor_render(
         .unwrap_or_else(|| std::path::PathBuf::from("./edl"));
     let safe = recording_id.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
     let output = out_dir.join(format!("{safe}.mkv"));
-    match strivo_editor::render_edl(&edl, &output) {
+    // Pick up any saved branding overlay; absent or empty spec → passthrough,
+    // so the fast `-c copy` concat path stays in play.
+    let branding_spec: strivo_branding::BrandingSpec =
+        std::fs::read_to_string(branding_path(&recording_id))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    let chain = branding_spec.build_filter_chain("[0:v]");
+    let fc = chain.filter_complex.clone();
+    match strivo_editor::render_edl_with_filter(&edl, &output, Some(&fc)) {
         Ok(bytes) => Json(json!({
             "ok": true,
             "output_path": output.to_string_lossy(),
@@ -1714,6 +1723,75 @@ async fn deadair_detect(
         .into_response(),
         Err(e) => Problem::internal(format!("deadair: {e}")).into_response(),
     }
+}
+
+fn branding_path(recording_id: &str) -> std::path::PathBuf {
+    // Per-recording JSON spec; tiny payload, no schema migration overhead.
+    strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("branding")
+        .join(format!("{recording_id}.json"))
+}
+
+/// `GET /api/v1/plugins/branding/<recording_id>` — load the saved overlay
+/// spec; returns an empty default when the file is absent.
+async fn branding_load(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("branding") { return r; }
+    let path = branding_path(&recording_id);
+    let spec: strivo_branding::BrandingSpec = match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => strivo_branding::BrandingSpec::default(),
+    };
+    let chain = spec.build_filter_chain("[0:v]");
+    Json(json!({
+        "recording_id": recording_id,
+        "spec": spec,
+        "filter_complex": chain.filter_complex,
+        "video_label": chain.video_label,
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/branding/<recording_id>` — persist the overlay spec
+/// the SPA composed; returns the resulting ffmpeg filter so the editor can
+/// preview the chain that will be applied at render time.
+async fn branding_save(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(spec): Json<strivo_branding::BrandingSpec>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("branding") { return r; }
+    let path = branding_path(&recording_id);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Problem::internal(format!("mkdir: {e}")).into_response();
+        }
+    }
+    let json = match serde_json::to_string_pretty(&spec) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("serialise: {e}")).into_response(),
+    };
+    if let Err(e) = std::fs::write(&path, json) {
+        return Problem::internal(format!("write: {e}")).into_response();
+    }
+    let chain = spec.build_filter_chain("[0:v]");
+    Json(json!({
+        "ok": true,
+        "filter_complex": chain.filter_complex,
+        "video_label": chain.video_label,
+    }))
+    .into_response()
 }
 
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
@@ -2448,4 +2526,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/broll/{id}", axum::routing::post(broll_suggest))
         .route("/api/v1/plugins/chat-density/{id}", axum::routing::post(chat_density_compute))
         .route("/api/v1/plugins/deadair/{id}", axum::routing::post(deadair_detect))
+        .route("/api/v1/plugins/branding/{id}", get(branding_load).post(branding_save))
 }
