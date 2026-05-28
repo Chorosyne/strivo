@@ -3985,6 +3985,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-reuse"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-thumbnails"
 version = "0.3.0"
 dependencies = [
@@ -4026,6 +4037,7 @@ dependencies = [
  "strivo-insights-compare",
  "strivo-multitrack",
  "strivo-plugins",
+ "strivo-reuse",
  "strivo-thumbnails",
  "tempfile",
  "tokio",

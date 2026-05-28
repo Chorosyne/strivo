@@ -32,6 +32,7 @@ strivo-insights-compare = { path = "../insights-compare" }
 strivo-captions = { path = "../captions" }
 strivo-multitrack = { path = "../multitrack" }
 strivo-brandsafe = { path = "../brandsafe" }
+strivo-reuse = { path = "../reuse" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

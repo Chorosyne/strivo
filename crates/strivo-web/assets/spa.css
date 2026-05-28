@@ -2879,6 +2879,53 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 720px) {
   .rec-tk-row { grid-template-columns: 1fr; }
 }
+/* Publish-drafts panel (Reuse plugin, iter 11). */
+.rec-reuse { margin-top: 0.7rem; }
+.rec-ru-grid { display: grid; gap: 0.5rem; }
+.rec-ru-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--ru-c, var(--accent2));
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+}
+.rec-ru-card summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  list-style: none;
+  font-size: 0.88rem;
+}
+.rec-ru-card summary::-webkit-details-marker { display: none; }
+.rec-ru-card summary::before { content: "▸ "; color: var(--muted); }
+.rec-ru-card[open] summary::before { content: "▾ "; }
+.rec-ru-fmt { color: var(--ru-c, var(--text)); font-weight: 600; }
+.rec-ru-meta { font-size: 0.76rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rec-ru-body { margin-top: 0.5rem; }
+.rec-ru-body h5 {
+  margin: 0.5rem 0 0.2rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.rec-ru-title { font-size: 0.94rem; color: var(--text); padding: 0.25rem 0.4rem; background: rgba(0, 0, 0, 0.2); border-radius: 4px; }
+.rec-ru-desc {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 260px;
+  overflow: auto;
+}
+.rec-ru-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.rec-ru-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap; }
 /* Retention strip on transcript page (Insights iter 7). */
 .cr-retention { margin-bottom: 0.8rem; }
 .cr-ret-head {

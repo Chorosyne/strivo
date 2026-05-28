@@ -167,6 +167,10 @@ const API = {
     API._fetch(`/plugins/multitrack/${encodeURIComponent(recordingId)}/extract`, { method: "POST", body }),
   brandsafeScan: (recordingId) =>
     API._fetch(`/plugins/brandsafe/${encodeURIComponent(recordingId)}`),
+  reuseGenerate: (recordingId) =>
+    API._fetch(`/plugins/reuse/${encodeURIComponent(recordingId)}/generate`, { method: "POST" }),
+  reuseList: (recordingId) =>
+    API._fetch(`/plugins/reuse/${encodeURIComponent(recordingId)}`),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -3575,10 +3579,12 @@ async function openRecordingInfo(jobId) {
       ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
       <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
       <div class="rec-clipper" id="rec-clipper" hidden></div>
       <div class="rec-thumbs" id="rec-thumbs" hidden></div>
       <div class="rec-tracks" id="rec-tracks" hidden></div>
+      <div class="rec-reuse" id="rec-reuse" hidden></div>
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
@@ -3735,6 +3741,79 @@ async function openRecordingInfo(jobId) {
         </div>`;
       Toast.success(`Generated ${candidates.length} thumbnail candidate(s)`);
     }).catch((err) => Toast.error(`Thumbnails failed: ${err.message}`));
+  });
+
+  overlay.querySelector("[data-action=rec-info-reuse]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Drafting…", async () => {
+      const resp = await API.reuseGenerate(jobId);
+      const host = document.getElementById("rec-reuse");
+      if (!host) return;
+      host.hidden = false;
+      const drafts = resp.drafts || [];
+      if (!drafts.length) {
+        host.innerHTML = '<div class="empty sm">No drafts generated.</div>';
+        return;
+      }
+      const fmtColour = {
+        youtube_long: "hsl(0, 70%, 55%)",
+        youtube_short: "hsl(15, 80%, 60%)",
+        tiktok: "hsl(0, 0%, 90%)",
+        patreon: "hsl(20, 70%, 60%)",
+        podcast: "hsl(265, 60%, 70%)",
+        blog: "hsl(170, 50%, 55%)",
+      };
+      const fmtLabel = {
+        youtube_long: "YouTube (long)",
+        youtube_short: "YouTube Shorts",
+        tiktok: "TikTok",
+        patreon: "Patreon",
+        podcast: "Podcast",
+        blog: "Blog draft",
+      };
+      host.innerHTML = `
+        <h4 class="rec-cp-title">${drafts.length} publish drafts <span class="pg-cap-hint">queued · re-run regenerates</span></h4>
+        <div class="rec-ru-grid">
+          ${drafts
+            .map(
+              (d, i) => `
+            <details class="rec-ru-card" style="--ru-c:${fmtColour[d.format] || fmtColour.blog}" data-i="${i}">
+              <summary>
+                <span class="rec-ru-fmt">${escape(fmtLabel[d.format] || d.format)}</span>
+                <span class="rec-ru-meta">${escape(d.aspect)} · ${d.duration_sec > 0 ? fmtClock(d.duration_sec) : "—"}${d.clip_starts.length ? ` · ${d.clip_starts.length} clips` : ""}</span>
+              </summary>
+              <div class="rec-ru-body">
+                <h5>Title</h5>
+                <div class="rec-ru-title">${escape(d.title)}</div>
+                <h5>Description</h5>
+                <pre class="rec-ru-desc">${escape(d.description)}</pre>
+                ${d.hashtags.length ? `<h5>Hashtags</h5><div class="rec-ru-tags">${d.hashtags.map((t) => `<span class="cfg-badge">${escape(t)}</span>`).join("")}</div>` : ""}
+                <div class="rec-ru-actions">
+                  <button class="sm rec-ru-copy-title" data-i="${i}">Copy title</button>
+                  <button class="sm rec-ru-copy-desc" data-i="${i}">Copy description</button>
+                  ${d.hashtags.length ? `<button class="sm rec-ru-copy-tags" data-i="${i}">Copy hashtags</button>` : ""}
+                </div>
+              </div>
+            </details>`,
+            )
+            .join("")}
+        </div>`;
+      const cp = async (text) => {
+        try {
+          await navigator.clipboard.writeText(text || "");
+          Toast.success("Copied");
+        } catch (_) {
+          Toast.error("Couldn't copy");
+        }
+      };
+      host.querySelectorAll(".rec-ru-copy-title").forEach((b) =>
+        b.addEventListener("click", () => cp(drafts[+b.dataset.i].title)));
+      host.querySelectorAll(".rec-ru-copy-desc").forEach((b) =>
+        b.addEventListener("click", () => cp(drafts[+b.dataset.i].description)));
+      host.querySelectorAll(".rec-ru-copy-tags").forEach((b) =>
+        b.addEventListener("click", () => cp(drafts[+b.dataset.i].hashtags.join(" "))));
+      Toast.success(`Generated ${drafts.length} draft(s)`);
+    }).catch((err) => Toast.error(`Draft failed: ${err.message}`));
   });
 
   overlay.querySelector("[data-action=rec-info-tracks]")?.addEventListener("click", async (e) => {

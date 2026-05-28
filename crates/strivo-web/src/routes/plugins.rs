@@ -951,6 +951,142 @@ async fn brandsafe_scan(
     .into_response()
 }
 
+/// `POST /api/v1/plugins/reuse/<recording_id>/generate` — build the
+/// default-format draft set for a recording by composing the existing
+/// Crunchr / Clipper / Chapters outputs. Cached in reuse.db.
+async fn reuse_generate(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("reuse") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    // Pull title + channel + duration via the persist row + a quick
+    // ffprobe — both are cheap.
+    let (title, channel_name) = match resolve_recording_meta(&recording_id).await {
+        Some((t, c)) => (t, c),
+        None => (recording_id.clone(), String::new()),
+    };
+    let duration_sec = probe_duration(&input).unwrap_or(0.0);
+
+    let crunchr_conn = open_ro(&crunchr_db());
+    // Crunchr summary + top words / topics, when available. Best-effort.
+    let mut summary = String::new();
+    let mut topics: Vec<String> = Vec::new();
+    let mut top_words: Vec<String> = Vec::new();
+    if let Some(conn) = &crunchr_conn {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+            summary = detail.summary.unwrap_or_default();
+            topics = detail.topics;
+        }
+        if let Ok(words) = strivo_plugins::insights::frequency::top_words_for_recording(
+            conn, &recording_id, 30, false,
+        ) {
+            top_words = words.into_iter().map(|w| w.word).collect();
+        }
+    }
+    // Clipper highlights, when available.
+    let clipper_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    let clip_starts: Vec<f32> = strivo_clipper::store::ClipperStore::open(&clipper_path)
+        .ok()
+        .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| h.time_sec)
+        .collect();
+    // Chapters block — call the same algorithm chapters_generate would
+    // produce, but inline so reuse doesn't depend on its REST surface.
+    let chapters_block = if crunchr_path_exists() {
+        let req = strivo_chapters::ChapterRequest {
+            recording_id: recording_id.clone(),
+            min_seconds: None,
+            cos_threshold: None,
+        };
+        strivo_chapters::generate_chapters(&crunchr_db(), &req, &strivo_chapters::KeywordTitler)
+            .ok()
+            .map(|c| strivo_chapters::format_for_description(&c))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let src = strivo_reuse::SourceRecording {
+        recording_id: recording_id.clone(),
+        title,
+        channel_name,
+        source_path: input.to_string_lossy().to_string(),
+        duration_sec,
+    };
+    let inputs = strivo_reuse::DraftInputs {
+        top_words,
+        topics,
+        clip_starts,
+        chapters_block,
+        summary,
+    };
+    let drafts = strivo_reuse::generate_drafts(&src, &inputs);
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("reuse")
+        .join("reuse.db");
+    if let Ok(store) = strivo_reuse::store::ReuseStore::open(&store_path) {
+        let _ = store.save_set(&recording_id, &drafts);
+    }
+    Json(json!({
+        "recording_id": recording_id,
+        "drafts": drafts,
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/plugins/reuse/<recording_id>` — list cached drafts.
+async fn reuse_list(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("reuse") { return r; }
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("reuse")
+        .join("reuse.db");
+    let drafts = strivo_reuse::store::ReuseStore::open(&store_path)
+        .ok()
+        .and_then(|s| s.list(&recording_id).ok())
+        .unwrap_or_default();
+    Json(json!({ "drafts": drafts })).into_response()
+}
+
+fn crunchr_path_exists() -> bool {
+    crunchr_db().exists()
+}
+
+/// Best-effort title + channel lookup via the persist DB.
+async fn resolve_recording_meta(recording_id: &str) -> Option<(String, String)> {
+    let id = uuid::Uuid::parse_str(recording_id).ok()?;
+    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    let db = strivo_core::recording::persist::PersistDb::open(&jobs_db).ok()?;
+    let rows = db.load_recording_jobs().await.ok()?;
+    rows.into_iter().find(|j| j.id == id).map(|j| {
+        (
+            j.stream_title.unwrap_or_else(|| j.channel_name.clone()),
+            j.channel_name,
+        )
+    })
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -1673,4 +1809,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/multitrack/{id}", get(multitrack_list))
         .route("/api/v1/plugins/multitrack/{id}/extract", axum::routing::post(multitrack_extract))
         .route("/api/v1/plugins/brandsafe/{id}", get(brandsafe_scan))
+        .route("/api/v1/plugins/reuse/{id}/generate", axum::routing::post(reuse_generate))
+        .route("/api/v1/plugins/reuse/{id}", get(reuse_list))
 }
