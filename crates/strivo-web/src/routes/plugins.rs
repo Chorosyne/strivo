@@ -81,6 +81,19 @@ fn count(conn: &Connection, sql: &str) -> i64 {
     conn.query_row(sql, [], |r| r.get(0)).unwrap_or(0)
 }
 
+/// Returns Err(402) when `name` is a Pro plugin and this machine is not
+/// entitled. Free plugins always Ok. The check is centralised here so
+/// every data route shares the same gate without forgetting one.
+fn gate_pro(name: &str) -> Result<(), axum::response::Response> {
+    if strivo_core::licence::gate::is_entitled(name) {
+        return Ok(());
+    }
+    Err(Problem::payment_required(format!(
+        "{name} is a Strivo Pro plugin — activate or start a 3-day trial from the Plugins page."
+    ))
+    .into_response())
+}
+
 // ── Plugin index ─────────────────────────────────────────────────────
 
 /// `GET /api/v1/plugins` — the four data-backed first-party plugins with a
@@ -90,13 +103,25 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
         return Problem::unauthorized().into_response();
     }
 
+    // Pro-plugin entitlement decides whether each first-party plugin
+    // unlocks. We still include locked Pro plugins in the response so
+    // the SPA can render them with a lock badge + upgrade CTA — hiding
+    // them entirely would make the upgrade card feel disconnected.
+    let pro_entitled = |name: &str| strivo_core::licence::gate::is_entitled(name);
+    let crunchr_ok = pro_entitled("crunchr");
+    let archiver_ok = pro_entitled("archiver");
+    let viewguard_ok = pro_entitled("viewguard");
+    let insights_ok = pro_entitled("insights");
+
     let crunchr_conn = open_ro(&crunchr_db());
     let crunchr = match &crunchr_conn {
         Some(c) => json!({
             "name": "crunchr",
             "display": "Crunchr",
             "description": "AI transcription, diarization & analysis",
-            "available": true,
+            "available": crunchr_ok,
+            "pro": true,
+            "entitled": crunchr_ok,
             "stats": {
                 "recordings": count(c, "SELECT COUNT(*) FROM videos"),
                 "analyzed": count(c, "SELECT COUNT(*) FROM video_analysis"),
@@ -111,7 +136,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
         None => json!({
             "name": "crunchr", "display": "Crunchr",
             "description": "AI transcription, diarization & analysis",
-            "available": false, "stats": {}, "verbs": []
+            "available": false, "pro": true, "entitled": crunchr_ok, "stats": {}, "verbs": []
         }),
     };
 
@@ -120,7 +145,9 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "name": "insights",
             "display": "Insights",
             "description": "Word frequency, speaker airtime, topics & sentiment",
-            "available": true,
+            "available": insights_ok,
+            "pro": true,
+            "entitled": insights_ok,
             "stats": {
                 "words": count(c, "SELECT COUNT(DISTINCT word) FROM word_frequency"),
                 "topics_videos": count(c, "SELECT COUNT(*) FROM video_analysis WHERE topics IS NOT NULL AND topics != ''"),
@@ -130,7 +157,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
         None => json!({
             "name": "insights", "display": "Insights",
             "description": "Word frequency, speaker airtime, topics & sentiment",
-            "available": false, "stats": {}, "verbs": []
+            "available": false, "pro": true, "entitled": insights_ok, "stats": {}, "verbs": []
         }),
     };
 
@@ -139,7 +166,9 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "name": "archiver",
             "display": "Archiver",
             "description": "Back-catalog VOD pulls & download tracking",
-            "available": true,
+            "available": archiver_ok,
+            "pro": true,
+            "entitled": archiver_ok,
             "stats": {
                 "channels": count(&c, "SELECT COUNT(*) FROM channels"),
                 "videos": count(&c, "SELECT COUNT(*) FROM videos"),
@@ -152,7 +181,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
         None => json!({
             "name": "archiver", "display": "Archiver",
             "description": "Back-catalog VOD pulls & download tracking",
-            "available": false, "stats": {}, "verbs": []
+            "available": false, "pro": true, "entitled": archiver_ok, "stats": {}, "verbs": []
         }),
     };
 
@@ -161,7 +190,9 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "name": "viewguard",
             "display": "Viewguard",
             "description": "Viewbot fraud detection — verdicts & viewer signals",
-            "available": true,
+            "available": viewguard_ok,
+            "pro": true,
+            "entitled": viewguard_ok,
             "stats": {
                 "verdicts": count(&c, "SELECT COUNT(DISTINCT channel_id) FROM verdicts"),
                 "samples": count(&c, "SELECT COUNT(*) FROM samples"),
@@ -171,7 +202,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
         None => json!({
             "name": "viewguard", "display": "Viewguard",
             "description": "Viewbot fraud detection — verdicts & viewer signals",
-            "available": false, "stats": {}, "verbs": []
+            "available": false, "pro": true, "entitled": viewguard_ok, "stats": {}, "verbs": []
         }),
     };
 
@@ -184,6 +215,7 @@ async fn crunchr_recordings(headers: HeaderMap, State(state): State<AppState>) -
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("crunchr") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "recordings": [] })).into_response();
     };
@@ -217,6 +249,7 @@ async fn crunchr_recording(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("crunchr") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
@@ -267,6 +300,7 @@ async fn crunchr_search(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("crunchr") { return r; }
     let query = q.q.trim();
     if query.is_empty() {
         return Json(json!({ "results": [] })).into_response();
@@ -304,6 +338,7 @@ async fn archiver_channels(headers: HeaderMap, State(state): State<AppState>) ->
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("archiver") { return r; }
     let Some(conn) = open_ro(&archiver_db()) else {
         return Json(json!({ "available": false, "channels": [] })).into_response();
     };
@@ -338,6 +373,7 @@ async fn archiver_videos(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("archiver") { return r; }
     let Some(conn) = open_ro(&archiver_db()) else {
         return Json(json!({ "available": false, "videos": [] })).into_response();
     };
@@ -368,6 +404,7 @@ async fn viewguard_verdicts(headers: HeaderMap, State(state): State<AppState>) -
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("viewguard") { return r; }
     let Some(conn) = viewguard_db().as_deref().and_then(open_ro) else {
         return Json(json!({ "available": false, "verdicts": [] })).into_response();
     };
@@ -402,6 +439,7 @@ async fn viewguard_samples(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("viewguard") { return r; }
     let Some(conn) = viewguard_db().as_deref().and_then(open_ro) else {
         return Json(json!({ "available": false, "samples": [] })).into_response();
     };
@@ -440,6 +478,7 @@ async fn insights_words(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("insights") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "words": [] })).into_response();
     };
@@ -476,6 +515,7 @@ async fn insights_topics(headers: HeaderMap, State(state): State<AppState>) -> i
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("insights") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "topics": [] })).into_response();
     };
@@ -507,6 +547,7 @@ async fn insights_speakers(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("insights") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "speakers": [], "sentiment": null })).into_response();
     };
@@ -557,6 +598,7 @@ async fn insights_export(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
+    if let Err(r) = gate_pro("insights") { return r; }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
