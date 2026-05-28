@@ -175,6 +175,8 @@ const API = {
     API._fetch(`/plugins/casebook/${encodeURIComponent(recordingId)}?fmt=json`),
   casebookMarkdownUrl: (recordingId) =>
     `/api/v1/plugins/casebook/${encodeURIComponent(recordingId)}?fmt=markdown`,
+  heatmapCompute: (recordingId, bucketSecs = 30) =>
+    API._fetch(`/plugins/heatmap/${encodeURIComponent(recordingId)}?bucket_secs=${bucketSecs}`),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -2865,6 +2867,11 @@ async function renderCrunchrRecording(id) {
       </div>
     </section>
     ${analysis}
+    <section class="cfg-card" id="cr-heatmap-card" hidden>
+      <h2 class="cfg-title">Heatmap <span class="pg-cap-hint">talk · action · highlight · brand-safety (anti-signal)</span></h2>
+      <div id="cr-heatmap-strip"></div>
+      <div id="cr-heatmap-top"></div>
+    </section>
     <section class="cfg-card" id="cr-brandsafe-card" hidden>
       <h2 class="cfg-title">Brand-safety verdicts <span id="cr-brandsafe-count"></span></h2>
       <div id="cr-brandsafe-list"></div>
@@ -2876,6 +2883,50 @@ async function renderCrunchrRecording(id) {
       <div class="pg-transcript cr-transcript">${blockHtml || '<div class="empty sm">No segments — transcription may still be running.</div>'}</div>
     </section>
   `);
+  // Lazy multi-signal heatmap — surfaces alongside the existing
+  // retention curve below. Pulls cuepoints/highlights/brandsafe from
+  // their caches; no second ffmpeg pass required.
+  if (d.recording_id) {
+    API.heatmapCompute(d.recording_id, 30).then((resp) => {
+      const card = document.getElementById("cr-heatmap-card");
+      const strip = document.getElementById("cr-heatmap-strip");
+      const topHost = document.getElementById("cr-heatmap-top");
+      if (!card || !strip || !topHost) return;
+      const buckets = resp.buckets || [];
+      if (!buckets.length) return;
+      const dur = resp.duration_sec || 1;
+      const bandRow = (key, label, colour) => {
+        const bars = buckets
+          .map((b) => `<span class="cr-hm-cell" style="--cr-hm-h:${Math.round(b[key] * 100)}%;--cr-hm-c:${colour};" title="${fmtClock(b.bucket_start)} · ${label} ${(b[key] * 100).toFixed(0)}%"></span>`)
+          .join("");
+        return `<div class="cr-hm-row"><span class="cr-hm-label">${escape(label)}</span><div class="cr-hm-bars">${bars}</div></div>`;
+      };
+      const fusedRow = `<div class="cr-hm-row cr-hm-row-fused"><span class="cr-hm-label"><strong>fused</strong></span><div class="cr-hm-bars">${buckets
+        .map((b) => `<a class="cr-hm-cell cr-hm-fused-bar" data-seek="${b.bucket_start}" href="#" style="--cr-hm-h:${Math.round(b.fused * 100)}%;--cr-hm-hue:${200 - Math.round((b.highlight - b.brandsafe) * 60)};" title="${fmtClock(b.bucket_start)} · retention ${(b.fused * 100).toFixed(0)}%"></a>`)
+        .join("")}</div></div>`;
+      strip.innerHTML = `
+        ${bandRow("talk", "talk", "hsl(200, 70%, 55%)")}
+        ${bandRow("action", "action", "hsl(40, 80%, 60%)")}
+        ${bandRow("highlight", "highlight", "hsl(120, 60%, 55%)")}
+        ${bandRow("brandsafe", "brandsafe", "hsl(0, 70%, 60%)")}
+        ${fusedRow}
+        <div class="rec-cp-axis"><span>0:00</span><span>${fmtClock(dur)}</span></div>`;
+      const top = (resp.top_k || []).map(
+        (b) => `<a class="cr-hm-top" href="#" data-seek="${b.bucket_start}">${fmtClock(b.bucket_start)} <span>${(b.fused * 100).toFixed(0)}%</span></a>`,
+      );
+      topHost.innerHTML = top.length
+        ? `<h5 class="ins-cmp-h">Top moments</h5><div class="cr-hm-top-row">${top.join("")}</div>`
+        : "";
+      strip.querySelectorAll(".cr-hm-fused-bar, .cr-hm-top").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          seek(parseFloat(el.dataset.seek || "0"));
+        });
+      });
+      card.hidden = false;
+    }).catch(() => {});
+  }
+
   // Lazy retention curve — async so the transcript paints first.
   if (d.recording_id) {
     API.insightsRetention(d.recording_id, 30).then((retention) => {

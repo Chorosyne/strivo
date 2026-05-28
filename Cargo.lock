@@ -3951,6 +3951,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-heatmap"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-insights-compare"
 version = "0.3.0"
 dependencies = [
@@ -4045,6 +4053,7 @@ dependencies = [
  "strivo-clipper",
  "strivo-core",
  "strivo-cuepoints",
+ "strivo-heatmap",
  "strivo-insights-compare",
  "strivo-multitrack",
  "strivo-plugins",

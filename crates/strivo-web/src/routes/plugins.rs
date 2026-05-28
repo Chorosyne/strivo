@@ -1266,6 +1266,141 @@ async fn resolve_recording_meta_full(recording_id: &str) -> Option<(String, Stri
     })
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct HeatmapQuery {
+    #[serde(default)]
+    bucket_secs: Option<f32>,
+}
+
+/// `GET /api/v1/plugins/heatmap/<recording_id>?bucket_secs=30` —
+/// fuse transcript talk density, cuepoint action density, clipper
+/// highlight scores, and brand-safety verdicts into a per-bucket
+/// retention curve. Channels exposed for SPA breakdown rendering.
+async fn heatmap_compute(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<HeatmapQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("heatmap") { return r; }
+
+    let input_path = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    let probed = probe_duration(&input_path).unwrap_or(0.0);
+
+    // Transcript segments.
+    let mut segments: Vec<strivo_heatmap::TranscriptSegment> = Vec::new();
+    let mut transcript_max_end: f32 = 0.0;
+    if let Some(conn) = open_ro(&crunchr_db()) {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+            segments = detail
+                .segments
+                .iter()
+                .map(|s| {
+                    transcript_max_end = transcript_max_end.max(s.end_sec as f32);
+                    strivo_heatmap::TranscriptSegment {
+                        start_sec: s.start_sec as f32,
+                        end_sec: s.end_sec as f32,
+                        word_count: s.text.split_whitespace().count() as u32,
+                    }
+                })
+                .collect();
+        }
+    }
+    let duration_sec = if probed > 0.0 { probed } else { transcript_max_end };
+
+    // Cuepoints — best-effort from cache.
+    let cp_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("cuepoints")
+        .join("cuepoints.db");
+    let cuepoint_times: Vec<f32> = strivo_cuepoints::store::CuepointsStore::open(&cp_path)
+        .ok()
+        .and_then(|s| s.load(&recording_id, strivo_cuepoints::DEFAULT_THRESHOLD).ok().flatten())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| c.time_sec)
+        .collect();
+
+    // Highlights — best-effort from cache.
+    let clipper_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    let highlights: Vec<strivo_heatmap::ScoredEvent> =
+        strivo_clipper::store::ClipperStore::open(&clipper_path)
+            .ok()
+            .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| strivo_heatmap::ScoredEvent { time_sec: h.time_sec, score: h.score })
+            .collect();
+
+    // Brand-safety — fresh scan; harvest the verdict times.
+    let brandsafe_times: Vec<f32> = if !segments.is_empty() {
+        let bs_segments: Vec<strivo_brandsafe::Segment> = segments
+            .iter()
+            .map(|s| strivo_brandsafe::Segment {
+                start_sec: s.start_sec,
+                end_sec: s.end_sec,
+                text: String::new(), // text not used here; we want the segment shape
+            })
+            .collect();
+        // To scan we need the actual text — re-pull from crunchr.
+        let mut times = Vec::new();
+        if let Some(conn) = open_ro(&crunchr_db()) {
+            if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+                let bs_segs: Vec<strivo_brandsafe::Segment> = detail
+                    .segments
+                    .iter()
+                    .map(|s| strivo_brandsafe::Segment {
+                        start_sec: s.start_sec as f32,
+                        end_sec: s.end_sec as f32,
+                        text: s.text.clone(),
+                    })
+                    .collect();
+                let verdicts = strivo_brandsafe::scan_all(&bs_segs, "", &["Twitch", "YouTube"]);
+                for v in &verdicts {
+                    if let Some(t) = v.at_sec {
+                        times.push(t);
+                    }
+                }
+            }
+        }
+        let _ = bs_segments;
+        times
+    } else {
+        Vec::new()
+    };
+
+    let bucket_secs = q.bucket_secs.unwrap_or(30.0).max(5.0);
+    let dur = duration_sec.max(bucket_secs * 2.0);
+    let inputs = strivo_heatmap::HeatmapInputs {
+        segments: &segments,
+        cuepoint_times: &cuepoint_times,
+        highlights: &highlights,
+        brandsafe_times: &brandsafe_times,
+        duration_sec: dur,
+        bucket_secs,
+    };
+    let buckets = strivo_heatmap::compute_heatmap(&inputs);
+    let top = strivo_heatmap::top_k_buckets(&buckets, 5);
+
+    Json(json!({
+        "recording_id": recording_id,
+        "duration_sec": dur,
+        "bucket_secs": bucket_secs,
+        "buckets": buckets,
+        "top_k": top,
+    }))
+    .into_response()
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -1991,4 +2126,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/reuse/{id}/generate", axum::routing::post(reuse_generate))
         .route("/api/v1/plugins/reuse/{id}", get(reuse_list))
         .route("/api/v1/plugins/casebook/{id}", get(casebook_generate))
+        .route("/api/v1/plugins/heatmap/{id}", get(heatmap_compute))
 }

@@ -2981,6 +2981,56 @@ body.modal-open { overflow: hidden; }
   transition: opacity 0.1s, transform 0.1s;
 }
 .cr-ret-bar:hover { opacity: 1; transform: scaleY(1.1); }
+/* Multi-signal heatmap (Heatmap plugin, iter 13). */
+.cr-hm-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+.cr-hm-label { font-size: 0.74rem; color: var(--muted); text-align: right; }
+.cr-hm-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.cr-hm-cell {
+  flex: 1;
+  min-width: 2px;
+  height: var(--cr-hm-h, 0%);
+  background: var(--cr-hm-c, var(--accent2));
+  border-radius: 1px;
+  opacity: 0.82;
+}
+.cr-hm-row-fused .cr-hm-bars { height: 44px; }
+.cr-hm-row-fused .cr-hm-cell {
+  background: hsl(var(--cr-hm-hue, 200), 70%, 55%);
+  cursor: pointer;
+  text-decoration: none;
+}
+.cr-hm-row-fused .cr-hm-cell:hover { opacity: 1; transform: scaleY(1.05); }
+.cr-hm-top-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+.cr-hm-top {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(0, 188, 212, 0.1);
+  border: 1px solid rgba(0, 188, 212, 0.3);
+  color: var(--accent2);
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cr-hm-top:hover { background: rgba(0, 188, 212, 0.2); }
+.cr-hm-top span { color: var(--text); font-weight: 600; }
 /* Compare-streams card on /plugins/insights (iter 7). */
 #ins-compare-card .mon-add select { min-width: 220px; }
 .ins-cmp-summary { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; }
