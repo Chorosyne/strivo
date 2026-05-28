@@ -3900,6 +3900,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-cuepoints"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-plugins"
 version = "0.3.0"
 source = "git+https://github.com/Chorosyne/strivo-plugins?branch=main#8a061668ea1a8c4514b2559c34f06e5742ee7b1c"
@@ -3950,6 +3961,7 @@ dependencies = [
  "sha2",
  "strivo-chapters",
  "strivo-core",
+ "strivo-cuepoints",
  "strivo-plugins",
  "tempfile",
  "tokio",

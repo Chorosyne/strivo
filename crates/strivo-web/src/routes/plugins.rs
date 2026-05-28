@@ -102,6 +102,76 @@ async fn chapters_generate(
     })).into_response()
 }
 
+/// `POST /api/v1/plugins/cuepoints/<recording_id>` — extract (or
+/// re-extract) scene-change cuepoints for a recording. ffmpeg full
+/// pass; cached in cuepoints.db keyed on (recording_id, threshold).
+async fn cuepoints_generate(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("cuepoints") { return r; }
+    let id = match uuid::Uuid::parse_str(&recording_id) {
+        Ok(u) => u,
+        Err(_) => return Problem::bad_request("recording id must be a uuid").into_response(),
+    };
+    // Resolve the file path via persist DB — same shape as the remux
+    // endpoint. No daemon round-trip needed; we only read the row.
+    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    let input_path = match strivo_core::recording::persist::PersistDb::open(&jobs_db) {
+        Ok(db) => match db.load_recording_jobs().await {
+            Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    let Some(input) = input_path else {
+        return Problem::not_found("recording not found").into_response();
+    };
+    if !input.exists() {
+        return Problem::not_found("recording file missing").into_response();
+    }
+    let threshold = strivo_cuepoints::DEFAULT_THRESHOLD;
+    // Check the cache first.
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("cuepoints")
+        .join("cuepoints.db");
+    let store = match strivo_cuepoints::store::CuepointsStore::open(&store_path) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open cache: {e}")).into_response(),
+    };
+    if let Ok(Some(points)) = store.load(&recording_id, threshold) {
+        return Json(json!({
+            "recording_id": recording_id,
+            "threshold": threshold,
+            "points": points,
+            "cached": true,
+        }))
+        .into_response();
+    }
+    let points = match strivo_cuepoints::extract_cuepoints(&input, threshold) {
+        Ok(p) => p,
+        Err(e) => return Problem::internal(format!("ffmpeg: {e}")).into_response(),
+    };
+    let set = strivo_cuepoints::CuepointSet {
+        recording_id: recording_id.clone(),
+        threshold,
+        points: points.clone(),
+    };
+    let _ = store.save(&set);
+    Json(json!({
+        "recording_id": recording_id,
+        "threshold": threshold,
+        "points": points,
+        "cached": false,
+    }))
+    .into_response()
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -811,4 +881,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/insights/export", get(insights_export))
         .route("/api/v1/recordings/{id}/captions.vtt", get(recording_captions))
         .route("/api/v1/plugins/chapters/{id}", axum::routing::post(chapters_generate))
+        .route("/api/v1/plugins/cuepoints/{id}", axum::routing::post(cuepoints_generate))
 }

@@ -2640,6 +2640,51 @@ body.modal-open { overflow: hidden; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .cr-chapters-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+/* Cuepoints strip on the recording info modal (iter 4). */
+.rec-info-cuepoints-btn { margin-top: 0.5rem; }
+.rec-cuepoints { margin-top: 0.7rem; }
+.rec-cp-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.rec-cp-strip {
+  position: relative;
+  height: 36px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.2) 100%);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+}
+.rec-cp-tick {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: var(--rec-cp-pct, 0%);
+  width: 2px;
+  background: var(--accent2);
+  opacity: 0.65;
+  cursor: pointer;
+  border-radius: 1px;
+  transition: opacity 0.1s, transform 0.1s;
+}
+.rec-cp-tick:hover {
+  opacity: 1;
+  width: 3px;
+  transform: scaleY(1.15);
+  background: var(--accent);
+}
+.rec-cp-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .mon-cron-hint {
   margin: 0.6rem 0 0;
   font-size: 0.78rem;

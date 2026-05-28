@@ -138,6 +138,8 @@ const API = {
   pluginCapabilities: () => API._fetch("/plugins/capabilities"),
   chaptersGenerate: (recordingId) =>
     API._fetch(`/plugins/chapters/${encodeURIComponent(recordingId)}`, { method: "POST" }),
+  cuepointsGenerate: (recordingId) =>
+    API._fetch(`/plugins/cuepoints/${encodeURIComponent(recordingId)}`, { method: "POST" }),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -3356,6 +3358,8 @@ async function openRecordingInfo(jobId) {
     <section class="rec-info-actions">
       <h3>Plugin actions</h3>
       <div class="rec-info-verbs">${actionsHtml}</div>
+      ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
+      <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
@@ -3368,6 +3372,47 @@ async function openRecordingInfo(jobId) {
   overlay.querySelector("[data-action=rec-info-play]")?.addEventListener("click", () => {
     closeRecordingModals();
     openRecordingPlayer(jobId);
+  });
+  overlay.querySelector("[data-action=rec-info-cuepoints]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Detecting…", async () => {
+      const resp = await API.cuepointsGenerate(jobId);
+      const host = document.getElementById("rec-cuepoints");
+      if (!host) return;
+      // Compute duration as a max-time + 5% pad so the timeline isn't
+      // clipped if the last cuepoint is near the end of the file.
+      const points = resp.points || [];
+      const maxTime = points.length ? Math.max(...points.map((p) => p.time_sec)) : 0;
+      const duration = Math.max(maxTime * 1.05, 60);
+      if (!points.length) {
+        host.innerHTML = `<div class="empty sm">No scene changes detected at threshold ${resp.threshold}.</div>`;
+        host.hidden = false;
+        return;
+      }
+      host.innerHTML = `
+        <h4 class="rec-cp-title">${points.length} scene change${points.length === 1 ? "" : "s"} <span class="pg-cap-hint">${resp.cached ? "(cached)" : "(fresh extraction)"}</span></h4>
+        <div class="rec-cp-strip" style="--rec-cp-dur:${duration}">
+          ${points
+            .map(
+              (p) =>
+                `<a class="rec-cp-tick" style="--rec-cp-pct:${((p.time_sec / duration) * 100).toFixed(2)}%" data-seek="${p.time_sec}" title="${fmtClock(p.time_sec)}" href="#"></a>`,
+            )
+            .join("")}
+        </div>
+        <div class="rec-cp-axis">
+          <span>0:00</span>
+          <span>${fmtClock(duration)}</span>
+        </div>`;
+      host.hidden = false;
+      host.querySelectorAll(".rec-cp-tick").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          closeRecordingModals();
+          openRecordingPlayer(jobId, { seekTo: parseFloat(el.dataset.seek || "0") });
+        });
+      });
+      Toast.success(`Detected ${points.length} scene change(s)`);
+    }).catch((err) => Toast.error(`Cuepoints failed: ${err.message}`));
   });
   overlay.querySelector("[data-action=rec-info-remux]")?.addEventListener("click", async (e) => {
     if (!(await confirmDialog(
