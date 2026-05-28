@@ -2019,3 +2019,84 @@ body.modal-open { overflow: hidden; }
   cursor: pointer;
 }
 .rec-info-verb-link:hover { border-color: var(--accent2); }
+
+/* ── Strivo Pro upgrade card (Plugins hub) ────────────────────────── */
+.upgrade-card {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  margin: 0 0 1.5rem;
+  border-radius: 14px;
+  border: 1px solid var(--border-light);
+  background: linear-gradient(135deg,
+    rgba(94, 53, 177, 0.18) 0%,
+    rgba(0, 188, 212, 0.10) 100%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.upgrade-logo {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+}
+.upgrade-body { flex: 1; min-width: 0; }
+.upgrade-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.upgrade-tagline { margin: 0 0 0.6rem; color: var(--text); font-size: 0.95rem; }
+.upgrade-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.9rem;
+  display: grid;
+  gap: 0.2rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.upgrade-bullets li::before { content: "✓  "; color: var(--accent2); font-weight: 700; }
+.upgrade-bullets strong { color: var(--text); font-weight: 700; }
+.upgrade-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.upgrade-trial,
+.upgrade-activate {
+  font: inherit;
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, background 0.15s;
+}
+.upgrade-trial {
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  color: #fff;
+  border: 0;
+  font-weight: 600;
+}
+.upgrade-trial:hover:not(:disabled) { transform: translateY(-1px); }
+.upgrade-activate {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--text);
+}
+.upgrade-activate:hover:not(:disabled) { border-color: var(--accent2); }
+.upgrade-trial:disabled,
+.upgrade-activate:disabled { opacity: 0.55; cursor: not-allowed; }
+.upgrade-hint {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+@media (max-width: 640px) {
+  .upgrade-card { flex-direction: column; text-align: center; }
+  .upgrade-bullets { text-align: left; }
+}

@@ -126,6 +126,11 @@ const API = {
   login: (apiKey) =>
     API._fetch("/auth/login", { method: "POST", body: { api_key: apiKey } }),
   logout: () => API._fetch("/auth/logout", { method: "POST" }),
+  // ── Strivo Pro licensing (Phase 1: status only; activate/trial 501) ──
+  licenceStatus: () => API._fetch("/licence/status"),
+  licenceTrial: () => API._fetch("/licence/trial", { method: "POST" }),
+  licenceActivate: (key) =>
+    API._fetch("/licence/activate", { method: "POST", body: { key } }),
 };
 
 // ── SSE event stream ─────────────────────────────────────────────────
@@ -2216,9 +2221,15 @@ function pluginHeader(title, subtitle, backHref) {
 }
 
 async function renderPluginHub() {
-  const resp = await API.plugins();
+  // Fetch licence + plugins in parallel; licence failure must not block
+  // the hub render — it just means we hide the upgrade card this paint.
+  const [resp, licence] = await Promise.all([
+    API.plugins(),
+    API.licenceStatus().catch(() => null),
+  ]);
   root.removeAttribute("aria-busy");
   const plugins = (resp && resp.plugins) || [];
+  const upgrade = renderUpgradeCard(licence);
   const cards = plugins
     .map((p) => {
       const statBits = Object.entries(p.stats || {})
@@ -2246,9 +2257,68 @@ async function renderPluginHub() {
     .join("");
   root.innerHTML = chrome(`
     ${pluginHeader("Plugins", "First-party plugins. Pick one to browse what it has produced.")}
+    ${upgrade}
     <div class="pg-grid">${cards || '<div class="empty">No plugins loaded.</div>'}</div>
   `);
   setupChromeHandlers();
+  wireUpgradeCard();
+}
+
+// Upgrade card — shown on the Plugins hub when the user is not entitled.
+// Phase 1: stubbed backend, so the "Activate" button is disabled until
+// the licence service implements (returns `implemented: false`). The
+// trial CTA is wired to a placeholder endpoint that returns 501 today;
+// the surface stays so the design is locked in.
+function renderUpgradeCard(licence) {
+  if (!licence || licence.entitled) return ""; // dev unlock + future paid users
+  const implemented = licence.implemented === true;
+  const trialDisabled = implemented ? "" : "disabled";
+  return `
+    <section class="upgrade-card" data-tier="${escape(licence.tier || "free")}">
+      <img class="upgrade-logo" src="/assets/img/chorosyne-logo.png" alt="Chorosyne" />
+      <div class="upgrade-body">
+        <h2 class="upgrade-title">Strivo Pro</h2>
+        <p class="upgrade-tagline">Unlock every plugin — Crunchr, Archiver, Viewguard, Insights — and everything we ship next.</p>
+        <ul class="upgrade-bullets">
+          <li>One-time <strong>$25</strong> — no subscription, no recurring fees.</li>
+          <li>Single-machine licence with auto-refresh every 72h (works offline).</li>
+          <li>3-day free trial — no card required.</li>
+        </ul>
+        <div class="upgrade-actions">
+          <button class="upgrade-trial btn-primary" ${trialDisabled}>Start 3-day trial</button>
+          <button class="upgrade-activate btn-ghost" ${trialDisabled}>I have a key</button>
+        </div>
+        ${implemented ? "" : '<p class="upgrade-hint">Activation backend wires up in the next phase — surface preview only.</p>'}
+      </div>
+    </section>
+  `;
+}
+
+function wireUpgradeCard() {
+  const trial = document.querySelector(".upgrade-trial");
+  const activate = document.querySelector(".upgrade-activate");
+  if (trial) {
+    trial.addEventListener("click", async () => {
+      try {
+        await API.licenceTrial();
+        location.reload();
+      } catch (e) {
+        Toast.error(e.message || "Trial unavailable");
+      }
+    });
+  }
+  if (activate) {
+    activate.addEventListener("click", async () => {
+      const key = prompt("Paste your Strivo Pro licence key:");
+      if (!key) return;
+      try {
+        await API.licenceActivate(key.trim());
+        location.reload();
+      } catch (e) {
+        Toast.error(e.message || "Activation failed");
+      }
+    });
+  }
 }
 
 // ── Crunchr ──────────────────────────────────────────────────────────

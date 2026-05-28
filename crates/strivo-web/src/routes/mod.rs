@@ -1,6 +1,7 @@
 pub mod api;
 pub mod assets;
 pub mod events;
+pub mod licence;
 pub mod login;
 pub mod plugins;
 // Retained but unmounted: the sole recording file-serving path (download/
