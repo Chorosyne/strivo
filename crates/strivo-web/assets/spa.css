@@ -1517,6 +1517,33 @@ a.media-pill:hover,
 .logs-toolbar label { font-size: 0.8rem; color: var(--muted); }
 .logs-toolbar select { width: auto; }
 .logs-file { font-size: 0.72rem; color: var(--muted); }
+.logs-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+.logs-search:focus { outline: 0; border-color: var(--accent2); }
+.logs-sources { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.logs-chip {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.logs-chip:hover { color: var(--text); border-color: var(--accent2); }
+.logs-chip.is-active { background: rgba(0, 188, 212, 0.18); color: var(--text); border-color: var(--accent2); }
 .logs-output {
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border-light);
@@ -1527,11 +1554,28 @@ a.media-pill:hover,
   font-family: var(--mono);
   font-size: 0.78rem;
   line-height: 1.5;
-  white-space: pre-wrap;
   word-break: break-word;
-  max-height: 70vh;
+  max-width: 140ch;
+  max-height: calc(100vh - 220px);
   overflow: auto;
 }
+.log-line { white-space: pre-wrap; padding: 0.05rem 0; }
+.log-multi summary { cursor: pointer; list-style: none; white-space: pre-wrap; }
+.log-multi summary::-webkit-details-marker { display: none; }
+.log-multi summary::before { content: "▸ "; color: var(--muted); }
+.log-multi[open] summary::before { content: "▾ "; }
+.log-multi pre {
+  margin: 0.2rem 0 0.4rem 1.2rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--accent2);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.76rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+.log-more { color: var(--accent2); font-size: 0.7rem; margin-left: 0.4rem; }
 
 .sys-domain { margin-bottom: 0.8rem; }
 .sys-domain-title {

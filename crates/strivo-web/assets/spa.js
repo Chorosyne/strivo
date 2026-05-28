@@ -3859,8 +3859,38 @@ async function paintBackups() {
   }
 }
 
-// ── Logs viewer (item 15) — tails the rolling log with a level selector. ──
+// ── Logs viewer ──────────────────────────────────────────────────────
+// Tails the rolling log file. Level dropdown + per-source filter chips +
+// free-text search + multi-line entry collapse (audit U5, M7, R5).
 let logsLevel = "info";
+let logsQuery = "";
+let logsSourceFilter = ""; // crate/module substring; "" = all sources
+
+// A "log entry" is a starting line (parsable timestamp + level) plus any
+// following indented/JSON-blob continuation lines. We collapse those
+// continuation lines into a single click-to-expand block so YouTube
+// quota 403s stop dominating the viewport.
+function parseLogEntries(lines) {
+  const entries = [];
+  const startRe = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+  for (const raw of lines) {
+    if (startRe.test(raw)) {
+      entries.push({ head: raw, tail: [] });
+    } else if (entries.length) {
+      entries[entries.length - 1].tail.push(raw);
+    } else {
+      entries.push({ head: raw, tail: [] });
+    }
+  }
+  return entries;
+}
+
+// Pull a coarse "source" tag (crate::module) out of a log line head.
+function logSource(line) {
+  const m = line.match(/\s+(strivo_[a-zA-Z_]+(::[a-zA-Z_]+)*)/);
+  return m ? m[1] : "";
+}
+
 async function renderLogs() {
   const levels = ["error", "warn", "info", "debug", "trace"];
   const options = levels
@@ -3869,13 +3899,14 @@ async function renderLogs() {
   root.innerHTML = chrome(`
     <h1 class="page-title">Logs</h1>
     <div class="logs-toolbar">
-      <label>Min level
-        <select id="logs-level">${options}</select>
-      </label>
+      <label>Min level <select id="logs-level">${options}</select></label>
+      <input id="logs-search" class="logs-search" type="search"
+             placeholder="Search log text…" value="${escape(logsQuery)}" />
+      <span id="logs-sources" class="logs-sources"></span>
       <button id="logs-refresh" class="sm" title="Reload">↻ Refresh</button>
       <span id="logs-file" class="logs-file"></span>
     </div>
-    <pre id="logs-output" class="logs-output" aria-live="polite">Loading…</pre>
+    <div id="logs-output" class="logs-output" aria-live="polite">Loading…</div>
   `);
   setupChromeHandlers();
 
@@ -3884,9 +3915,47 @@ async function renderLogs() {
     const fileEl = document.getElementById("logs-file");
     try {
       const r = await API.logs(logsLevel, 500);
-      const lines = r.lines || [];
-      out.textContent = lines.length ? lines.join("\n") : "No log lines at this level.";
-      if (fileEl) fileEl.textContent = r.file ? `· ${r.file} · ${lines.length} lines` : "";
+      const allLines = r.lines || [];
+      const allEntries = parseLogEntries(allLines);
+      // Build the source-filter chip set from what's currently in view.
+      const sources = [...new Set(allEntries.map((e) => logSource(e.head)).filter(Boolean))].sort();
+      const chips = document.getElementById("logs-sources");
+      if (chips) {
+        chips.innerHTML = ['<button class="logs-chip" data-src="">all</button>']
+          .concat(
+            sources.map(
+              (s) =>
+                `<button class="logs-chip${s === logsSourceFilter ? " is-active" : ""}" data-src="${escape(s)}">${escape(s.replace(/^strivo_/, ""))}</button>`,
+            ),
+          )
+          .join("");
+        chips.querySelectorAll(".logs-chip").forEach((b) => {
+          b.addEventListener("click", () => {
+            logsSourceFilter = b.dataset.src || "";
+            load();
+          });
+        });
+      }
+      const q = logsQuery.trim().toLowerCase();
+      const filtered = allEntries.filter((e) => {
+        if (logsSourceFilter && !e.head.includes(logsSourceFilter)) return false;
+        if (q) {
+          const hay = e.head.toLowerCase() + " " + e.tail.join(" ").toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      out.innerHTML = filtered.length
+        ? filtered
+            .map((e) => {
+              const head = escape(e.head);
+              if (!e.tail.length) return `<div class="log-line">${head}</div>`;
+              const tail = escape(e.tail.join("\n"));
+              return `<details class="log-line log-multi"><summary>${head} <span class="log-more">+${e.tail.length}</span></summary><pre>${tail}</pre></details>`;
+            })
+            .join("")
+        : "<div class='empty sm'>No log lines match the current filters.</div>";
+      if (fileEl) fileEl.textContent = r.file ? `· ${r.file} · ${filtered.length}/${allEntries.length} entries` : "";
       out.scrollTop = out.scrollHeight;
     } catch (e) {
       out.textContent = `Failed to load logs: ${e.message}`;
@@ -3894,6 +3963,10 @@ async function renderLogs() {
   }
   document.getElementById("logs-level")?.addEventListener("change", (e) => {
     logsLevel = e.target.value;
+    load();
+  });
+  document.getElementById("logs-search")?.addEventListener("input", (e) => {
+    logsQuery = e.target.value;
     load();
   });
   document.getElementById("logs-refresh")?.addEventListener("click", load);
