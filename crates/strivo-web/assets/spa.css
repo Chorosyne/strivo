@@ -292,6 +292,31 @@ input:focus-visible {
   z-index: 100;
 }
 .kbd-help.open { display: flex; }
+/* .app-modal — dedicated centered-overlay for SPA modals (add-channel,
+   playlist picker, etc.). Same visual as .kbd-help but with its own
+   class so we can manage open/close and route-aware dismissal without
+   colliding with the keyboard-help overlay. */
+.app-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.app-modal.open { display: flex; }
+.app-modal .card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1.5rem 2rem;
+  width: 480px;
+  max-width: 92vw;
+}
 .kbd-help .card {
   background: var(--surface);
   backdrop-filter: var(--blur);

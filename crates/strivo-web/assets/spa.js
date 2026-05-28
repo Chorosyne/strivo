@@ -519,9 +519,10 @@ function setupChromeHandlers() {
     }
   });
   document.getElementById("add-channel")?.addEventListener("click", () => openAddChannelWizard());
-  document.getElementById("logout")?.addEventListener("click", async () => {
-    await API.logout().catch(() => {});
-    route("login");
+  document.getElementById("logout")?.addEventListener("click", () => {
+    // Quick confirm — one misclick on the topbar shouldn't sign you out.
+    if (!confirm("Sign out? You'll need to re-enter the API key to come back.")) return;
+    API.logout().catch(() => {}).then(() => route("login"));
   });
   // Health pill — amber/red when any check is degraded (roadmap item 13).
   refreshHealthPill();
@@ -1479,15 +1480,36 @@ function openAddChannelWizard() {
   if (!modal) {
     modal = document.createElement("div");
     modal.id = "add-channel-modal";
-    modal.className = "kbd-help";
+    modal.className = "app-modal";
     document.body.appendChild(modal);
     modal.addEventListener("click", (e) => {
-      if (e.target === modal) modal.classList.remove("open");
+      if (e.target === modal) closeAppModal(modal);
     });
   }
   paintAddWizardSearch(modal);
   modal.classList.add("open");
+  document.body.classList.add("modal-open");
 }
+
+// One owner for the click-outside / ESC / route-change dismissal of all
+// .app-modal dialogs. Built so the keyboard-help (kbd-help) overlay
+// stays separate — it has its own toggle and shouldn't be auto-closed
+// on navigation.
+function closeAppModal(modal) {
+  if (!modal) return;
+  modal.classList.remove("open");
+  // Clear body lock only when no other modal is still open.
+  if (!document.querySelector(".app-modal.open")) {
+    document.body.classList.remove("modal-open");
+  }
+}
+function closeAllAppModals() {
+  document.querySelectorAll(".app-modal.open").forEach(closeAppModal);
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeAllAppModals();
+});
+window.addEventListener("hashchange", closeAllAppModals);
 
 function paintAddWizardSearch(modal, opts = {}) {
   modal = modal || document.getElementById("add-channel-modal");
@@ -1573,7 +1595,7 @@ function showPlaylistModal(opts) {
   if (!modal) {
     modal = document.createElement("div");
     modal.id = "playlist-modal";
-    modal.className = "kbd-help"; // reuse the centered-overlay styling
+    modal.className = "app-modal";
     document.body.appendChild(modal);
     modal.addEventListener("click", (e) => {
       if (e.target === modal) modal.classList.remove("open");
