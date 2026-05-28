@@ -49,6 +49,7 @@ strivo-loudness = { path = "../loudness" }
 strivo-structure = { path = "../structure" }
 strivo-automation = { path = "../automation" }
 strivo-scenes = { path = "../scenes" }
+strivo-schedule-optimizer = { path = "../schedule-optimizer" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

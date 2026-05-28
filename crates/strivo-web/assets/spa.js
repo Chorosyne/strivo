@@ -3537,6 +3537,7 @@ const PLUGIN_REGISTRY = [
   { name: "structure",  label: "Structure",     category: "Editor", proGated: true, description: "DAW-style section labeller — intro / gameplay / break / outro tiling from chapters + chat density + scene cuepoints." },
   { name: "automation", label: "Automation",    category: "Editor", proGated: true, description: "Volume automation curves — time-keyed gain with linear/cosine/step interpolation, baked via ffmpeg asendcmd." },
   { name: "scenes",     label: "Scene snapshots", category: "Editor", proGated: true, description: "DAW-style session save/recall — bundle every per-recording plugin state as a named scene." },
+  { name: "schedule-optimizer", label: "Schedule optimizer", category: "Publish", proGated: true, description: "Publish-slot recommender — engagement samples → top weekly publish times with confidence + plateau coverage." },
   // Asset / analytics / publishing.
   { name: "chapters",         label: "Chapters",         category: "Analytics", proGated: true, description: "Heuristic chapter markers extracted from pacing." },
   { name: "cuepoints",        label: "Cuepoints",        category: "Analytics", proGated: true, description: "Scene-change detection from ffmpeg's select filter." },

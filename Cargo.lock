@@ -4128,6 +4128,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-schedule-optimizer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-structure"
 version = "0.1.0"
 dependencies = [
@@ -4200,6 +4208,7 @@ dependencies = [
  "strivo-plugins",
  "strivo-reuse",
  "strivo-scenes",
+ "strivo-schedule-optimizer",
  "strivo-structure",
  "strivo-thumbnails",
  "strivo-viewguard-trend",

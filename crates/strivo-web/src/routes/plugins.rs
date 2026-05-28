@@ -2001,6 +2001,55 @@ async fn multistream_tiles(
     .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct ScheduleOptimizerBody {
+    pub samples: Vec<strivo_schedule_optimizer::EngagementSample>,
+    /// How many slots to return. Defaults to 3 (a typical "post N times
+    /// this week" recommendation).
+    #[serde(default = "default_top_n")]
+    pub top_n: usize,
+    /// "greedy" picks the top N regardless of proximity; "spread" picks
+    /// the top N but enforces a minimum hour gap per day. Default
+    /// "spread" with min_gap_hours = 4.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Min hour gap for spread mode. Ignored otherwise.
+    #[serde(default = "default_min_gap")]
+    pub min_gap_hours: u8,
+}
+
+fn default_top_n() -> usize { 3 }
+fn default_min_gap() -> u8 { 4 }
+
+/// `POST /api/v1/plugins/schedule-optimizer/<recording_id>` — aggregate
+/// caller-supplied engagement samples and return the top weekly publish
+/// slots. Pro-gated. recording_id is just a tag in the response — the
+/// math doesn't need any per-recording state.
+async fn schedule_optimizer_recommend(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<ScheduleOptimizerBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("schedule-optimizer") { return r; }
+    let grid = strivo_schedule_optimizer::aggregate(&body.samples);
+    let mode = match body.mode.as_deref().unwrap_or("spread") {
+        "greedy" => strivo_schedule_optimizer::RankMode::Greedy,
+        _ => strivo_schedule_optimizer::RankMode::Spread { min_gap_hours: body.min_gap_hours },
+    };
+    let picks = strivo_schedule_optimizer::top_slots(&grid, body.top_n, mode);
+    Json(json!({
+        "recording_id": recording_id,
+        "grid": grid,
+        "recommendations": picks,
+        "sample_count": body.samples.len(),
+    }))
+    .into_response()
+}
+
 fn scenes_db_path() -> std::path::PathBuf {
     strivo_core::config::AppConfig::data_dir()
         .join("plugins")
@@ -3265,4 +3314,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/scenes/{id}", get(scenes_list).post(scenes_capture))
         .route("/api/v1/plugins/scenes/{id}/{scene_id}/restore", axum::routing::post(scenes_restore))
         .route("/api/v1/plugins/scenes/{id}/{scene_id}", axum::routing::delete(scenes_delete))
+        .route("/api/v1/plugins/schedule-optimizer/{id}", axum::routing::post(schedule_optimizer_recommend))
 }
