@@ -36,8 +36,27 @@ test("clicking a YouTube channel shows detail with streams + uploads", async ({ 
   // VOD lists arrive over SSE (mock pushes one LiveBroadcast + one Upload).
   await expect(page.getByText("Yesterday's livestream")).toBeVisible();
   await expect(page.getByText("How I edit my videos")).toBeVisible();
-  await expect(page.locator(".cd-section-title", { hasText: "Recent live streams" })).toBeVisible();
+  await expect(page.locator(".cd-section-title.past-broadcasts", { hasText: "Past Broadcasts" })).toBeVisible();
   await expect(page.locator(".cd-section-title", { hasText: "Recent uploads" })).toBeVisible();
+});
+
+test("past-broadcasts pills have a download button that flips to Downloading on click", async ({ page }) => {
+  await page.goto("/app#/library");
+  await page.locator(".ch-row", { hasText: "Live Channel" }).click();
+  // Wait for VODs to arrive via SSE.
+  await expect(page.getByText("Yesterday's livestream")).toBeVisible();
+  // Each pill in the Past Broadcasts list has a Download button.
+  const dlBtn = page
+    .locator(".media-pill", { hasText: "Yesterday's livestream" })
+    .locator(".vod-dl");
+  await expect(dlBtn).toHaveText("Download");
+  await expect(dlBtn).toHaveClass(/vod-dl-idle/);
+  await dlBtn.click();
+  // Downloading state is a progress widget (bar + label), not plain text.
+  await expect(dlBtn).toHaveClass(/vod-dl-downloading/);
+  await expect(dlBtn).toBeDisabled();
+  await expect(dlBtn.locator(".vod-dl-bar")).toBeVisible();
+  await expect(dlBtn.locator(".vod-dl-label")).toContainText("%");
 });
 
 test("patreon creators appear in the left rail (seeded from /patreon)", async ({ page }) => {
@@ -146,4 +165,131 @@ test("command palette opens with Ctrl+K and navigates", async ({ page }) => {
   await page.locator("#cmdk-input").fill("recordings");
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/recordings/);
+});
+
+// ── Plugins (hub + per-plugin views) ──────────────────────────────────
+
+test("plugins hub lists the four first-party plugins", async ({ page }) => {
+  await page.goto("/app#/plugins");
+  await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
+  await expect(page.locator(".pg-card")).toHaveCount(4);
+  await expect(page.locator(".pg-card", { hasText: "Crunchr" })).toBeVisible();
+  await expect(page.locator(".pg-card", { hasText: "Viewguard" })).toBeVisible();
+});
+
+test("crunchr view lists recordings, searches, and opens a transcript", async ({ page }) => {
+  await page.goto("/app#/plugins/crunchr");
+  await expect(page.getByRole("heading", { name: "Crunchr" })).toBeVisible();
+  await expect(page.locator(".pg-row", { hasText: "Elden Ring run" })).toBeVisible();
+
+  // Search debounces then renders hits.
+  await page.locator("#crunchr-q").fill("boss");
+  await expect(page.locator(".pg-search-hits .pg-row").first()).toBeVisible();
+
+  // Open the transcript detail (main list, not the search-hits list).
+  await page
+    .locator(".pg-list:not(.pg-search-hits) > .pg-row", { hasText: "Elden Ring run" })
+    .click();
+  await expect(page).toHaveURL(/#\/plugins\/crunchr\/rec\//);
+  await expect(page.getByRole("heading", { name: "Analysis" })).toBeVisible();
+  await expect(page.locator(".pg-seg").first()).toContainText("welcome back");
+  await expect(page.locator("#retranscribe")).toBeVisible();
+});
+
+test("re-transcribe button dispatches a verb", async ({ page }) => {
+  await page.goto("/app#/plugins/crunchr/rec/rec-1");
+  await page.locator("#retranscribe").click();
+  await expect(page.locator(".toast-region[aria-live=polite]")).toContainText("queued");
+});
+
+test("archiver view lists channels and opens a catalog", async ({ page }) => {
+  await page.goto("/app#/plugins/archiver");
+  await expect(page.getByRole("heading", { name: "Archiver" })).toBeVisible();
+  await page.locator(".pg-row", { hasText: "Alpha" }).click();
+  await expect(page).toHaveURL(/#\/plugins\/archiver\//);
+  await expect(page.getByRole("heading", { name: "Catalog" })).toBeVisible();
+  await expect(page.locator(".pg-row", { hasText: "Stream Two" })).toBeVisible();
+  await expect(page.locator(".cfg-badge", { hasText: "downloaded" }).first()).toBeVisible();
+});
+
+test("viewguard view shows verdict bands", async ({ page }) => {
+  await page.goto("/app#/plugins/viewguard");
+  await expect(page.getByRole("heading", { name: "Viewguard" })).toBeVisible();
+  await expect(page.locator(".vg-band-fraudulent")).toBeVisible();
+  await expect(page.locator(".vg-band-clean")).toBeVisible();
+  await expect(page.locator(".vg-score-num").first()).toContainText("87%");
+});
+
+test("insights view shows word bars and topics", async ({ page }) => {
+  await page.goto("/app#/plugins/insights");
+  await expect(page.getByRole("heading", { name: "Insights" })).toBeVisible();
+  await expect(page.locator(".wf-row", { hasText: "stream" })).toBeVisible();
+  await expect(page.locator(".pg-chip", { hasText: "elden ring" })).toBeVisible();
+  await expect(page.locator("#ins-stopwords")).toBeVisible();
+});
+
+test("recordings: clear-errored button appears + per-row Play/Info/Delete actions", async ({ page }) => {
+  await page.goto("/app#/recordings");
+  await expect(page.locator(".recordings-table")).toBeVisible();
+  // Mock has one Failed row (Charlie) → toolbar button visible with count.
+  const clearBtn = page.locator("#rec-clear-errored");
+  await expect(clearBtn).toBeVisible();
+  await expect(clearBtn).toContainText("Clear errored");
+  await expect(clearBtn).toContainText("(1)");
+  // Finished row exposes a Play button; errored row doesn't.
+  const finishedRow = page.locator("tr[data-rec-row]", { hasText: "Zebra stream" });
+  await expect(finishedRow.locator("[data-action=rec-play]")).toBeVisible();
+  const erroredRow = page.locator("tr[data-rec-row]", { hasText: "Mango stream" });
+  await expect(erroredRow.locator("[data-action=rec-play]")).toHaveCount(0);
+  // Every non-active row carries Info + Delete.
+  await expect(finishedRow.locator("[data-action=rec-info]")).toBeVisible();
+  await expect(finishedRow.locator("[data-action=rec-delete]")).toBeVisible();
+});
+
+test("recordings: ⓘ Info opens modal with stats + plugin actions; Esc closes", async ({ page }) => {
+  await page.goto("/app#/recordings");
+  const row = page.locator("tr[data-rec-row]", { hasText: "Zebra stream" });
+  await row.locator("[data-action=rec-info]").click();
+  const modal = page.locator("#rec-info-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".rec-info-body .rec-info-stats")).toBeVisible();
+  await expect(modal).toContainText("Channel");
+  await expect(modal).toContainText("Started");
+  // Plugin actions area is present (verbs may or may not render given mock — at minimum the section + heading.)
+  await expect(modal.locator(".rec-info-actions h3")).toContainText("Plugin actions");
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+});
+
+test("recordings: ▶ Play opens the in-app player with controls", async ({ page }) => {
+  await page.goto("/app#/recordings");
+  const row = page.locator("tr[data-rec-row]", { hasText: "Zebra stream" });
+  await row.locator("[data-action=rec-play]").click();
+  const modal = page.locator("#rec-player-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator("video")).toBeVisible();
+  await expect(modal.locator("#rec-pc-play")).toBeVisible();
+  await expect(modal.locator("#rec-pc-seek")).toBeVisible();
+  await expect(modal.locator("#rec-pc-speed-sel")).toBeVisible();
+  await expect(modal.locator("#rec-pc-fs")).toBeVisible();
+  await expect(modal.locator("#rec-pc-help")).toBeVisible();
+  // Keyboard help opens via "?".
+  await page.keyboard.press("?");
+  await expect(modal.locator("#rec-player-help")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+});
+
+test("last-live label uses Xh/Xd precision and renders for YouTube too", async ({ page }) => {
+  await page.goto("/app#/library");
+  await expect(page.locator("#channel-list")).toBeVisible();
+
+  // Twitch row, seeded ~5h ago → "Xh ago".
+  const twitch = page.locator(".ch-row", { hasText: "Offline Channel" }).first();
+  await expect(twitch.locator(".ch-lastlive")).toHaveText(/^\d+h ago$/);
+
+  // YouTube row, seeded ~3d ago → "Xd ago". This is the case that used to
+  // collapse to "today" / never-rendered for YouTube.
+  const yt = page.locator(".ch-row", { hasText: "YouTube Past Stream" });
+  await expect(yt.locator(".ch-lastlive")).toHaveText(/^\d+d ago$/);
 });

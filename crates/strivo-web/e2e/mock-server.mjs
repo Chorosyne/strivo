@@ -36,6 +36,23 @@ const CHANNELS = [
     started_at: null,
     thumbnail_url: null,
     auto_record: true,
+    // ~5 hours ago — exercises the "Xh ago" branch of relTime.
+    last_live_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+  },
+  {
+    id: "UCytoffline00000000aa",
+    platform: "YouTube",
+    name: "ytoffline",
+    display_name: "YouTube Past Stream",
+    is_live: false,
+    stream_title: null,
+    game_or_category: null,
+    viewer_count: null,
+    started_at: null,
+    thumbnail_url: null,
+    auto_record: false,
+    // ~3 days ago — exercises the "Xd ago" branch.
+    last_live_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
   },
 ];
 
@@ -183,6 +200,29 @@ const server = createServer(async (req, res) => {
         ],
       });
     if (p === "/recordings" && req.method === "GET") return json(res, 200, RECORDINGS);
+    {
+      const m = p.match(/^\/recordings\/([0-9a-fA-F-]{8,})$/);
+      if (m && req.method === "GET") {
+        const id = m[1];
+        const found = RECORDINGS.recordings.find((r) => r.id === id);
+        if (!found) {
+          res.writeHead(404);
+          res.end("not found");
+          return;
+        }
+        // Backfill the optional fields the info modal + player expect.
+        return json(res, 200, {
+          channel_id: "twitch:alpha",
+          platform: "Twitch",
+          transcode: false,
+          duration_secs: 3600,
+          output_path: `/mnt/sda2/strivo/${found.channel_name}/${id}.mkv`,
+          source_url: null,
+          error: found.state === "Failed" ? "synthetic error for tests" : null,
+          ...found,
+        });
+      }
+    }
     if (p === "/storage")
       return json(res, 200, {
         bytes_used_by_recordings: 6_200_000_000,
@@ -200,6 +240,113 @@ const server = createServer(async (req, res) => {
         poll_interval_secs: 60,
         schedule: [],
       });
+
+    // ── Plugin data surface (read-only) ──────────────────────────────
+    if (p === "/plugins")
+      return json(res, 200, {
+        plugins: [
+          { name: "crunchr", display: "Crunchr", description: "AI transcription, diarization & analysis", available: true, stats: { recordings: 2, analyzed: 1 }, verbs: [{ verb: "Re-transcribe", scope: "recording", label: "Re-transcribe" }] },
+          { name: "insights", display: "Insights", description: "Word frequency, speaker airtime, topics & sentiment", available: true, stats: { words: 42, topics_videos: 1 }, verbs: [] },
+          { name: "archiver", display: "Archiver", description: "Back-catalog VOD pulls & download tracking", available: true, stats: { channels: 1, videos: 2, downloaded: 1 }, verbs: [] },
+          { name: "viewguard", display: "Viewguard", description: "Viewbot fraud detection — verdicts & viewer signals", available: true, stats: { verdicts: 1, samples: 4 }, verbs: [] },
+        ],
+      });
+    if (p === "/plugins/crunchr/recordings")
+      return json(res, 200, {
+        available: true,
+        recordings: [
+          { recording_id: "rec-1", channel_name: "Alpha", title: "Elden Ring run", status: "complete", segment_count: 120, has_analysis: true, created_at: "2026-05-26 20:00:00" },
+          { recording_id: "rec-2", channel_name: "Bravo", title: "Just chatting", status: "transcribing", segment_count: 0, has_analysis: false, created_at: "2026-05-27 09:00:00" },
+        ],
+      });
+    {
+      const m = p.match(/^\/plugins\/crunchr\/recordings\/([^/]+)$/);
+      if (m)
+        return json(res, 200, {
+          recording_id: decodeURIComponent(m[1]),
+          channel_name: "Alpha",
+          title: "Elden Ring run",
+          status: "complete",
+          summary: "A long boss-fight session with commentary.",
+          topics: ["elden ring", "bosses"],
+          sentiment: "positive",
+          segments: [
+            { index: 0, start_sec: 0.0, end_sec: 3.5, text: "hey everyone welcome back", speaker: "Alpha", confidence: null },
+            { index: 1, start_sec: 3.5, end_sec: 7.0, text: "today we fight the boss", speaker: "Alpha", confidence: null },
+          ],
+        });
+    }
+    if (p === "/plugins/crunchr/search") {
+      const q = (url.searchParams.get("q") || "").trim();
+      if (!q) return json(res, 200, { results: [] });
+      return json(res, 200, {
+        available: true,
+        results: [
+          { chunk_id: 1, video_title: "Elden Ring run", channel_name: "Alpha", snippet: `…we fight the ${q}…`, start_sec: 3.5, end_sec: 7.0, score: 0.9 },
+        ],
+      });
+    }
+    if (p === "/plugins/archiver/channels")
+      return json(res, 200, {
+        available: true,
+        channels: [
+          { id: 1, name: "Alpha", url: "https://twitch.tv/alpha", platform: "Twitch", archive_dir: "/arc/alpha", last_scan: "2026-05-26 12:00:00", video_count: 2, downloaded_count: 1 },
+        ],
+      });
+    {
+      const m = p.match(/^\/plugins\/archiver\/channels\/([^/]+)\/videos$/);
+      if (m)
+        return json(res, 200, {
+          available: true,
+          videos: [
+            { video_id: "v2", title: "Stream Two", upload_date: "20260102", duration: 7200, playlist: null, downloaded: false },
+            { video_id: "v1", title: "Stream One", upload_date: "20260101", duration: 3600, playlist: null, downloaded: true },
+          ],
+        });
+    }
+    if (p === "/plugins/viewguard/verdicts")
+      return json(res, 200, {
+        available: true,
+        verdicts: [
+          { channel_id: "twitch:suspect", stream_started_at: "2026-05-27T10:00:00Z", stream_ended_at: null, final_score: 0.87, band: "fraudulent", contributors: [{ kind: "SpikeShape", score: 0.9 }, { kind: "PlateauVariance", score: 0.7 }] },
+          { channel_id: "twitch:clean", stream_started_at: "2026-05-27T08:00:00Z", stream_ended_at: null, final_score: 0.12, band: "clean", contributors: [] },
+        ],
+      });
+    {
+      const m = p.match(/^\/plugins\/viewguard\/channels\/([^/]+)\/samples$/);
+      if (m)
+        return json(res, 200, {
+          available: true,
+          samples: [
+            { ts: "2026-05-27T10:00:00Z", viewers: 100 },
+            { ts: "2026-05-27T10:01:00Z", viewers: 5000 },
+          ],
+        });
+    }
+    if (p === "/plugins/insights/words")
+      return json(res, 200, {
+        available: true,
+        words: [
+          { word: "stream", count: 40 },
+          { word: "recording", count: 25 },
+        ],
+      });
+    if (p === "/plugins/insights/topics")
+      return json(res, 200, {
+        available: true,
+        topics: [
+          { topic: "elden ring", count: 3, first_seen: "2026-05-20", last_seen: "2026-05-26" },
+        ],
+      });
+    {
+      const m = p.match(/^\/plugins\/insights\/recordings\/([^/]+)\/speakers$/);
+      if (m)
+        return json(res, 200, {
+          available: true,
+          speakers: [{ speaker: "Alpha", seconds: 1200, segments: 80 }],
+          sentiment: "positive",
+        });
+    }
 
     // Channel VODs request → answer asynchronously over SSE, like the daemon.
     const vodsMatch = p.match(/^\/channels\/([^/]+)\/vods$/);
