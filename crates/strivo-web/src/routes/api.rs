@@ -255,6 +255,81 @@ async fn recording_probe(
     .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct ScheduleAddPayload {
+    channel: String,
+    cron: String,
+    #[serde(default)]
+    duration: String,
+}
+
+/// `POST /api/v1/schedule` — append a new entry to config.schedule.
+async fn schedule_add(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<ScheduleAddPayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    if body.channel.trim().is_empty() || body.cron.trim().is_empty() {
+        return crate::problem::Problem::bad_request("channel and cron required").into_response();
+    }
+    // Validate the cron expression now so a typo doesn't show up at
+    // the next firing minute as a silent no-op.
+    let cron_expr = if body.cron.split_whitespace().count() == 5 {
+        format!("0 {}", body.cron)
+    } else {
+        body.cron.clone()
+    };
+    if <cron::Schedule as std::str::FromStr>::from_str(&cron_expr).is_err() {
+        return crate::problem::Problem::bad_request("invalid cron expression").into_response();
+    }
+    let mut cfg = match strivo_core::config::AppConfig::load(None) {
+        Ok(c) => c,
+        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+    };
+    cfg.schedule.push(strivo_core::config::ScheduleEntry {
+        channel: body.channel.trim().to_string(),
+        cron: body.cron.trim().to_string(),
+        duration: if body.duration.trim().is_empty() {
+            "4h".to_string()
+        } else {
+            body.duration.trim().to_string()
+        },
+    });
+    let path = cfg.config_path.clone();
+    if let Err(e) = cfg.save(path.as_deref()) {
+        return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+    }
+    (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response()
+}
+
+/// `DELETE /api/v1/schedule/<index>` — drop one entry by zero-based
+/// index. The schedule isn't named so indices are the natural key.
+async fn schedule_delete(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(index): Path<usize>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let mut cfg = match strivo_core::config::AppConfig::load(None) {
+        Ok(c) => c,
+        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+    };
+    if index >= cfg.schedule.len() {
+        return crate::problem::Problem::not_found("no such schedule entry").into_response();
+    }
+    cfg.schedule.remove(index);
+    let path = cfg.config_path.clone();
+    if let Err(e) = cfg.save(path.as_deref()) {
+        return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+    }
+    Json(json!({ "ok": true })).into_response()
+}
+
 async fn schedule(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
@@ -1776,7 +1851,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/recordings/stop_all", post(stop_all_recordings))
         .route("/api/v1/recordings/clear_errored", post(clear_errored_recordings))
         .route("/api/v1/recordings/{id}/file", axum::routing::delete(delete_recording_file))
-        .route("/api/v1/schedule", get(schedule))
+        .route("/api/v1/schedule", get(schedule).post(schedule_add))
+        .route("/api/v1/schedule/{index}", axum::routing::delete(schedule_delete))
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/poll_now", post(poll_now))
         .route("/api/v1/settings/poll_interval", post(set_poll_interval))

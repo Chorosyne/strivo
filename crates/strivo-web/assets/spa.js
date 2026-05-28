@@ -119,6 +119,9 @@ const API = {
       body: { platform },
     }),
   schedule: () => API._fetch("/schedule"),
+  scheduleAdd: (body) => API._fetch("/schedule", { method: "POST", body }),
+  scheduleDelete: (index) =>
+    API._fetch(`/schedule/${encodeURIComponent(index)}`, { method: "DELETE" }),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -376,7 +379,10 @@ const ROUTES = [
 ];
 
 function currentRoute() {
-  const hash = window.location.hash.replace(/^#\/?/, "") || "library";
+  // Strip any query string ("#/recordings?channel=foo") so the route
+  // matcher only sees the path segment.
+  const raw = window.location.hash.replace(/^#\/?/, "").split("?")[0];
+  const hash = raw || "library";
   // Sub-routes (e.g. #/plugins/crunchr) highlight their base tab.
   const base = hash.split("/")[0];
   return ROUTES.includes(base) ? base : "library";
@@ -459,7 +465,9 @@ const TOPNAV = [
   ["library", "▣", "Home", "l", "/assets/icons/candy/home.svg"],
   ["recordings", "📁", "Recordings", "r", "/assets/icons/candy/recordings.svg"],
   ["schedule", "📅", "Schedule", "s", "/assets/icons/candy/schedule.svg"],
-  ["pipelines", "🔁", "Pipelines", "d", "/assets/icons/candy/pipelines.svg"],
+  // Pipelines stays in ROUTES (deep-linkable) but is dropped from the
+  // topnav until plugins actually submit DAGs over IPC — surfacing a
+  // permanently-empty tab is worse than no tab (audit U4).
   ["plugins", "🧩", "Plugins", "g", "/assets/icons/candy/plugins.svg"],
   ["settings", "⚙", "Settings", "c", "/assets/icons/candy/settings.svg"],
   ["system", "🛠", "System", "y", "/assets/icons/candy/system.svg"],
@@ -603,10 +611,17 @@ function paintChannelList() {
     const tier = isPatreon && c.stream_title
       ? `<span class="ch-tier" title="pledged tier">${escape(c.stream_title)}</span>`
       : "";
+    // Filter Recordings + History by this channel when clicked. Live
+    // channels link to the recording dashboard so you can spot the
+    // active capture quickly; offline rows go straight to the filtered
+    // Recordings page (audit B7/M2).
+    const href = c.is_live
+      ? "#/library"
+      : `#/recordings?channel=${encodeURIComponent(c.display_name || c.name || "")}`;
     return `
       <a class="ch-row ${c.is_live ? "live" : ""} ${isPatreon ? "patreon" : ""} ${sel}"
          data-channel-key="${key}" data-channel-id="${c.id}"
-         data-platform="${c.platform}" href="#/library">
+         data-platform="${c.platform}" href="${href}">
         <span class="ch-plat ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
         <span class="ch-name">${escape(c.display_name || c.name)}</span>
         ${tier}${viewers}${liveDot}${rec}
@@ -1690,6 +1705,17 @@ async function toggleAutoRecord(d) {
 
 // ── Recordings table ─────────────────────────────────────────────────
 async function renderRecordings() {
+  // Allow sidebar links / external bookmarks to seed the search box
+  // via #/recordings?channel=NAME (audit M2).
+  const hash = window.location.hash || "";
+  const qIdx = hash.indexOf("?");
+  if (qIdx !== -1) {
+    try {
+      const params = new URLSearchParams(hash.slice(qIdx + 1));
+      const ch = params.get("channel");
+      if (ch != null) recFilter = ch;
+    } catch (_) {}
+  }
   let recordings = [];
   try {
     const data = await API.recordings();
@@ -3940,16 +3966,76 @@ async function renderSchedule() {
     : "";
 
   const empty = !entries.length
-    ? '<div class="empty">No scheduled recordings. Add a schedule entry in config.toml.</div>'
+    ? '<div class="empty">No scheduled recordings yet. Add one below.</div>'
     : "";
+
+  const listHtml = entries
+    .map(
+      (e, i) => `
+    <div class="task-row">
+      <div class="task-info">
+        <span class="task-name">${escape(e.channel || "scheduled")}</span>
+        <span class="task-cadence"><code>${escape(e.cron || "")}</code>${e.duration ? ` · ${escape(e.duration)}` : ""}${e.next_fire ? ` · next: ${escape(new Date(e.next_fire).toLocaleString())}` : ""}</span>
+      </div>
+      <button class="sm sch-del" data-i="${i}" title="Delete this schedule entry">✕</button>
+    </div>`,
+    )
+    .join("");
 
   root.innerHTML = chrome(`
     <h1 class="page-title">Schedule</h1>
     <p class="page-subtitle">Upcoming scheduled recordings · ${dated.length} upcoming</p>
     ${empty}
+    <section class="cfg-card">
+      <h2 class="cfg-title">Add scheduled recording</h2>
+      <form id="sch-add" class="sch-form">
+        <label class="sch-field">
+          <span>Channel</span>
+          <input name="channel" type="text" placeholder="Platform:channel_id (e.g. Twitch:12345)" required />
+        </label>
+        <label class="sch-field">
+          <span>Cron <span class="stg-hint" title="5-field cron: minute hour day-of-month month day-of-week. Example: 0 9 * * 1-5 = 9am weekdays.">ⓘ</span></span>
+          <input name="cron" type="text" placeholder="0 9 * * 1-5" required />
+        </label>
+        <label class="sch-field">
+          <span>Duration</span>
+          <input name="duration" type="text" placeholder="4h" />
+        </label>
+        <button class="btn-primary" type="submit">Add</button>
+      </form>
+    </section>
     <div class="cfg-grid">${groupsHtml}${undatedHtml}</div>
+    ${entries.length ? `<section class="cfg-card"><h2 class="cfg-title">All schedule entries</h2>${listHtml}</section>` : ""}
   `);
   setupChromeHandlers();
+  document.getElementById("sch-add")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await API.scheduleAdd({
+        channel: fd.get("channel"),
+        cron: fd.get("cron"),
+        duration: fd.get("duration"),
+      });
+      Toast.success("Schedule entry added");
+      renderSchedule();
+    } catch (err) {
+      Toast.error(`Add failed: ${err.message}`);
+    }
+  });
+  document.querySelectorAll(".sch-del").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const i = parseInt(btn.dataset.i, 10);
+      if (!confirm("Delete this schedule entry?")) return;
+      try {
+        await API.scheduleDelete(i);
+        Toast.success("Schedule entry removed");
+        renderSchedule();
+      } catch (err) {
+        Toast.error(`Delete failed: ${err.message}`);
+      }
+    });
+  });
 }
 
 // ── Durable History (item 17) — completed/failed audit from the jobs DB,

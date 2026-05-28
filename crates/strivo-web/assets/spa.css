@@ -2241,6 +2241,27 @@ body.modal-open { overflow: hidden; }
   font-size: 0.78rem;
 }
 .sys-reauth:hover { text-decoration: underline; }
+.sch-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 0.8rem;
+  align-items: end;
+}
+.sch-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.sch-field > span { font-size: 0.8rem; color: var(--muted); }
+.sch-field > input {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+}
+.sch-field > input:focus { outline: 0; border-color: var(--accent2); }
+@media (max-width: 720px) {
+  .sch-form { grid-template-columns: 1fr; }
+}
 .rec-th-sortable { cursor: pointer; user-select: none; }
 .rec-th-sortable:hover { color: var(--text); }
 .rec-th-sort-hint { color: var(--muted); opacity: 0.45; font-size: 0.75em; }
