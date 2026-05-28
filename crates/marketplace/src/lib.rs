@@ -312,6 +312,28 @@ pub fn default_catalog() -> Catalog {
             },
             CatalogEntry {
                 manifest: PluginManifest {
+                    name: "loudness".into(),
+                    version: "0.1.0".into(),
+                    author: "Chorosyne".into(),
+                    license: Some("MIT".into()),
+                    description:
+                        "EBU R128 loudness normalisation — ffmpeg loudnorm two-pass parser with per-platform presets (YouTube/Spotify/Apple/Twitch/EBU)."
+                            .into(),
+                    capabilities: vec!["x.loudness".into()],
+                    consumes: vec!["recording".into()],
+                    entry_point: EntryPoint::Cdylib { path: "loudness.so".into() },
+                    min_host_version: "0.3.0".into(),
+                    price_cents: None,
+                    repository: Some("https://github.com/Chorosyne/loudness".into()),
+                    icon: None,
+                    screenshots: vec![],
+                    category: Some("Editor".into()),
+                },
+                source: "first_party".into(),
+                installed: true,
+            },
+            CatalogEntry {
+                manifest: PluginManifest {
                     name: "chat".into(),
                     version: "0.1.0".into(),
                     author: "Chorosyne".into(),

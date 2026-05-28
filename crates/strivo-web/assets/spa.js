@@ -226,6 +226,10 @@ const API = {
   chatRooms: () => API._fetch("/plugins/chat/rooms"),
   chatParseBatch: (lines) =>
     API._fetch("/plugins/chat/parse", { method: "POST", body: { lines: lines.join("\n") } }),
+  loudnessMeasure: (recordingId, platform) => {
+    const qs = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+    return API._fetch(`/plugins/loudness/${encodeURIComponent(recordingId)}${qs}`, { method: "POST" });
+  },
   multistreamTiles: (containerW, containerH, mode, host) => {
     const p = new URLSearchParams({ container_w: containerW, container_h: containerH, host });
     if (mode) p.set("mode", JSON.stringify(mode));
@@ -3527,6 +3531,7 @@ const PLUGIN_REGISTRY = [
   { name: "deadair",    label: "Dead-air trim", category: "Editor", proGated: true, description: "Silence detection + one-click EDL trim from inside the editor." },
   { name: "branding",   label: "Branding",      category: "Editor", proGated: true, description: "Watermark + intro/outro banner overlay spec, applied via ffmpeg filter_complex on render." },
   { name: "broll",      label: "B-roll finder", category: "Editor", proGated: true, description: "Suggest B-roll cuts from a tagged local library based on transcript topics." },
+  { name: "loudness",   label: "Loudness",      category: "Editor", proGated: true, description: "EBU R128 master-bus loudness check with per-platform presets (YouTube/Spotify/Apple/EBU/Twitch)." },
   // Asset / analytics / publishing.
   { name: "chapters",         label: "Chapters",         category: "Analytics", proGated: true, description: "Heuristic chapter markers extracted from pacing." },
   { name: "cuepoints",        label: "Cuepoints",        category: "Analytics", proGated: true, description: "Scene-change detection from ffmpeg's select filter." },
@@ -5138,10 +5143,12 @@ async function openRecordingInfo(jobId) {
             <button class="sm rec-ed-delete" type="button">Ripple-delete range…</button>
             <button class="sm rec-ed-deadair" type="button" title="Detect dead air (silencedetect) and trim spans longer than 6s">▢ Trim dead air…</button>
             <button class="sm rec-ed-branding" type="button" title="Watermark + intro/outro banner overlay applied at render">★ Branding…</button>
+            <button class="sm rec-ed-loudness" type="button" title="EBU R128 loudness check + per-platform normalisation target">♪ Loudness…</button>
             <button class="sm rec-ed-history" type="button" title="Revision history — revert across saves (DAW-style undo)">↺ History…</button>
             <button class="btn-primary rec-ed-render" type="button">⚡ Render to MKV</button>
           </div>
           <div class="rec-branding" hidden></div>
+          <div class="rec-loudness" hidden></div>
           <div class="rec-history" hidden></div>
           <div class="rec-ed-list">
             ${edl.cuts
@@ -5407,6 +5414,61 @@ async function openRecordingInfo(jobId) {
               }).catch((err) => Toast.error(`Save failed: ${err.message}`));
             });
           }).catch((err) => Toast.error(`Branding failed: ${err.message}`));
+        });
+        host.querySelector(".rec-ed-loudness")?.addEventListener("click", async (e2) => {
+          const lbtn = e2.currentTarget;
+          const panel = host.querySelector(".rec-loudness");
+          if (!panel) return;
+          panel.hidden = false;
+          panel.innerHTML = `
+            <h5>EBU R128 loudness</h5>
+            <div class="rec-loud-bar">
+              <label>
+                <span>Target platform</span>
+                <select class="rec-loud-platform">
+                  <option value="youtube">YouTube · -14 LUFS</option>
+                  <option value="spotify">Spotify · -14 LUFS / 7 LU</option>
+                  <option value="apple_music">Apple Music · -16 LUFS</option>
+                  <option value="ebu_r128">EBU R128 · -23 LUFS</option>
+                  <option value="twitch">Twitch · -14 LUFS</option>
+                </select>
+              </label>
+              <button class="btn-primary sm rec-loud-measure">▶ Measure now</button>
+            </div>
+            <div class="rec-loud-result"></div>
+          `;
+          panel.querySelector(".rec-loud-measure").addEventListener("click", async (ev) => {
+            const mb = ev.currentTarget;
+            const platform = panel.querySelector(".rec-loud-platform").value;
+            const out = panel.querySelector(".rec-loud-result");
+            out.innerHTML = `<div class="empty sm">Running ffmpeg pass-1 — this can take a minute on long captures…</div>`;
+            await withBusy(mb, "Measuring…", async () => {
+              try {
+                const r = await API.loudnessMeasure(jobId, platform);
+                const m = r.measurement;
+                const d = r.delta;
+                const dRow = (label, value, target, delta, unit) => `
+                  <div class="rec-loud-row">
+                    <span class="rec-loud-label">${escape(label)}</span>
+                    <span class="rec-loud-meas">${value.toFixed(2)} ${unit}</span>
+                    <span class="rec-loud-target">target ${target.toFixed(2)} ${unit}</span>
+                    <span class="rec-loud-delta ${delta >= 0 ? "over" : "under"}">${delta >= 0 ? "+" : ""}${delta.toFixed(2)} ${unit}</span>
+                  </div>`;
+                out.innerHTML = `
+                  <p class="pg-cap-hint">Pass-1 measurement complete. Toggle 'Apply normalisation' on the next render to bake the pass-2 filter into the EDL output.</p>
+                  ${dRow("Integrated (I)",       m.input_i,    r.target.i,   d.i_delta,   "LUFS")}
+                  ${dRow("True peak (TP)",      m.input_tp,   r.target.tp,  d.tp_delta,  "dBTP")}
+                  ${dRow("Loudness range (LRA)", m.input_lra,  r.target.lra, d.lra_delta, "LU")}
+                  <details class="rec-loud-filter">
+                    <summary>Pass-2 ffmpeg filter</summary>
+                    <pre>${escape(r.pass2_filter)}</pre>
+                  </details>`;
+                Toast.success(`Measured · I=${m.input_i.toFixed(2)} LUFS (Δ ${d.i_delta >= 0 ? "+" : ""}${d.i_delta.toFixed(2)})`);
+              } catch (err) {
+                out.innerHTML = `<div class="empty sm">⚠ ${escape(err.message)}</div>`;
+              }
+            });
+          });
         });
         host.querySelector(".rec-ed-history")?.addEventListener("click", async (e2) => {
           const hbtn = e2.currentTarget;

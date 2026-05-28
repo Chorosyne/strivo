@@ -1950,6 +1950,77 @@ async fn multistream_tiles(
     .into_response()
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct LoudnessQuery {
+    /// Platform preset name (youtube, spotify, apple_music, ebu_r128,
+    /// twitch). Used both to seed the target and to label the response.
+    #[serde(default)]
+    platform: Option<String>,
+}
+
+fn loudness_platform(s: Option<&str>) -> strivo_loudness::Platform {
+    match s.unwrap_or("youtube") {
+        "spotify" => strivo_loudness::Platform::Spotify,
+        "apple_music" | "apple-music" => strivo_loudness::Platform::AppleMusic,
+        "ebu_r128" | "ebu-r128" | "ebu" => strivo_loudness::Platform::EbuR128,
+        "twitch" => strivo_loudness::Platform::Twitch,
+        _ => strivo_loudness::Platform::YouTube,
+    }
+}
+
+/// `POST /api/v1/plugins/loudness/<recording_id>?platform=…` — run the
+/// ffmpeg loudnorm pass-1 measurement against the recording and return
+/// the parsed statistics + signed delta from the chosen platform target.
+/// The Editor's Loudness panel renders the delta as a colour-coded gauge
+/// so users see at a glance whether the source needs gain.
+async fn loudness_measure(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<LoudnessQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("loudness") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    if !input.exists() {
+        return Problem::not_found("recording file missing").into_response();
+    }
+    let plat = loudness_platform(q.platform.as_deref());
+    let target = strivo_loudness::preset_for(plat);
+    let filter = strivo_loudness::pass1_filter(target);
+    let output = match tokio::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-i"])
+        .arg(&input)
+        .args(["-af", &filter, "-vn", "-sn", "-f", "null", "-"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return Problem::internal(format!("spawn ffmpeg: {e}")).into_response(),
+    };
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let pass1 = match strivo_loudness::parse_pass1(&stderr) {
+        Some(p) => p,
+        None => return Problem::internal("loudnorm: pass-1 JSON not found in stderr").into_response(),
+    };
+    let delta = strivo_loudness::delta_from_target(target, &pass1);
+    let pass2 = strivo_loudness::pass2_filter(target, &pass1);
+    Json(json!({
+        "recording_id": recording_id,
+        "platform": q.platform.unwrap_or_else(|| "youtube".into()),
+        "target": target,
+        "measurement": pass1,
+        "delta": delta,
+        "pass2_filter": pass2,
+    }))
+    .into_response()
+}
+
 fn branding_path(recording_id: &str) -> std::path::PathBuf {
     // Per-recording JSON spec; tiny payload, no schema migration overhead.
     strivo_core::config::AppConfig::data_dir()
@@ -2760,4 +2831,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/multistream/tiles", get(multistream_tiles))
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
         .route("/api/v1/plugins/chat/parse", axum::routing::post(chat_parse))
+        .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
 }

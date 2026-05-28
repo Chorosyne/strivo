@@ -4026,6 +4026,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-loudness"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-marketplace"
 version = "0.3.0"
 dependencies = [
@@ -4155,6 +4163,7 @@ dependencies = [
  "strivo-editor",
  "strivo-heatmap",
  "strivo-insights-compare",
+ "strivo-loudness",
  "strivo-marketplace",
  "strivo-multistream",
  "strivo-multitrack",

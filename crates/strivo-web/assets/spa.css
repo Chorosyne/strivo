@@ -3998,3 +3998,42 @@ body.modal-open { overflow: hidden; }
   opacity: 0.7;
 }
 .page-hint-dismiss:hover { opacity: 1; }
+
+/* EDL editor — Loudness panel. Mirrors .rec-branding / .rec-history. */
+.rec-loudness {
+  margin-top: 0.7rem; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-light); border-radius: 6px;
+  background: var(--bg-soft, rgba(255,255,255,0.02));
+}
+.rec-loudness h5 { margin: 0 0 0.5rem; font-size: 0.95em; }
+.rec-loud-bar { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; }
+.rec-loud-bar label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85em; }
+.rec-loud-bar select {
+  padding: 0.35rem 0.55rem;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px; color: inherit;
+}
+.rec-loud-result { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.rec-loud-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-light); border-radius: 4px;
+  font-size: 0.82em;
+}
+.rec-loud-label { font-weight: 600; }
+.rec-loud-meas { font-family: monospace; }
+.rec-loud-target { opacity: 0.7; }
+.rec-loud-delta { font-family: monospace; font-weight: 700; text-align: right; }
+.rec-loud-delta.over  { color: #ef4444; }
+.rec-loud-delta.under { color: #4ec9b0; }
+.rec-loud-filter {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  background: rgba(0,0,0,0.25);
+  border-radius: 4px;
+  font-size: 0.78em;
+}
+.rec-loud-filter pre { margin: 0.3rem 0 0; white-space: pre-wrap; word-break: break-all; }
