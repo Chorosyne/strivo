@@ -816,6 +816,16 @@ button.sm {
   background: var(--secondary);
   color: var(--bg);
 }
+/* Terminal data-loss state — the journal says Finished but the recording's
+ * output_path is gone. Solid red (no pulse — pulse means in-flight) with a
+ * brighter inner border so it reads clearly distinct from Failed (amber). */
+.state-pill.file-error,
+.recordings-table .state-pill.file-error {
+  background: var(--recording);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  font-weight: 700;
+}
 
 /* Login screen */
 .login-screen {

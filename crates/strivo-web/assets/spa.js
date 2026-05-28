@@ -2053,6 +2053,12 @@ function recordingRow(r) {
 function recordingDisplayState(j) {
   const cls = stateClassName(j.state);
   const lbl = stateLabel(j.state);
+  // A row whose file is gone overrides every other state — the journal
+  // says "Finished" but the recording has no file behind it, so reading
+  // that as a green Finished pill misleads.
+  if (j && j.file_exists === false) {
+    return { label: "File Error", className: "file-error" };
+  }
   if (j && j.source_url && cls === "recording") {
     return { label: "Downloading", className: "downloading" };
   }
