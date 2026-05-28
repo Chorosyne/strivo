@@ -6618,6 +6618,9 @@ async function paintBackups() {
 let logsLevel = "info";
 let logsQuery = "";
 let logsSourceFilter = ""; // crate/module substring; "" = all sources
+let logsFollow = localStorage.getItem("strivo-logs-follow") === "1";
+let logsRegex = localStorage.getItem("strivo-logs-regex") === "1";
+let logsFollowTimer = null;
 
 // A "log entry" is a starting line (parsable timestamp + level) plus any
 // following indented/JSON-blob continuation lines. We collapse those
@@ -6649,14 +6652,26 @@ async function renderLogs() {
   const options = levels
     .map((l) => `<option value="${l}"${l === logsLevel ? " selected" : ""}>${l.toUpperCase()}</option>`)
     .join("");
+  // Stop any prior tail-follow timer before mounting the page (route
+  // navigation, theme change, hot reload, etc.).
+  if (logsFollowTimer) { clearInterval(logsFollowTimer); logsFollowTimer = null; }
   root.innerHTML = chrome(`
     <h1 class="page-title">Logs</h1>
     <div class="logs-toolbar">
       <label>Min level <select id="logs-level">${options}</select></label>
       <input id="logs-search" class="logs-search" type="search"
-             placeholder="Search log text…" value="${escape(logsQuery)}" />
+             placeholder="${logsRegex ? "Regex (case-insensitive)…" : "Search log text…"}"
+             value="${escape(logsQuery)}" />
+      <label class="logs-toggle" title="Search as case-insensitive regex">
+        <input type="checkbox" id="logs-regex" ${logsRegex ? "checked" : ""}/> regex
+      </label>
+      <label class="logs-toggle" title="Auto-refresh every 4s and pin scroll to bottom">
+        <input type="checkbox" id="logs-follow" ${logsFollow ? "checked" : ""}/> follow
+      </label>
       <span id="logs-sources" class="logs-sources"></span>
-      <button id="logs-refresh" class="sm" title="Reload">↻ Refresh</button>
+      <button id="logs-refresh" class="sm" title="Reload now">↻ Refresh</button>
+      <button id="logs-copy" class="sm" title="Copy filtered log lines to clipboard">⧉ Copy</button>
+      <button id="logs-download" class="sm" title="Save filtered log lines as a .log file">⬇ Download</button>
       <span id="logs-file" class="logs-file"></span>
     </div>
     <div id="logs-output" class="logs-output" aria-live="polite">Loading…</div>
@@ -6689,14 +6704,25 @@ async function renderLogs() {
           });
         });
       }
-      const q = logsQuery.trim().toLowerCase();
+      const q = logsQuery.trim();
+      // Regex compile once per load. Invalid pattern → tooltip via input
+      // border colour + skip the filter (don't silently exclude
+      // everything when the user mistypes).
+      let pattern = null;
+      let patternBad = false;
+      if (q && logsRegex) {
+        try { pattern = new RegExp(q, "i"); }
+        catch (_) { patternBad = true; }
+      }
+      const searchInput = document.getElementById("logs-search");
+      if (searchInput) searchInput.classList.toggle("logs-search-bad", patternBad);
+      const qLower = q.toLowerCase();
       const filtered = allEntries.filter((e) => {
         if (logsSourceFilter && !e.head.includes(logsSourceFilter)) return false;
-        if (q) {
-          const hay = e.head.toLowerCase() + " " + e.tail.join(" ").toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
+        if (!q || patternBad) return true;
+        const hay = e.head + "\n" + e.tail.join("\n");
+        if (pattern) return pattern.test(hay);
+        return hay.toLowerCase().includes(qLower);
       });
       out.innerHTML = filtered.length
         ? filtered
@@ -6709,7 +6735,17 @@ async function renderLogs() {
             .join("")
         : "<div class='empty sm'>No log lines match the current filters.</div>";
       if (fileEl) fileEl.textContent = r.file ? `· ${r.file} · ${filtered.length}/${allEntries.length} entries` : "";
-      out.scrollTop = out.scrollHeight;
+      // Pin scroll to bottom in follow mode UNLESS the user has
+      // intentionally scrolled up (we treat "within 80px of bottom"
+      // as still-following so the auto-pin doesn't fight a fast scroll
+      // recovery).
+      const userPaused = out.scrollHeight - out.scrollTop - out.clientHeight > 80;
+      if (!logsFollow || !userPaused) out.scrollTop = out.scrollHeight;
+      // Stash for Copy/Download handlers.
+      logsLastFilteredText = filtered
+        .map((e) => e.tail.length ? `${e.head}\n${e.tail.join("\n")}` : e.head)
+        .join("\n");
+      logsLastFile = r.file || "strivo.log";
     } catch (e) {
       out.textContent = `Failed to load logs: ${e.message}`;
     }
@@ -6722,9 +6758,56 @@ async function renderLogs() {
     logsQuery = e.target.value;
     load();
   });
+  document.getElementById("logs-regex")?.addEventListener("change", (e) => {
+    logsRegex = e.target.checked;
+    localStorage.setItem("strivo-logs-regex", logsRegex ? "1" : "0");
+    // Re-render so the placeholder copy updates; load() also re-runs to
+    // apply the new pattern interpretation against the cached entries.
+    renderLogs().catch(() => {});
+  });
+  document.getElementById("logs-follow")?.addEventListener("change", (e) => {
+    logsFollow = e.target.checked;
+    localStorage.setItem("strivo-logs-follow", logsFollow ? "1" : "0");
+    if (logsFollow) {
+      if (logsFollowTimer) clearInterval(logsFollowTimer);
+      logsFollowTimer = setInterval(load, 4000);
+    } else if (logsFollowTimer) {
+      clearInterval(logsFollowTimer);
+      logsFollowTimer = null;
+    }
+  });
   document.getElementById("logs-refresh")?.addEventListener("click", load);
+  document.getElementById("logs-copy")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    try {
+      await navigator.clipboard.writeText(logsLastFilteredText || "");
+      Toast.success("Logs copied to clipboard");
+    } catch (err) {
+      Toast.error(`Copy failed: ${err.message}`);
+    }
+  });
+  document.getElementById("logs-download")?.addEventListener("click", () => {
+    const blob = new Blob([logsLastFilteredText || ""], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = logsLastFile || "strivo.log";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   await load();
+  // Auto-arm follow if it was previously enabled.
+  if (logsFollow) {
+    logsFollowTimer = setInterval(load, 4000);
+  }
 }
+
+// Cache the last-rendered filtered text so Copy/Download don't have to
+// re-walk the DOM. Updated inside renderLogs.load().
+let logsLastFilteredText = "";
+let logsLastFile = "strivo.log";
 
 // ── Upcoming agenda (item 18) — first-class calendar of known upcoming
 // recordings. Source = scheduled (cron) entries with their server-computed

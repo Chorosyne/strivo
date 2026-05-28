@@ -3895,3 +3895,16 @@ body.modal-open { overflow: hidden; }
 .watch-tile:-webkit-full-screen .watch-tile-iframe {
   width: 100vw; height: 100vh;
 }
+
+/* Logs toolbar — regex / follow checkboxes + invalid-regex hint. */
+.logs-toggle {
+  display: inline-flex; gap: 0.3rem; align-items: center;
+  font-size: 0.85em;
+  padding: 0 0.4rem;
+  opacity: 0.8;
+}
+.logs-toggle:hover { opacity: 1; }
+.logs-search.logs-search-bad {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.4) inset;
+}
