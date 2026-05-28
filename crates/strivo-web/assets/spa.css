@@ -1926,6 +1926,13 @@ body.modal-open { overflow: hidden; }
   vertical-align: middle;
 }
 .rec-actions .sm { padding: 0.25rem 0.55rem; font-size: 0.78rem; border-radius: var(--radius-sm); }
+/* Disabled Play placeholder keeps slot 1 occupied across every row state so
+ * the action column stays vertically aligned for in-flight / failed rows. */
+.rec-actions .rec-play-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 .recordings-table tr[data-rec-row] { cursor: pointer; }
 .recordings-table tr[data-rec-row]:hover td { background: rgba(255,255,255,0.03); }
 

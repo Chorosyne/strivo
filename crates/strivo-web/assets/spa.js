@@ -912,14 +912,25 @@ async function renderHome() {
   }
   // Refresh the channel + recordings caches that feed the left rail and
   // the dashboard. Both are cheap snapshots.
-  try {
-    const [ch, rec] = await Promise.all([API.channels(), API.recordings()]);
-    channelCache = ch.channels || [];
-    recCache = rec.recordings || [];
+  //
+  // Use Promise.allSettled so a transient failure on one side (e.g. the
+  // daemon socket bouncing) doesn't drop the OTHER side's data into the
+  // empty-rail state. Previously Promise.all rejected atomically and we
+  // caught at the outer try/catch, leaving both caches stale — visually
+  // that surfaced as "rail vanished" because the unauth check at the top
+  // already returned for genuine 401s.
+  const [chRes, recRes] = await Promise.allSettled([API.channels(), API.recordings()]);
+  if (chRes.status === "fulfilled") {
+    channelCache = chRes.value.channels || [];
+  } else if (chRes.reason && chRes.reason.message && chRes.reason.message.includes("unauthorized")) {
+    return;
+  }
+  if (recRes.status === "fulfilled") {
+    recCache = recRes.value.recordings || [];
     dashRecordings = recCache;
     seedVodDownloadStateFromRecCache();
-  } catch (e) {
-    if (e.message.includes("unauthorized")) return;
+  } else if (recRes.reason && recRes.reason.message && recRes.reason.message.includes("unauthorized")) {
+    return;
   }
   await seedPatreon();
   try {
@@ -2341,17 +2352,19 @@ function recordingRow(r) {
   // both are in-flight and offer Stop.
   const isActive = stateClass === "recording" || stateClass === "downloading";
   const isFinished = stateClass === "finished";
-  // Action set per state:
-  //   active   → Stop
-  //   finished → ▶ Play  ⓘ Info
-  //   anything → ⓘ Info  ✕ Delete
-  const actions = isActive
+  // Action set per state. Play sits in slot 1 across every row; when the
+  // recording isn't playable yet we render a disabled placeholder so the
+  // button columns stay vertically aligned (in-flight downloads + failed
+  // captures previously dropped slot 1 and the remaining buttons hopped
+  // left).
+  const playBtn = isFinished
+    ? `<button class="primary sm" data-action="rec-play" data-job-id="${r.id}" title="Open player (Enter)">▶ Play</button>`
+    : `<button class="primary sm rec-play-disabled" disabled aria-disabled="true" title="${isActive ? "Playable when capture finishes" : "Recording unavailable"}">▶ Play</button>`;
+  const tailBtns = isActive
     ? `<button class="danger sm" data-action="stop" data-job-id="${r.id}">Stop</button>`
-    : `${isFinished
-        ? `<button class="primary sm" data-action="rec-play" data-job-id="${r.id}" title="Open player (Enter)">▶ Play</button>`
-        : ""}
-       <button class="sm" data-action="rec-info" data-job-id="${r.id}" title="Recording details (I)">ⓘ Info</button>
+    : `<button class="sm" data-action="rec-info" data-job-id="${r.id}" title="Recording details (I)">ⓘ Info</button>
        <button class="danger sm" data-action="rec-delete" data-job-id="${r.id}" title="Delete (Del)">✕</button>`;
+  const actions = `${playBtn}${tailBtns}`;
   return `
     <tr class="${recSelected.has(r.id) ? "rec-sel" : ""}" data-rec-row="${escape(r.id)}">
       <td class="rec-check"><input type="checkbox" class="rec-row-check" data-job-id="${escape(r.id)}" ${recSelected.has(r.id) ? "checked" : ""} aria-label="Select recording"></td>
@@ -4580,6 +4593,9 @@ async function openRecordingInfo(jobId) {
 
 async function openRecordingPlayer(jobId, opts = {}) {
   closeRecordingModals();
+  // Defensive: if the keymap was left open from an earlier session it
+  // shouldn't obscure the player. Belt to the Shift+I binding above.
+  document.getElementById("kbd-help")?.classList.remove("open");
   const overlay = ensureModalContainer("rec-player-modal");
   overlay.innerHTML = `<div class="modal-card rec-player-card"><div class="empty sm">Loading…</div></div>`;
   document.body.classList.add("modal-open");
@@ -6162,6 +6178,19 @@ function lastLiveLong(iso) {
 let prefixActive = false;
 let prefixTimer = null;
 
+// Refetch caches when the tab regains focus and the rail looks emptied
+// out (e.g. after the daemon socket bounced while the tab was idle). This
+// is belt-and-braces alongside the Promise.allSettled fan-out above: the
+// SSE reconnect handles the live-update channel, but a one-shot fetch is
+// the cheapest way to reconcile a partial-fetch render that's already on
+// screen. Cheap — the route render itself is idempotent.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  if (channelCache.length === 0 || recCache.length === 0) {
+    render();
+  }
+});
+
 document.addEventListener("keydown", (e) => {
   // ⌘K / Ctrl+K — command palette. Handled before the input guard so it
   // works from anywhere, including while a field is focused. (W4-alt.)
@@ -6191,7 +6220,10 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
-  if (e.key === "?") {
+  // Keyboard help: Shift+I (capital I). The earlier `?` binding was
+  // collateral-fired by video-element native shortcuts inside the player
+  // modal, leaving the help stuck visible behind it.
+  if (e.shiftKey && (e.key === "I" || e.key === "i")) {
     e.preventDefault();
     document.getElementById("kbd-help")?.classList.add("open");
     return;
@@ -6334,11 +6366,17 @@ function injectKeyboardHelp() {
   div.className = "kbd-help";
   div.setAttribute("role", "dialog");
   div.setAttribute("aria-label", "Keyboard shortcuts");
+  // Click-outside dismiss. Without this the only escape route was Escape,
+  // and any video-element shortcut inside the player modal could pop it
+  // back open via the legacy `?` binding (now Shift+I).
+  div.addEventListener("click", (e) => {
+    if (e.target === div) div.classList.remove("open");
+  });
   div.innerHTML = `
     <div class="card">
       <h2>Keyboard shortcuts</h2>
       <dl>
-        <dt>?</dt><dd>This help</dd>
+        <dt>Shift+I</dt><dd>This help</dd>
         <dt>⌘K</dt><dd>Command palette</dd>
         <dt>/</dt><dd>Filter recordings</dd>
         <dt>g l</dt><dd>Library</dd>
