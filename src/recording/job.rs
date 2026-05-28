@@ -46,6 +46,12 @@ pub struct RecordingJob {
     /// to a local cache for the webui cover art (upstream URL can expire).
     #[serde(default)]
     pub thumbnail_url: Option<String>,
+    /// Source URL the recording was created from (VOD/past-broadcast URL on
+    /// `RecordingCommand::DownloadVod`, None for live captures). The webui
+    /// reads this to mark a "Past Broadcasts" pill as downloaded — definitive
+    /// correlation instead of FIFO-by-channel-name guesswork.
+    #[serde(default)]
+    pub source_url: Option<String>,
 }
 
 impl RecordingJob {
@@ -73,6 +79,7 @@ impl RecordingJob {
             watched: false,
             playlist: None,
             thumbnail_url: None,
+            source_url: None,
         }
     }
 
@@ -101,6 +108,7 @@ impl RecordingJob {
             watched: false,
             playlist: None,
             thumbnail_url: None,
+            source_url: None,
         }
     }
 

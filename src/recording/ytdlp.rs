@@ -9,6 +9,78 @@ use crate::config::ResolvedFormat;
 
 const STDERR_TAIL_LINES: usize = 40;
 
+/// Last-known yt-dlp download progress for VOD pulls. Populated by parsing
+/// `[download]  XX.X% of NNN at RR ETA TT` lines on stdout. All fields are
+/// optional because yt-dlp reports `Unknown` for rate + ETA early on.
+#[derive(Debug, Clone, Default)]
+pub struct DownloadProgress {
+    pub pct: Option<f32>,
+    pub eta_secs: Option<u32>,
+    pub rate_bps: Option<u64>,
+    pub bytes_total: Option<u64>,
+}
+
+/// Parse "1.23GiB" / "456.7MiB" / "789KiB" / "12B" → bytes. yt-dlp uses
+/// binary units (KiB/MiB/GiB/TiB).
+fn parse_size_bytes(tok: &str) -> Option<u64> {
+    let tok = tok.trim_start_matches('~');
+    let (num_part, unit) = tok
+        .find(|c: char| c.is_ascii_alphabetic())
+        .map(|i| tok.split_at(i))?;
+    let n = num_part.parse::<f64>().ok()?;
+    let mult: f64 = match unit {
+        "B" => 1.0,
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0_f64.powi(3),
+        "TiB" => 1024.0_f64.powi(4),
+        _ => return None,
+    };
+    Some((n * mult) as u64)
+}
+
+/// "5.50MiB/s" → bytes per second.
+fn parse_rate_bps(tok: &str) -> Option<u64> {
+    parse_size_bytes(tok.strip_suffix("/s")?)
+}
+
+/// "00:42" → 42, "01:23:45" → 5025.
+fn parse_eta_secs(tok: &str) -> Option<u32> {
+    let parts: Vec<u32> = tok.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    Some(match parts.as_slice() {
+        [s] => *s,
+        [m, s] => m * 60 + s,
+        [h, m, s] => h * 3600 + m * 60 + s,
+        _ => return None,
+    })
+}
+
+/// Parse one yt-dlp stdout line. Returns Some when it's a recognisable
+/// `[download]` progress line — `Unknown` rate/ETA become `None` rather than
+/// failing the parse, because they're the steady-state at the very start.
+pub(crate) fn parse_download_line(line: &str) -> Option<DownloadProgress> {
+    let body = line.trim_start().strip_prefix("[download]")?.trim_start();
+    let mut toks = body.split_whitespace();
+    let pct = toks.next()?.strip_suffix('%')?.parse::<f32>().ok()?;
+    if toks.next()? != "of" { return None; }
+    let size_tok = toks.next()?;
+    let bytes_total = parse_size_bytes(size_tok);
+    if toks.next()? != "at" { return None; }
+    // Rate is either "<num><unit>/s" or "Unknown B/s".
+    let rate_tok = toks.next()?;
+    let rate_bps = if rate_tok == "Unknown" {
+        // Consume "B/s" so the ETA tokens line up.
+        let _ = toks.next();
+        None
+    } else {
+        parse_rate_bps(rate_tok)
+    };
+    if toks.next()? != "ETA" { return None; }
+    let eta_tok = toks.next()?;
+    let eta_secs = if eta_tok == "Unknown" { None } else { parse_eta_secs(eta_tok) };
+    Some(DownloadProgress { pct: Some(pct), eta_secs, rate_bps, bytes_total })
+}
+
 /// YT-2 — resolve a YouTube `/live` channel URL to the underlying
 /// `/watch?v=<id>` URL of the active broadcast.
 ///
@@ -143,6 +215,10 @@ pub struct YtDlpProcess {
     child: Child,
     pub output_path: PathBuf,
     stderr_tail: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// Latest parsed `[download]` line. Updated continuously by the stdout
+    /// reader task spawned in `with_options`; read each poll tick by the
+    /// recording manager to feed `RecordingProgress` events.
+    progress: Arc<Mutex<DownloadProgress>>,
 }
 
 impl YtDlpProcess {
@@ -220,8 +296,17 @@ impl YtDlpProcess {
         cmd.arg(url);
 
         cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::null());
+        // Capture stdout so the `[download]` progress lines can be parsed
+        // (was Stdio::null() — file-size polling is fine for live captures
+        // but VOD pulls have a known total + ETA that the webui surfaces).
+        cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // Default yt-dlp progress is a carriage-return-overwritten single
+        // line; `--newline` turns each tick into its own line so the BufReader
+        // sees it.
+        cmd.arg("--newline");
+        // Throttle progress emission so we don't drown the channel.
+        cmd.args(["--progress-delta", "0.5"]);
 
         let mut child = cmd.spawn()?;
 
@@ -242,7 +327,22 @@ impl YtDlpProcess {
             });
         }
 
-        Ok(Self { child, output_path, stderr_tail })
+        let progress = Arc::new(Mutex::new(DownloadProgress::default()));
+        if let Some(stdout) = child.stdout.take() {
+            let progress = progress.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    if let Some(p) = parse_download_line(&line) {
+                        if let Ok(mut g) = progress.lock() {
+                            *g = p;
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(Self { child, output_path, stderr_tail, progress })
     }
 
     /// Gracefully stop by sending SIGINT, then wait
@@ -284,6 +384,12 @@ impl YtDlpProcess {
         std::fs::metadata(&self.output_path)
             .map(|m| m.len())
             .unwrap_or(0)
+    }
+
+    /// Snapshot the latest `[download]` line yt-dlp emitted. Returns
+    /// `DownloadProgress::default()` (all-None) until the first tick.
+    pub fn progress(&self) -> DownloadProgress {
+        self.progress.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub fn stderr_tail(&self) -> String {
@@ -365,5 +471,38 @@ mod tests {
         // don't accidentally clobber a real human-readable name.
         assert!(!looks_like_uc_id("xqc"));
         assert!(!looks_like_uc_id("LinusTechTips_official"));
+    }
+
+    #[test]
+    fn parse_download_steady_state() {
+        let p = parse_download_line("[download]  45.2% of 1.23GiB at 5.50MiB/s ETA 00:42").unwrap();
+        assert!((p.pct.unwrap() - 45.2).abs() < 0.01);
+        assert_eq!(p.eta_secs, Some(42));
+        assert!(p.rate_bps.unwrap() > 5_700_000 && p.rate_bps.unwrap() < 5_800_000);
+        assert!(p.bytes_total.unwrap() > 1_300_000_000);
+    }
+
+    #[test]
+    fn parse_download_early_unknowns() {
+        // First ticks before yt-dlp has a rate/ETA estimate.
+        let p = parse_download_line("[download]   0.0% of ~1.23GiB at Unknown B/s ETA Unknown").unwrap();
+        assert_eq!(p.pct, Some(0.0));
+        assert_eq!(p.eta_secs, None);
+        assert_eq!(p.rate_bps, None);
+        assert!(p.bytes_total.unwrap() > 0);
+    }
+
+    #[test]
+    fn parse_download_long_eta() {
+        let p = parse_download_line("[download]  3.1% of 4.20GiB at 1.10MiB/s ETA 01:23:45").unwrap();
+        assert_eq!(p.eta_secs, Some(5025));
+    }
+
+    #[test]
+    fn parse_download_non_progress_lines_ignored() {
+        assert!(parse_download_line("[info] foo").is_none());
+        assert!(parse_download_line("ERROR: nope").is_none());
+        // Completion line uses "in" instead of "ETA" — out of scope, ignored.
+        assert!(parse_download_line("[download] 100% of 1.23GiB in 04:23").is_none());
     }
 }

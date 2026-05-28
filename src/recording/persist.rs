@@ -431,6 +431,55 @@ impl PersistDb {
         Ok(())
     }
 
+    /// Hard-delete a Recording row from the journal. The recording manager
+    /// handles trashing the file separately; this just drops the audit row
+    /// after that succeeds (or after the file is already gone).
+    pub async fn delete_recording_job(&self, job_id: uuid::Uuid) -> Result<u64> {
+        let conn = self.inner.lock().await;
+        let n = conn.execute(
+            "DELETE FROM jobs WHERE kind='Recording' AND id=?1",
+            params![job_id.to_string()],
+        )?;
+        Ok(n as u64)
+    }
+
+    /// Every Recording journal row whose state is errored (`failed` or
+    /// `interrupted`). Used by the webui's "Clear errored" toolbar action.
+    pub async fn load_errored_recording_jobs(
+        &self,
+    ) -> Result<Vec<crate::recording::job::RecordingJob>> {
+        let conn = self.inner.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT payload, state, last_error FROM jobs
+             WHERE kind = 'Recording' AND state IN ('failed', 'interrupted')
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (payload, state, err) = r?;
+            let Ok(mut job) =
+                serde_json::from_str::<crate::recording::job::RecordingJob>(&payload)
+            else {
+                continue;
+            };
+            if let Some(mapped) = map_journal_state(&state) {
+                job.state = mapped;
+            }
+            if job.error.is_none() {
+                job.error = err;
+            }
+            out.push(job);
+        }
+        Ok(out)
+    }
+
     /// Mark any job in "running" or "queued" state as "interrupted". Called once
     /// at daemon startup so a crashed run leaves a clear audit trail and doesn't
     /// look like work is still in flight. Returns how many rows were updated.

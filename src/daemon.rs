@@ -92,6 +92,7 @@ impl DaemonState {
                 job_id,
                 bytes_written,
                 duration_secs,
+                ..
             } => {
                 if let Some(job) = self.recordings.get_mut(job_id) {
                     job.bytes_written = *bytes_written;
@@ -109,6 +110,11 @@ impl DaemonState {
                     job.error = error.clone();
                 }
                 self.evict_old_terminal();
+            }
+            DaemonEvent::RecordingsPruned { job_ids } => {
+                for id in job_ids {
+                    self.recordings.remove(id);
+                }
             }
             DaemonEvent::DeviceCodeRequired {
                 kind,
@@ -642,6 +648,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                         let client_registry = registry.clone();
                         let client_recordings = state.recordings.clone();
                         let client_event_tx = event_tx.clone();
+                        let client_persist_db = persist_db.clone();
                         tokio::spawn(async move {
                             // Held for the connection's lifetime; released on drop.
                             let _permit = permit;
@@ -657,6 +664,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                                 client_event_tx,
                                 poll_notify,
                                 interval_ctl,
+                                client_persist_db,
                                 cancel_ref,
                             ).await {
                                 tracing::debug!("Client disconnected: {e}");
@@ -744,6 +752,7 @@ async fn handle_client(
     event_tx: mpsc::UnboundedSender<AppEvent>,
     poll_notify: Option<Arc<tokio::sync::Notify>>,
     interval_ctl: Option<(Arc<std::sync::atomic::AtomicU64>, Arc<tokio::sync::Notify>)>,
+    persist_db: Option<Arc<crate::recording::persist::PersistDb>>,
     cancel: CancellationToken,
 ) -> Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
@@ -865,6 +874,149 @@ async fn handle_client(
                     cookies_path: config.patreon.as_ref().and_then(|p| p.cookies_path.clone()),
                     post_title: Some(post_title),
                 });
+            }
+            ClientMessage::DownloadVod {
+                url,
+                channel_name,
+                platform,
+                post_title,
+            } => {
+                let output_path = crate::recording::build_output_path(
+                    &config,
+                    &channel_name,
+                    platform,
+                    post_title.as_deref(),
+                );
+                // Cookies: YouTube/Patreon may need them for gated VODs;
+                // Twitch past broadcasts are usually public.
+                let cookies_path = match platform {
+                    crate::platform::PlatformKind::YouTube => config
+                        .youtube
+                        .as_ref()
+                        .and_then(|y| y.cookies_path.clone()),
+                    crate::platform::PlatformKind::Patreon => config
+                        .patreon
+                        .as_ref()
+                        .and_then(|p| p.cookies_path.clone()),
+                    _ => None,
+                };
+                let _ = recording_tx.send(RecordingCommand::DownloadVod {
+                    url,
+                    channel_name,
+                    platform,
+                    output_path,
+                    cookies_path,
+                    post_title,
+                });
+            }
+            ClientMessage::DeleteRecording { job_id } => {
+                let Some(db) = persist_db.as_ref() else {
+                    tracing::warn!("delete_recording {job_id}: persist db unavailable");
+                    continue;
+                };
+                // Look up the file path. Prefer the live snapshot (fast)
+                // and fall back to the journal so already-finished rows
+                // still resolve.
+                let path = recordings
+                    .get(&job_id)
+                    .map(|j| j.output_path.clone())
+                    .or_else(|| {
+                        tracing::debug!("delete_recording {job_id}: not in snapshot, querying db");
+                        None
+                    });
+                let path = if let Some(p) = path {
+                    Some(p)
+                } else {
+                    match db.load_recording_jobs().await {
+                        Ok(jobs) => jobs
+                            .into_iter()
+                            .find(|j| j.id == job_id)
+                            .map(|j| j.output_path),
+                        Err(e) => {
+                            tracing::warn!("delete_recording {job_id}: db lookup failed: {e}");
+                            None
+                        }
+                    }
+                };
+                if let Some(p) = path {
+                    if p.exists() {
+                        if let Err(e) = crate::recording::trash::move_to_trash(&p) {
+                            tracing::warn!("delete_recording {job_id}: trash {} failed: {e}", p.display());
+                        }
+                    }
+                }
+                let pruned = match db.delete_recording_job(job_id).await {
+                    Ok(n) => {
+                        tracing::info!("delete_recording {job_id}: dropped {n} row(s)");
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("delete_recording {job_id}: drop row failed: {e}");
+                        false
+                    }
+                };
+                // Emit the precise prune event so every subscriber (DaemonState
+                // snapshot, TUI app, webui SPA) drops this row from its own
+                // in-memory map. AllRecordingsStopped was the wrong wire signal
+                // — it doesn't prune anything, just triggers a stale refetch
+                // that still surfaces the deleted row from the daemon snapshot.
+                if pruned {
+                    let _ = event_tx.send(AppEvent::recordings_pruned(vec![job_id]));
+                }
+            }
+            ClientMessage::ClearErroredRecordings => {
+                let Some(db) = persist_db.as_ref() else {
+                    tracing::warn!("clear_errored: persist db unavailable");
+                    continue;
+                };
+                // Source of truth #1 — the persisted journal. Source of truth
+                // #2 — the live in-memory snapshot, in case the journal was
+                // truncated or a row was lost. We union them so a Failed entry
+                // that's only in memory still gets cleared from memory (and
+                // attempted from disk, where the delete is a no-op).
+                let mut to_prune: HashMap<Uuid, std::path::PathBuf> = HashMap::new();
+                match db.load_errored_recording_jobs().await {
+                    Ok(jobs) => {
+                        for j in jobs {
+                            to_prune.insert(j.id, j.output_path);
+                        }
+                    }
+                    Err(e) => tracing::warn!("clear_errored: db load failed: {e}"),
+                }
+                // `'interrupted'` in the journal maps to `RecordingState::Failed`
+                // in-memory (see `persist::map_journal_state`), so a single
+                // Failed check covers both errored buckets.
+                for (id, job) in &recordings {
+                    if matches!(job.state, crate::recording::job::RecordingState::Failed) {
+                        to_prune
+                            .entry(*id)
+                            .or_insert_with(|| job.output_path.clone());
+                    }
+                }
+                let mut pruned_ids = Vec::with_capacity(to_prune.len());
+                let mut dropped = 0u64;
+                for (id, path) in to_prune {
+                    if path.exists() {
+                        if let Err(e) = crate::recording::trash::move_to_trash(&path) {
+                            tracing::warn!(
+                                "clear_errored {id}: trash {} failed: {e}",
+                                path.display()
+                            );
+                        }
+                    }
+                    match db.delete_recording_job(id).await {
+                        Ok(n) => dropped += n,
+                        Err(e) => tracing::warn!("clear_errored {id}: drop row failed: {e}"),
+                    }
+                    pruned_ids.push(id);
+                }
+                tracing::info!(
+                    "clear_errored: pruned {pruned} (jobs.db dropped {dropped})",
+                    pruned = pruned_ids.len()
+                );
+                if !pruned_ids.is_empty() {
+                    let _ = event_tx.send(AppEvent::recordings_pruned(pruned_ids));
+                }
             }
             ClientMessage::ListPlaylists { channel_id } => {
                 if let Some(ref tx) = bulk_tx {

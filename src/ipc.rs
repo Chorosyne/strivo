@@ -60,6 +60,27 @@ pub enum ClientMessage {
         creator_name: String,
         post_title: String,
     },
+    /// Pull a single VOD / past broadcast on demand from the webui's
+    /// channel-detail pane. Wraps `RecordingCommand::DownloadVod` so the
+    /// daemon picks the platform-correct cookies path and builds the
+    /// output path from config (mirrors `PatreonPull`).
+    DownloadVod {
+        url: String,
+        channel_name: String,
+        platform: PlatformKind,
+        /// Display title for the slug; falls back to channel + date.
+        #[serde(default)]
+        post_title: Option<String>,
+    },
+    /// Hard-delete a finished or errored recording: move the file into the
+    /// 7-day trash and drop the jobs.db row. Active recordings are rejected;
+    /// the webui must Stop them first.
+    DeleteRecording {
+        job_id: Uuid,
+    },
+    /// Bulk-delete every recording whose state is `failed` or `interrupted`.
+    /// Same trash-then-drop semantics as `DeleteRecording`.
+    ClearErroredRecordings,
     /// Request a channel's recent VODs (live broadcasts + uploads) for the
     /// webui channel-detail pane. Answered asynchronously with
     /// DaemonEvent::ChannelVods.

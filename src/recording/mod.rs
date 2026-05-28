@@ -109,6 +109,15 @@ impl RecorderProcess {
         }
     }
 
+    /// Parsed yt-dlp `[download]` progress for VOD pulls. Ffmpeg-driven
+    /// live captures have no known total, so their progress is always None.
+    fn download_progress(&self) -> crate::recording::ytdlp::DownloadProgress {
+        match self {
+            Self::YtDlp(p) => p.progress(),
+            Self::Ffmpeg(_) => crate::recording::ytdlp::DownloadProgress::default(),
+        }
+    }
+
     fn stderr_tail(&self) -> String {
         match self {
             Self::Ffmpeg(p) => p.stderr_tail(),
@@ -139,6 +148,17 @@ pub async fn run_manager(
 ) {
     let mut active: HashMap<Uuid, ActiveRecording> = HashMap::new();
     let mut poll_interval = tokio::time::interval(std::time::Duration::from_secs(2));
+
+    // Channels whose Twitch rewind (record-from-start at broadcast t=0) is
+    // known sub-gated. Skipping the helix + GQL round-trip for these on every
+    // subsequent record turns a recurring WARN log into one INFO line per
+    // daemon lifetime. TTL is short enough that an unsub / un-gate naturally
+    // re-probes.
+    let rewind_forbidden: std::sync::Arc<
+        tokio::sync::Mutex<HashMap<String, std::time::Instant>>,
+    > = std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    const REWIND_FORBIDDEN_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
     // Channel for spawned resolve tasks to send back results
     // Second tuple slot = optional rename of the recording's output_path.
     // YT-5: the YouTube from-start spawn resolves the broadcast title in
@@ -330,8 +350,13 @@ pub async fn run_manager(
                             let twitch_handle = twitch.clone();
                             let twitch_live_from_start = config.recording.twitch_live_from_start;
                             let twitch_id = channel_id.clone();
+                            let rewind_cache = rewind_forbidden.clone();
                             tokio::spawn(async move {
-                                let rewind_url = if from_start
+                                // Twitch rewind eligibility: opt-in via config, only
+                                // when the user asked for from-start, and only when
+                                // we haven't recently confirmed this channel is
+                                // sub-gated.
+                                let mut rewind_url = if from_start
                                     && platform == PlatformKind::Twitch
                                     && twitch_live_from_start
                                 {
@@ -342,6 +367,20 @@ pub async fn run_manager(
                                 } else {
                                     None
                                 };
+                                if rewind_url.is_some() {
+                                    let mut g = rewind_cache.lock().await;
+                                    if let Some(at) = g.get(&twitch_id).copied() {
+                                        if at.elapsed() < REWIND_FORBIDDEN_TTL {
+                                            tracing::debug!(
+                                                channel = %channel_name,
+                                                "twitch rewind: skipping — channel cached as sub-gated"
+                                            );
+                                            rewind_url = None;
+                                        } else {
+                                            g.remove(&twitch_id);
+                                        }
+                                    }
+                                }
 
                                 let mut resolved_url: Option<String> = None;
                                 if let Some((tw, cid)) = rewind_url {
@@ -357,6 +396,20 @@ pub async fn run_manager(
                                                 "twitch rewind: pulling from broadcast t=0"
                                             );
                                             resolved_url = Some(s.master_url);
+                                        }
+                                        // Sub-gated is steady-state, not a failure:
+                                        // we can't rewind without a sub. Cache the
+                                        // verdict so subsequent records skip the
+                                        // round-trip silently.
+                                        Err(crate::stream::twitch_rewind::RewindError::Forbidden) => {
+                                            rewind_cache
+                                                .lock()
+                                                .await
+                                                .insert(cid.clone(), std::time::Instant::now());
+                                            tracing::info!(
+                                                channel = %channel_name,
+                                                "twitch rewind: channel is sub-gated; recording from live DVR window instead"
+                                            );
                                         }
                                         Err(e) => {
                                             tracing::warn!(
@@ -429,7 +482,7 @@ pub async fn run_manager(
                         let _ = event_tx.send(AppEvent::all_recordings_stopped());
                     }
                     RecordingCommand::DownloadVod { url, channel_name, platform, output_path, cookies_path, post_title } => {
-                        let job = RecordingJob::new(
+                        let mut job = RecordingJob::new(
                             String::new(),
                             channel_name,
                             platform,
@@ -437,6 +490,10 @@ pub async fn run_manager(
                             false,
                             post_title,
                         );
+                        // Stamp the source URL so the webui can mark the
+                        // matching VOD pill as Downloaded by exact match
+                        // (no FIFO-by-channel heuristic).
+                        job.source_url = Some(url.clone());
                         let job_id = job.id;
                         let _ = event_tx.send(AppEvent::recording_started(job.clone()));
 
@@ -514,8 +571,16 @@ pub async fn run_manager(
                         rec.job.bytes_written = proc.file_size();
                         rec.job.duration_secs = (chrono::Utc::now() - rec.job.started_at)
                             .num_seconds() as f64;
+                        let dp = proc.download_progress();
 
-                        let _ = event_tx.send(AppEvent::recording_progress(*id, rec.job.bytes_written, rec.job.duration_secs));
+                        let _ = event_tx.send(AppEvent::recording_progress(
+                            *id,
+                            rec.job.bytes_written,
+                            rec.job.duration_secs,
+                            dp.pct,
+                            dp.eta_secs,
+                            dp.rate_bps,
+                        ));
 
                         match proc.try_wait() {
                             Ok(Some(status)) => {

@@ -28,6 +28,16 @@ pub enum DaemonEvent {
         job_id: Uuid,
         bytes_written: u64,
         duration_secs: f64,
+        /// Download percent 0..100 reported by yt-dlp for VOD pulls. None for
+        /// live captures (no known total) and for ffmpeg-driven streams.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        download_pct: Option<f32>,
+        /// Seconds remaining per yt-dlp's last estimate, or None.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        download_eta_secs: Option<u32>,
+        /// Bytes-per-second transfer rate, or None.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        download_rate_bps: Option<u64>,
     },
     RecordingFinished {
         job_id: Uuid,
@@ -39,6 +49,13 @@ pub enum DaemonEvent {
         body: String,
     },
     AllRecordingsStopped,
+    /// Specific recording rows were removed from `jobs.db` (delete or clear-
+    /// errored from the webui). Each subscriber drops these from its own
+    /// in-memory recordings map. Distinct from `AllRecordingsStopped` (which
+    /// is about lifecycle stops, not deletions).
+    RecordingsPruned {
+        job_ids: Vec<Uuid>,
+    },
     DeviceCodeRequired {
         kind: PlatformKind,
         verification_uri: String,
@@ -189,12 +206,25 @@ impl AppEvent {
     pub fn recording_started(job: RecordingJob) -> Self {
         Self::Daemon(DaemonEvent::RecordingStarted { job })
     }
-    pub fn recording_progress(job_id: Uuid, bytes_written: u64, duration_secs: f64) -> Self {
+    pub fn recording_progress(
+        job_id: Uuid,
+        bytes_written: u64,
+        duration_secs: f64,
+        download_pct: Option<f32>,
+        download_eta_secs: Option<u32>,
+        download_rate_bps: Option<u64>,
+    ) -> Self {
         Self::Daemon(DaemonEvent::RecordingProgress {
             job_id,
             bytes_written,
             duration_secs,
+            download_pct,
+            download_eta_secs,
+            download_rate_bps,
         })
+    }
+    pub fn recordings_pruned(job_ids: Vec<Uuid>) -> Self {
+        Self::Daemon(DaemonEvent::RecordingsPruned { job_ids })
     }
     pub fn recording_finished(
         job_id: Uuid,
@@ -1588,6 +1618,7 @@ impl AppState {
                 job_id,
                 bytes_written,
                 duration_secs,
+                ..
             } => {
                 if let Some(job) = self.recordings.get_mut(&job_id) {
                     job.bytes_written = bytes_written;
@@ -1657,6 +1688,17 @@ impl AppState {
             }
             DaemonEvent::AllRecordingsStopped => {
                 self.should_quit = true;
+            }
+            DaemonEvent::RecordingsPruned { job_ids } => {
+                // Drop the rows the daemon just deleted from jobs.db so the
+                // TUI's in-memory map mirrors the snapshot the webui sees.
+                for id in &job_ids {
+                    self.recordings.remove(id);
+                    self.task_by_recording.remove(id);
+                }
+                self.rebuild_active_channels();
+                self.rebuild_sidebar_order();
+                self.reconcile_selected_recording();
             }
             DaemonEvent::DeviceCodeRequired {
                 kind,
