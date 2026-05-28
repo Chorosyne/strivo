@@ -172,6 +172,183 @@ async fn cuepoints_generate(
     .into_response()
 }
 
+/// Resolve the on-disk output path for a recording job from persist.
+/// Shared by the cuepoints/clipper handlers — both need it.
+async fn resolve_recording_path(recording_id: &str) -> Result<std::path::PathBuf, String> {
+    let id = uuid::Uuid::parse_str(recording_id).map_err(|_| "id must be uuid".to_string())?;
+    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
+    let path = match strivo_core::recording::persist::PersistDb::open(&jobs_db) {
+        Ok(db) => match db.load_recording_jobs().await {
+            Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    path.ok_or_else(|| "recording not found".to_string())
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ClipExtractPayload {
+    start_sec: f32,
+    duration_sec: Option<f32>,
+    /// Filename stem the user wants; sanitised server-side.
+    #[serde(default)]
+    stem: String,
+}
+
+/// `POST /api/v1/plugins/clipper/<recording_id>/analyze` — score
+/// highlight candidates for the recording. Reuses the cuepoint cache
+/// (iter 4) so the analyzer is cheap on a previously-analysed VOD.
+async fn clipper_analyze(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("clipper") { return r; }
+    // We need cuepoints to score. If they're not cached we extract
+    // them now — same path the standalone Cuepoints button uses.
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    if !input.exists() {
+        return Problem::not_found("recording file missing").into_response();
+    }
+    let threshold = strivo_cuepoints::DEFAULT_THRESHOLD;
+    let cp_store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("cuepoints")
+        .join("cuepoints.db");
+    let cp_store = match strivo_cuepoints::store::CuepointsStore::open(&cp_store_path) {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("open cuepoints cache: {e}")).into_response(),
+    };
+    let cuepoints = match cp_store.load(&recording_id, threshold) {
+        Ok(Some(c)) => c,
+        _ => match strivo_cuepoints::extract_cuepoints(&input, threshold) {
+            Ok(c) => {
+                let set = strivo_cuepoints::CuepointSet {
+                    recording_id: recording_id.clone(),
+                    threshold,
+                    points: c.clone(),
+                };
+                let _ = cp_store.save(&set);
+                c
+            }
+            Err(e) => return Problem::internal(format!("cuepoints: {e}")).into_response(),
+        },
+    };
+    let window = strivo_clipper::DEFAULT_WINDOW_SECS;
+    let highlights = strivo_clipper::score_highlights(&cuepoints, window, strivo_clipper::DEFAULT_TOP_K);
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    if let Ok(store) = strivo_clipper::store::ClipperStore::open(&store_path) {
+        let _ = store.save_highlights(&recording_id, window, &highlights);
+    }
+    Json(json!({
+        "recording_id": recording_id,
+        "window_secs": window,
+        "highlights": highlights,
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/clipper/<recording_id>/extract` — cut the
+/// requested clip (lossless ffmpeg `-c copy`) and return the result.
+async fn clipper_extract(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<ClipExtractPayload>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("clipper") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    if !input.exists() {
+        return Problem::not_found("recording file missing").into_response();
+    }
+    let dur = body.duration_sec.unwrap_or(strivo_clipper::DEFAULT_CLIP_DURATION_SECS);
+    let (start, duration) = strivo_clipper::clamp_request(body.start_sec, dur, None);
+    let extension = input.extension().and_then(|e| e.to_str()).unwrap_or("mkv");
+    let fallback_stem = format!("clip_{:.0}", start);
+    let safe_stem = sanitize_stem(if body.stem.is_empty() {
+        &fallback_stem
+    } else {
+        &body.stem
+    });
+    // Land under <recording_parent>/clips/<stem>.<ext>.
+    let clip_dir = input
+        .parent()
+        .map(|p| p.join("clips"))
+        .unwrap_or_else(|| std::path::PathBuf::from("./clips"));
+    let output = clip_dir.join(format!("{safe_stem}.{extension}"));
+    let bytes = match strivo_clipper::extract_clip(&input, &output, start, duration) {
+        Ok(n) => n,
+        Err(e) => return Problem::internal(format!("ffmpeg: {e}")).into_response(),
+    };
+    let result = strivo_clipper::ClipResult {
+        recording_id: recording_id.clone(),
+        clip_path: output.to_string_lossy().to_string(),
+        start_sec: start,
+        duration_sec: duration,
+        bytes,
+    };
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    if let Ok(store) = strivo_clipper::store::ClipperStore::open(&store_path) {
+        let _ = store.save_clip(&result);
+    }
+    Json(result).into_response()
+}
+
+/// `GET /api/v1/plugins/clipper/<recording_id>/clips` — list previously
+/// cut clips for a recording (powers the SPA "Cut clips" list).
+async fn clipper_list_clips(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("clipper") { return r; }
+    let store_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("clipper")
+        .join("clipper.db");
+    let store = match strivo_clipper::store::ClipperStore::open(&store_path) {
+        Ok(s) => s,
+        Err(_) => return Json(json!({ "clips": [] })).into_response(),
+    };
+    let clips = store.list_clips(&recording_id).unwrap_or_default();
+    Json(json!({ "clips": clips })).into_response()
+}
+
+fn sanitize_stem(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "clip".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -882,4 +1059,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/recordings/{id}/captions.vtt", get(recording_captions))
         .route("/api/v1/plugins/chapters/{id}", axum::routing::post(chapters_generate))
         .route("/api/v1/plugins/cuepoints/{id}", axum::routing::post(cuepoints_generate))
+        .route("/api/v1/plugins/clipper/{id}/analyze", axum::routing::post(clipper_analyze))
+        .route("/api/v1/plugins/clipper/{id}/extract", axum::routing::post(clipper_extract))
+        .route("/api/v1/plugins/clipper/{id}/clips", get(clipper_list_clips))
 }

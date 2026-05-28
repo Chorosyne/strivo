@@ -3865,6 +3865,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-clipper"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "strivo-cuepoints",
+]
+
+[[package]]
 name = "strivo-core"
 version = "0.3.0"
 dependencies = [
@@ -3960,6 +3972,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "strivo-chapters",
+ "strivo-clipper",
  "strivo-core",
  "strivo-cuepoints",
  "strivo-plugins",

@@ -26,6 +26,7 @@ strivo-core = { path = "../.." }
 strivo-plugins = { git = "https://github.com/Chorosyne/strivo-plugins", branch = "main", optional = true }
 strivo-chapters = { path = "../chapters" }
 strivo-cuepoints = { path = "../cuepoints" }
+strivo-clipper = { path = "../clipper" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

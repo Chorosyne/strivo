@@ -140,6 +140,15 @@ const API = {
     API._fetch(`/plugins/chapters/${encodeURIComponent(recordingId)}`, { method: "POST" }),
   cuepointsGenerate: (recordingId) =>
     API._fetch(`/plugins/cuepoints/${encodeURIComponent(recordingId)}`, { method: "POST" }),
+  clipperAnalyze: (recordingId) =>
+    API._fetch(`/plugins/clipper/${encodeURIComponent(recordingId)}/analyze`, { method: "POST" }),
+  clipperExtract: (recordingId, body) =>
+    API._fetch(`/plugins/clipper/${encodeURIComponent(recordingId)}/extract`, {
+      method: "POST",
+      body,
+    }),
+  clipperListClips: (recordingId) =>
+    API._fetch(`/plugins/clipper/${encodeURIComponent(recordingId)}/clips`),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -3359,7 +3368,9 @@ async function openRecordingInfo(jobId) {
       <h3>Plugin actions</h3>
       <div class="rec-info-verbs">${actionsHtml}</div>
       ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
       <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
+      <div class="rec-clipper" id="rec-clipper" hidden></div>
     </section>
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
@@ -3414,6 +3425,69 @@ async function openRecordingInfo(jobId) {
       Toast.success(`Detected ${points.length} scene change(s)`);
     }).catch((err) => Toast.error(`Cuepoints failed: ${err.message}`));
   });
+  overlay.querySelector("[data-action=rec-info-clipper]")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Mining…", async () => {
+      const [analysis, existing] = await Promise.all([
+        API.clipperAnalyze(jobId),
+        API.clipperListClips(jobId).catch(() => ({ clips: [] })),
+      ]);
+      const host = document.getElementById("rec-clipper");
+      if (!host) return;
+      host.hidden = false;
+      const highlights = analysis.highlights || [];
+      const cutByStart = new Map(
+        (existing.clips || []).map((c) => [Math.round(c.start_sec), c]),
+      );
+      if (!highlights.length) {
+        host.innerHTML = `<div class="empty sm">No highlight candidates found (transcript or cuepoints empty?).</div>`;
+        return;
+      }
+      host.innerHTML = `
+        <h4 class="rec-cp-title">${highlights.length} highlight candidate${highlights.length === 1 ? "" : "s"} <span class="pg-cap-hint">window ${analysis.window_secs}s</span></h4>
+        <div class="rec-hl-list">
+          ${highlights
+            .map((h, i) => {
+              const cut = cutByStart.get(Math.round(h.time_sec));
+              return `<div class="rec-hl-row" data-i="${i}">
+                <button class="rec-hl-jump" data-seek="${h.time_sec}" title="Jump to ${fmtClock(h.time_sec)}">${fmtClock(h.time_sec)}</button>
+                <span class="rec-hl-score" title="Score ${h.score.toFixed(2)} · density ${h.density}">
+                  <span class="rec-hl-bar" style="--rec-hl-pct:${(h.score * 100).toFixed(0)}%"></span>
+                  <span>${Math.round(h.score * 100)}%</span>
+                </span>
+                <span class="rec-hl-meta">${h.density} cuepoint${h.density === 1 ? "" : "s"} · ${h.suggested_duration}s</span>
+                ${cut
+                  ? `<span class="cfg-badge ok" title="${escape(cut.clip_path)}">✓ cut · ${formatBytes(cut.bytes)}</span>`
+                  : `<button class="sm rec-hl-cut" data-start="${h.time_sec}" data-dur="${h.suggested_duration}">Cut clip</button>`}
+              </div>`;
+            })
+            .join("")}
+        </div>`;
+      host.querySelectorAll(".rec-hl-jump").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          closeRecordingModals();
+          openRecordingPlayer(jobId, { seekTo: parseFloat(el.dataset.seek || "0") });
+        });
+      });
+      host.querySelectorAll(".rec-hl-cut").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          const cb = e.currentTarget;
+          await withBusy(cb, "Cutting…", async () => {
+            const res = await API.clipperExtract(jobId, {
+              start_sec: parseFloat(cb.dataset.start),
+              duration_sec: parseFloat(cb.dataset.dur),
+              stem: `${niceTitle(rec.stream_title).replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60)}_${Math.round(parseFloat(cb.dataset.start))}`,
+            });
+            Toast.success(`Cut ${formatBytes(res.bytes)} → ${res.clip_path}`);
+            cb.outerHTML = `<span class="cfg-badge ok" title="${escape(res.clip_path)}">✓ cut · ${formatBytes(res.bytes)}</span>`;
+          }).catch((err) => Toast.error(`Cut failed: ${err.message}`));
+        });
+      });
+      Toast.success(`Found ${highlights.length} highlight candidate(s)`);
+    }).catch((err) => Toast.error(`Highlights failed: ${err.message}`));
+  });
+
   overlay.querySelector("[data-action=rec-info-remux]")?.addEventListener("click", async (e) => {
     if (!(await confirmDialog(
       "Remux this recording into a matroska container with the aac_adtstoasc filter? The original is kept as <name>.orig.<ext> until success.",
