@@ -4108,6 +4108,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-structure"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-thumbnails"
 version = "0.3.0"
 dependencies = [
@@ -4170,6 +4178,7 @@ dependencies = [
  "strivo-pipelines-dag",
  "strivo-plugins",
  "strivo-reuse",
+ "strivo-structure",
  "strivo-thumbnails",
  "strivo-viewguard-trend",
  "tempfile",

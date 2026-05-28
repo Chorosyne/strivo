@@ -1951,6 +1951,55 @@ async fn multistream_tiles(
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub(super) struct StructureBody {
+    pub total_duration_sec: f32,
+    #[serde(default)]
+    pub chapters: Vec<strivo_structure::ChapterSpan>,
+    #[serde(default)]
+    pub chat_buckets: Vec<strivo_structure::ChatBucket>,
+    #[serde(default)]
+    pub scene_cuts_sec: Vec<f32>,
+    #[serde(default)]
+    pub knobs: Option<strivo_structure::ClassifierKnobs>,
+}
+
+/// `POST /api/v1/plugins/structure/<recording_id>` — run the DAW-style
+/// section labeler. Body carries the inputs (chapters / chat density /
+/// scene cuepoints / duration) so the host can feed in already-computed
+/// artefacts from other plugins. Pro-gated.
+async fn structure_classify(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<StructureBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("structure") { return r; }
+    let inputs = strivo_structure::StructureInputs {
+        total_duration_sec: body.total_duration_sec,
+        chapters: body.chapters,
+        chat_buckets: body.chat_buckets,
+        scene_cuts_sec: body.scene_cuts_sec,
+    };
+    let knobs = body.knobs.unwrap_or_default();
+    let segments = strivo_structure::classify(&inputs, &knobs);
+    let totals: std::collections::HashMap<String, f32> =
+        segments.iter().fold(std::collections::HashMap::new(), |mut acc, s| {
+            *acc.entry(format!("{:?}", s.kind).to_lowercase()).or_insert(0.0) += s.duration();
+            acc
+        });
+    Json(json!({
+        "recording_id": recording_id,
+        "segments": segments,
+        "totals_sec_by_kind": totals,
+        "knobs": knobs,
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct LoudnessQuery {
     /// Platform preset name (youtube, spotify, apple_music, ebu_r128,
     /// twitch). Used both to seed the target and to label the response.
@@ -2832,4 +2881,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
         .route("/api/v1/plugins/chat/parse", axum::routing::post(chat_parse))
         .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
+        .route("/api/v1/plugins/structure/{id}", axum::routing::post(structure_classify))
 }

@@ -1909,6 +1909,7 @@ async fn plugin_capabilities() -> impl IntoResponse {
         // Net-new capabilities from iters 23–24. Use `x.`-prefixed tags so
         // they don't drift from the WELL_KNOWN_CAPABILITIES constant set.
         { "capability": "x.loudness",        "providers": [{"plugin": "loudness", "status": "available"}] },
+        { "capability": "x.structure",       "providers": [{"plugin": "structure", "status": "available"}] },
         { "capability": "x.multistream",     "providers": [{"plugin": "multistream", "status": "available"}] },
         { "capability": "x.chat",            "providers": [{"plugin": "chat",        "status": "available"}] },
         { "capability": "x.pipelines_dag",   "providers": [{"plugin": "pipelines-dag", "status": "available"}] },

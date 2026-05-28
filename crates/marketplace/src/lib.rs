@@ -312,6 +312,28 @@ pub fn default_catalog() -> Catalog {
             },
             CatalogEntry {
                 manifest: PluginManifest {
+                    name: "structure".into(),
+                    version: "0.1.0".into(),
+                    author: "Chorosyne".into(),
+                    license: Some("MIT".into()),
+                    description:
+                        "DAW-style section labeller — intro / gameplay / break / outro / content tiling derived from chapters + chat density + scene cuepoints."
+                            .into(),
+                    capabilities: vec!["x.structure".into()],
+                    consumes: vec!["chapters".into(), "scene_detection".into(), "audience_retention".into()],
+                    entry_point: EntryPoint::Cdylib { path: "structure.so".into() },
+                    min_host_version: "0.3.0".into(),
+                    price_cents: None,
+                    repository: Some("https://github.com/Chorosyne/structure".into()),
+                    icon: None,
+                    screenshots: vec![],
+                    category: Some("Editor".into()),
+                },
+                source: "first_party".into(),
+                installed: true,
+            },
+            CatalogEntry {
+                manifest: PluginManifest {
                     name: "loudness".into(),
                     version: "0.1.0".into(),
                     author: "Chorosyne".into(),

@@ -226,6 +226,8 @@ const API = {
   chatRooms: () => API._fetch("/plugins/chat/rooms"),
   chatParseBatch: (lines) =>
     API._fetch("/plugins/chat/parse", { method: "POST", body: { lines: lines.join("\n") } }),
+  structureClassify: (recordingId, body) =>
+    API._fetch(`/plugins/structure/${encodeURIComponent(recordingId)}`, { method: "POST", body }),
   loudnessMeasure: (recordingId, platform) => {
     const qs = platform ? `?platform=${encodeURIComponent(platform)}` : "";
     return API._fetch(`/plugins/loudness/${encodeURIComponent(recordingId)}${qs}`, { method: "POST" });
@@ -3532,6 +3534,7 @@ const PLUGIN_REGISTRY = [
   { name: "branding",   label: "Branding",      category: "Editor", proGated: true, description: "Watermark + intro/outro banner overlay spec, applied via ffmpeg filter_complex on render." },
   { name: "broll",      label: "B-roll finder", category: "Editor", proGated: true, description: "Suggest B-roll cuts from a tagged local library based on transcript topics." },
   { name: "loudness",   label: "Loudness",      category: "Editor", proGated: true, description: "EBU R128 master-bus loudness check with per-platform presets (YouTube/Spotify/Apple/EBU/Twitch)." },
+  { name: "structure",  label: "Structure",     category: "Editor", proGated: true, description: "DAW-style section labeller — intro / gameplay / break / outro tiling from chapters + chat density + scene cuepoints." },
   // Asset / analytics / publishing.
   { name: "chapters",         label: "Chapters",         category: "Analytics", proGated: true, description: "Heuristic chapter markers extracted from pacing." },
   { name: "cuepoints",        label: "Cuepoints",        category: "Analytics", proGated: true, description: "Scene-change detection from ffmpeg's select filter." },
