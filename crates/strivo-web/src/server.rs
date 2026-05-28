@@ -76,6 +76,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
     let guarded = Router::new()
         .merge(routes::events::router())
         .merge(routes::api::router())
+        .merge(routes::plugins::router())
         .merge(routes::login::router())
         .merge(routes::assets::router())
         .layer(middleware::from_fn_with_state(

@@ -107,6 +107,138 @@ async fn recording_one(
     }
 }
 
+/// `GET /api/v1/recordings/{id}/probe` — on-demand ffprobe against the
+/// recording's `output_path`. Returns a normalised summary (container,
+/// duration, bitrate, per-stream codec/resolution/fps for video and
+/// codec/channels/sample-rate/bitrate for audio). 404 if the recording
+/// isn't in the snapshot, 503 if ffprobe isn't on PATH, 502 if ffprobe
+/// errors.
+async fn recording_probe(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let path = match state.ipc.snapshot().await {
+        Ok(ServerMessage::StateSnapshot { recordings, .. }) => match recordings.get(&id) {
+            Some(j) => j.output_path.clone(),
+            None => {
+                return crate::problem::Problem::not_found("recording not found").into_response()
+            }
+        },
+        Ok(_) => return crate::problem::Problem::internal("unexpected response").into_response(),
+        Err(e) => return crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    };
+    if !path.exists() {
+        return crate::problem::Problem::not_found("file missing").into_response();
+    }
+    let out = match tokio::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+        ])
+        .arg(&path)
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return crate::problem::Problem::unavailable("ffprobe not installed").into_response();
+        }
+        Err(e) => {
+            return crate::problem::Problem::internal(format!("ffprobe spawn: {e}")).into_response();
+        }
+    };
+    if !out.status.success() {
+        return crate::problem::Problem::new(
+            StatusCode::BAD_GATEWAY,
+            format!("ffprobe failed: {}", String::from_utf8_lossy(&out.stderr).trim()),
+        )
+        .into_response();
+    }
+    let raw: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+        Ok(v) => v,
+        Err(e) => return crate::problem::Problem::internal(format!("ffprobe parse: {e}")).into_response(),
+    };
+
+    // Normalise: pull just the bits the Info modal renders. Keep `raw` out of
+    // the response — the full ffprobe dump is noisy and exposes internals.
+    let fmt = raw.get("format").cloned().unwrap_or(serde_json::Value::Null);
+    let duration_secs = fmt
+        .get("duration")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<f64>().ok());
+    let bit_rate = fmt
+        .get("bit_rate")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok());
+    let size_bytes = fmt
+        .get("size")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok());
+    let container = fmt
+        .get("format_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    fn parse_fps(s: &str) -> Option<f64> {
+        // r_frame_rate is "30000/1001" or "30/1" — never a bare float.
+        let mut it = s.split('/');
+        let n: f64 = it.next()?.parse().ok()?;
+        let d: f64 = it.next().unwrap_or("1").parse().ok()?;
+        if d == 0.0 { None } else { Some(n / d) }
+    }
+
+    let mut video = Vec::new();
+    let mut audio = Vec::new();
+    let mut subtitle = Vec::new();
+    if let Some(arr) = raw.get("streams").and_then(|v| v.as_array()) {
+        for s in arr {
+            let codec_type = s.get("codec_type").and_then(|v| v.as_str()).unwrap_or("");
+            let codec_name = s.get("codec_name").and_then(|v| v.as_str()).map(str::to_string);
+            let br = s.get("bit_rate").and_then(|v| v.as_str()).and_then(|x| x.parse::<u64>().ok());
+            match codec_type {
+                "video" => video.push(json!({
+                    "codec": codec_name,
+                    "width": s.get("width").and_then(|v| v.as_u64()),
+                    "height": s.get("height").and_then(|v| v.as_u64()),
+                    "fps": s.get("r_frame_rate").and_then(|v| v.as_str()).and_then(parse_fps),
+                    "bit_rate": br,
+                    "pix_fmt": s.get("pix_fmt").and_then(|v| v.as_str()).map(str::to_string),
+                })),
+                "audio" => audio.push(json!({
+                    "codec": codec_name,
+                    "channels": s.get("channels").and_then(|v| v.as_u64()),
+                    "channel_layout": s.get("channel_layout").and_then(|v| v.as_str()).map(str::to_string),
+                    "sample_rate": s.get("sample_rate").and_then(|v| v.as_str()).and_then(|x| x.parse::<u64>().ok()),
+                    "bit_rate": br,
+                    "language": s.get("tags").and_then(|t| t.get("language")).and_then(|v| v.as_str()).map(str::to_string),
+                })),
+                "subtitle" => subtitle.push(json!({
+                    "codec": codec_name,
+                    "language": s.get("tags").and_then(|t| t.get("language")).and_then(|v| v.as_str()).map(str::to_string),
+                })),
+                _ => {}
+            }
+        }
+    }
+
+    Json(json!({
+        "container": container,
+        "duration_secs": duration_secs,
+        "bit_rate": bit_rate,
+        "size_bytes": size_bytes,
+        "video": video,
+        "audio": audio,
+        "subtitle": subtitle,
+    }))
+    .into_response()
+}
+
 async fn schedule(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
@@ -544,6 +676,52 @@ async fn stop_all_recordings(
     }
     match state.ipc.send_command(ClientMessage::Recording(RecordingCommand::StopAll)).await {
         Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "stop_all sent"}))).into_response(),
+        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    }
+}
+
+/// `DELETE /api/v1/recordings/<id>/file` — hard-delete a finished or
+/// errored recording: trash the file (7-day retention) and drop the row
+/// from `jobs.db`. Active recordings should be Stop'd first; this is the
+/// management action, not the lifecycle action.
+async fn delete_recording_file(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    match state
+        .ipc
+        .send_command(ClientMessage::DeleteRecording { job_id: id })
+        .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "queued", "job_id": id})),
+        )
+            .into_response(),
+        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    }
+}
+
+/// `POST /api/v1/recordings/clear_errored` — bulk-delete every recording
+/// whose state is failed or interrupted. Same trash-then-drop semantics
+/// as `delete_recording_file` per row.
+async fn clear_errored_recordings(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    match state
+        .ipc
+        .send_command(ClientMessage::ClearErroredRecordings)
+        .await
+    {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "queued"}))).into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
     }
 }
@@ -994,9 +1172,10 @@ struct PluginRpcPayload {
 
 /// `POST /api/v1/plugins/<plugin>/<verb>` — dispatch an actions-popup
 /// verb to a plugin. Body is `{ selection: [uuid…], payload: any }`.
-/// In daemon mode the plugin registry isn't loaded inside the daemon
-/// process yet (W2 phase 2 follow-up); today the call lands in the
-/// daemon's log so the webui can surface the "not loaded" affordance.
+/// The daemon loads the plugin registry and dispatches `on_verb` over
+/// IPC (see `daemon::run_with_plugins`), spawning any returned SpawnTask
+/// work headless. The read side of the webui (`routes::plugins`) reads
+/// each plugin's SQLite output directly to render results.
 async fn plugin_rpc(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -1172,6 +1351,38 @@ struct PatreonPullPayload {
     post_title: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct VodDownloadPayload {
+    url: String,
+    channel_name: String,
+    platform: PlatformKind,
+    #[serde(default)]
+    post_title: Option<String>,
+}
+
+/// `POST /api/v1/vods/download` — pull a single past-broadcast/VOD on demand
+/// from the channel-detail "Past Broadcasts" list. The daemon picks the
+/// platform-correct cookies path and builds the output filename from config.
+async fn vod_download(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<VodDownloadPayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let cmd = ClientMessage::DownloadVod {
+        url: body.url,
+        channel_name: body.channel_name,
+        platform: body.platform,
+        post_title: body.post_title,
+    };
+    match state.ipc.send_command(cmd).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "queued"}))).into_response(),
+        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    }
+}
+
 /// `POST /api/v1/patreon/pull` — download a single Patreon video post on
 /// demand. Webui equivalent of the TUI's `p` on a creator's post (#69).
 /// The daemon builds the output path from its config. (#75.)
@@ -1206,7 +1417,10 @@ pub fn router() -> Router<AppState> {
             get(recording_one).delete(stop_recording),
         )
         .route("/api/v1/recordings/{id}/thumb", get(recording_thumb))
+        .route("/api/v1/recordings/{id}/probe", get(recording_probe))
         .route("/api/v1/recordings/stop_all", post(stop_all_recordings))
+        .route("/api/v1/recordings/clear_errored", post(clear_errored_recordings))
+        .route("/api/v1/recordings/{id}/file", axum::routing::delete(delete_recording_file))
         .route("/api/v1/schedule", get(schedule))
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/poll_now", post(poll_now))
@@ -1240,6 +1454,7 @@ pub fn router() -> Router<AppState> {
         )
         // #75: Patreon manual pull
         .route("/api/v1/patreon/pull", post(patreon_pull))
+        .route("/api/v1/vods/download", post(vod_download))
         // #19: Add-Channel wizard — resolve a name/id to a channel.
         .route("/api/v1/channels/resolve", post(resolve_channel))
 }

@@ -12,6 +12,11 @@ path = "src/lib.rs"
 
 [dependencies]
 strivo-core = { path = "../.." }
+# First-party plugins: the web UI reads their on-disk SQLite DBs (read-only)
+# to surface transcripts, catalogs, verdicts, and insights. Actions still go
+# through the daemon over IPC (PluginRpc verb dispatch).
+strivo-plugins = { git = "https://github.com/Chorosyne/strivo-plugins", branch = "main" }
+rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP
 axum = { version = "0.8", features = ["macros"] }
@@ -48,3 +53,7 @@ base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+chrono = { version = "0.4" }
