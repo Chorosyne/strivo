@@ -3853,6 +3853,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-brandsafe"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-captions"
 version = "0.3.0"
 dependencies = [
@@ -4008,6 +4017,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "strivo-brandsafe",
  "strivo-captions",
  "strivo-chapters",
  "strivo-clipper",

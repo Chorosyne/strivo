@@ -165,6 +165,8 @@ const API = {
     API._fetch(`/plugins/multitrack/${encodeURIComponent(recordingId)}`),
   multitrackExtract: (recordingId, body) =>
     API._fetch(`/plugins/multitrack/${encodeURIComponent(recordingId)}/extract`, { method: "POST", body }),
+  brandsafeScan: (recordingId) =>
+    API._fetch(`/plugins/brandsafe/${encodeURIComponent(recordingId)}`),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -2829,6 +2831,7 @@ async function renderCrunchrRecording(id) {
       <button id="cr-export-vtt" class="pg-linkbtn" type="button">Export .vtt</button>
       <button id="cr-export-md" class="pg-linkbtn" type="button">Copy as markdown</button>
       <button id="cr-chapters" class="pg-linkbtn" type="button" title="Generate YouTube/Twitch chapter markers from the transcript">Generate chapters</button>
+      <button id="cr-brandsafe" class="pg-linkbtn" type="button" title="Pre-publish brand-safety scan (slurs / profanity / restricted games / music mentions)">⚠ Brand-safety scan</button>
       <div class="cr-caption-export">
         <span class="cr-caption-label">Captions:</span>
         <a class="pg-linkbtn" download href="${escape(API.captionsExportUrl(d.recording_id, "srt", "en"))}">.srt</a>
@@ -2854,6 +2857,10 @@ async function renderCrunchrRecording(id) {
       </div>
     </section>
     ${analysis}
+    <section class="cfg-card" id="cr-brandsafe-card" hidden>
+      <h2 class="cfg-title">Brand-safety verdicts <span id="cr-brandsafe-count"></span></h2>
+      <div id="cr-brandsafe-list"></div>
+    </section>
     <section class="cfg-card">
       <h2 class="cfg-title">Transcript <span class="pg-cap-hint">${speakers.length} speaker${speakers.length === 1 ? "" : "s"} · ${blocks.length} block${blocks.length === 1 ? "" : "s"}</span></h2>
       <div class="cr-retention" id="cr-retention" hidden></div>
@@ -2982,6 +2989,54 @@ async function renderCrunchrRecording(id) {
         const fmt = a.textContent.replace(".", "");
         a.href = API.captionsExportUrl(d.recording_id, fmt, lang);
       });
+  });
+
+  // Brandsafe scan — runs the scanners, renders verdicts.
+  document.getElementById("cr-brandsafe")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    await withBusy(btn, "Scanning…", async () => {
+      const resp = await API.brandsafeScan(d.recording_id);
+      const verdicts = resp.verdicts || [];
+      const card = document.getElementById("cr-brandsafe-card");
+      const list = document.getElementById("cr-brandsafe-list");
+      const count = document.getElementById("cr-brandsafe-count");
+      if (!card || !list || !count) return;
+      card.hidden = false;
+      count.innerHTML = verdicts.length
+        ? `<span class="pg-cap-hint">${verdicts.length} verdict${verdicts.length === 1 ? "" : "s"} · category "${escape(resp.category)}"</span>`
+        : '<span class="cfg-badge ok">all clear</span>';
+      if (!verdicts.length) {
+        list.innerHTML = '<div class="empty sm">No content-safety risks detected. Scan covers slurs, profanity, restricted game categories, and music mentions.</div>';
+        return;
+      }
+      const sevColour = {
+        critical: "hsl(0, 80%, 60%)",
+        high: "hsl(20, 80%, 60%)",
+        medium: "hsl(40, 80%, 60%)",
+        low: "hsl(200, 60%, 60%)",
+      };
+      list.innerHTML = verdicts
+        .map(
+          (v) => `
+        <div class="cr-bs-row sev-${escape(v.severity)}" style="--bs-c:${sevColour[v.severity] || sevColour.low}">
+          <span class="cr-bs-sev">${escape(v.severity)}</span>
+          <div class="cr-bs-body">
+            <div class="cr-bs-head">
+              <span class="cr-bs-kind">${escape(v.kind.replace(/_/g, " "))}</span>
+              ${v.platform ? `<span class="mon-plat plat-${escape(v.platform.toLowerCase())}">${escape(v.platform)}</span>` : ""}
+              ${typeof v.at_sec === "number" ? `<button class="cr-bs-jump" data-seek="${v.at_sec}">${fmtClock(v.at_sec)}</button>` : ""}
+            </div>
+            <div class="cr-bs-snippet">${escape(v.snippet)}</div>
+            <div class="cr-bs-fix">${escape(v.fix_hint)}</div>
+          </div>
+        </div>`,
+        )
+        .join("");
+      list.querySelectorAll(".cr-bs-jump").forEach((el) => {
+        el.addEventListener("click", () => seek(parseFloat(el.dataset.seek || "0")));
+      });
+      Toast.success(`Scan complete: ${verdicts.length} verdict(s)`);
+    }).catch((err) => Toast.error(`Brand-safety scan failed: ${err.message}`));
   });
 
   // Chapters — POST to /api/v1/plugins/chapters/<id>, render the result.

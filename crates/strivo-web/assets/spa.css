@@ -2660,6 +2660,51 @@ body.modal-open { overflow: hidden; }
   font-size: 0.82rem;
 }
 #cr-caption-lang:focus { outline: 0; border-color: var(--accent2); }
+/* Brand-safety verdict list (iter 10). */
+.cr-bs-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 0.7rem;
+  align-items: start;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--bs-c, var(--accent2));
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+.cr-bs-sev {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--bs-c, var(--accent2));
+  padding: 0.1rem 0;
+}
+.cr-bs-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+.cr-bs-kind { font-weight: 600; color: var(--text); text-transform: capitalize; font-size: 0.88rem; }
+.cr-bs-jump {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--accent2);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.74rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.05rem 0.4rem;
+  cursor: pointer;
+}
+.cr-bs-jump:hover { border-color: var(--accent2); background: rgba(0, 188, 212, 0.1); }
+.cr-bs-snippet {
+  font-size: 0.85rem;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.35rem 0.55rem;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cr-bs-fix { font-size: 0.8rem; color: var(--muted); font-style: italic; }
 /* Cuepoints strip on the recording info modal (iter 4). */
 .rec-info-cuepoints-btn { margin-top: 0.5rem; }
 .rec-cuepoints { margin-top: 0.7rem; }

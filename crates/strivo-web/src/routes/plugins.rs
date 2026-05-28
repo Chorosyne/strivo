@@ -888,6 +888,69 @@ async fn multitrack_extract(
     .into_response()
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct BrandsafeQuery {
+    /// Comma-separated platform list to consult restricted-game allow
+    /// lists for. Defaults to `Twitch,YouTube` — the two big surfaces.
+    #[serde(default)]
+    platforms: Option<String>,
+    /// Category / game name override. Without this we use whatever
+    /// the recording's source channel name is, which isn't ideal but
+    /// keeps the surface useful before the streamer has tagged.
+    #[serde(default)]
+    category: Option<String>,
+}
+
+/// `GET /api/v1/plugins/brandsafe/<recording_id>` — run every scanner
+/// across the transcript + category + platforms and return verdicts.
+async fn brandsafe_scan(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<BrandsafeQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("brandsafe") { return r; }
+
+    let Some(conn) = open_ro(&crunchr_db()) else {
+        return Problem::not_found("crunchr has no data yet").into_response();
+    };
+    let detail = match strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Problem::not_found("recording not transcribed").into_response(),
+        Err(e) => return Problem::internal(e.to_string()).into_response(),
+    };
+    let segments: Vec<strivo_brandsafe::Segment> = detail
+        .segments
+        .iter()
+        .map(|s| strivo_brandsafe::Segment {
+            start_sec: s.start_sec as f32,
+            end_sec: s.end_sec as f32,
+            text: s.text.clone(),
+        })
+        .collect();
+    // Platforms: parse the comma list or fall back to the big two.
+    let platforms_raw: String = q.platforms.unwrap_or_else(|| "Twitch,YouTube".to_string());
+    let platforms: Vec<&str> = platforms_raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // Category: query string wins; fall back to channel_name as a
+    // proxy. Better than empty for the UX.
+    let category = q.category.unwrap_or(detail.channel_name.clone());
+    let verdicts = strivo_brandsafe::scan_all(&segments, &category, &platforms);
+    Json(json!({
+        "recording_id": recording_id,
+        "category": category,
+        "platforms": platforms,
+        "verdicts": verdicts,
+    }))
+    .into_response()
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -1609,4 +1672,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/captions/{id}", get(captions_export))
         .route("/api/v1/plugins/multitrack/{id}", get(multitrack_list))
         .route("/api/v1/plugins/multitrack/{id}/extract", axum::routing::post(multitrack_extract))
+        .route("/api/v1/plugins/brandsafe/{id}", get(brandsafe_scan))
 }
