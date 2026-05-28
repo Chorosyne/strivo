@@ -2001,6 +2001,72 @@ async fn multistream_tiles(
     .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct SidechainBody {
+    pub voice_intervals: Vec<strivo_vad::VoiceInterval>,
+    pub total_duration_sec: f32,
+    #[serde(default)]
+    pub knobs: Option<strivo_sidechain::SidechainKnobs>,
+    /// Optional: persist the resulting automation directly to this
+    /// recording's volume-automation store so the editor render bakes
+    /// it on the next ⚡ Render. Default true (the typical flow).
+    #[serde(default = "default_true_sc")]
+    pub persist: bool,
+}
+
+fn default_true_sc() -> bool { true }
+
+/// `POST /api/v1/plugins/sidechain/<recording_id>` — translate VAD
+/// voice intervals into a sidechain ducking automation curve and
+/// optionally persist it as the recording's volume automation. The
+/// existing render pipeline bakes the points via `asendcmd` — no new
+/// ffmpeg plumbing.
+async fn sidechain_run(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<SidechainBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("sidechain") { return r; }
+    let knobs = body.knobs.unwrap_or_default();
+    let automation = strivo_sidechain::build_automation(
+        &body.voice_intervals,
+        body.total_duration_sec,
+        &knobs,
+    );
+    let mut persisted = false;
+    if body.persist {
+        let path = automation_path(&recording_id);
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return Problem::internal(format!("mkdir: {e}")).into_response();
+            }
+        }
+        match serde_json::to_string_pretty(&automation) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    return Problem::internal(format!("write: {e}")).into_response();
+                }
+                persisted = true;
+            }
+            Err(e) => return Problem::internal(format!("serialise: {e}")).into_response(),
+        }
+    }
+    let preview = automation.build_audio_filter(0.05);
+    Json(json!({
+        "recording_id": recording_id,
+        "point_count": automation.points.len(),
+        "knobs": knobs,
+        "automation": automation,
+        "audio_filter_preview": preview,
+        "persisted_to_automation_store": persisted,
+    }))
+    .into_response()
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub(super) struct VadQuery {
     /// Window seconds to analyse from t=0 (0 = whole recording). Capped
@@ -3574,4 +3640,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/schedule-optimizer/{id}", axum::routing::post(schedule_optimizer_recommend))
         .route("/api/v1/plugins/beat-detect/{id}", axum::routing::post(beat_detect_run))
         .route("/api/v1/plugins/vad/{id}", axum::routing::post(vad_run))
+        .route("/api/v1/plugins/sidechain/{id}", axum::routing::post(sidechain_run))
 }

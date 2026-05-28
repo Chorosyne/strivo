@@ -4144,6 +4144,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-sidechain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "strivo-automation",
+ "strivo-vad",
+]
+
+[[package]]
 name = "strivo-structure"
 version = "0.1.0"
 dependencies = [
@@ -4226,6 +4236,7 @@ dependencies = [
  "strivo-reuse",
  "strivo-scenes",
  "strivo-schedule-optimizer",
+ "strivo-sidechain",
  "strivo-structure",
  "strivo-thumbnails",
  "strivo-vad",
