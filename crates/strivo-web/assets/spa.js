@@ -696,19 +696,36 @@ function selectChannel(key) {
 // ── Login ────────────────────────────────────────────────────────────
 function renderLogin(errorMsg) {
   root.removeAttribute("aria-busy");
+  // "Remember me" pre-fills the API key from localStorage on a returning
+  // visit. The session cookie itself already persists across reloads via
+  // the server; this just spares typing after a browser restart or a
+  // dropped cookie (audit M18). Stored under a distinct key per host so
+  // sharing a browser across StriVo instances stays clean.
+  const remembered = (() => {
+    try { return localStorage.getItem("strivo:remembered-api-key") || ""; }
+    catch (_) { return ""; }
+  })();
   root.innerHTML = `
     <div class="login-screen">
       <form class="login-card" id="login-form">
         <h1>StriVo</h1>
         <p class="subtitle">Sign in to the web console</p>
         <label for="api-key">API Key</label>
-        <input type="password" id="api-key" autocomplete="current-password" autofocus />
+        <input type="password" id="api-key" autocomplete="current-password"
+               value="${escape(remembered)}" autofocus />
+        <label class="login-remember">
+          <input type="checkbox" id="api-remember" ${remembered ? "checked" : ""} />
+          <span>Remember on this browser</span>
+        </label>
         <button type="submit" class="primary">Sign in</button>
         ${errorMsg ? `<div class="error">${escape(errorMsg)}</div>` : ""}
         <div class="hint">
           API key lives in <code>~/.config/strivo/config.toml</code> under
           <code>[web]</code>. <br />
-          Or run: <code>strivo config get web.api_key</code>
+          Or run: <code>strivo config get web.api_key</code><br />
+          <span class="login-recovery">Lost it? Stop the daemon, edit
+          <code>~/.config/strivo/config.toml</code>, replace the
+          <code>api_key</code> with anything random, and restart.</span>
         </div>
       </form>
     </div>
@@ -717,8 +734,13 @@ function renderLogin(errorMsg) {
     e.preventDefault();
     const key = document.getElementById("api-key").value.trim();
     if (!key) return;
+    const remember = document.getElementById("api-remember").checked;
     try {
       await API.login(key);
+      try {
+        if (remember) localStorage.setItem("strivo:remembered-api-key", key);
+        else localStorage.removeItem("strivo:remembered-api-key");
+      } catch (_) {}
       events.start(); // (re)connect the now-authorized SSE stream
       route("library");
     } catch (err) {
@@ -1523,7 +1545,108 @@ function closeAllAppModals() {
 }
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeAllAppModals();
+  // Global jump-to-recording / channel — Ctrl/Cmd+K or "/". The "/"
+  // shortcut is ignored when the user is typing in an existing field
+  // (matches GitHub/Linear/Slack conventions). (audit M14)
+  const inField =
+    document.activeElement &&
+    /^(INPUT|TEXTAREA|SELECT)$/i.test(document.activeElement.tagName);
+  const isSlash = e.key === "/" && !inField;
+  const isCmdK = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
+  if (isSlash || isCmdK) {
+    e.preventDefault();
+    openCommandPalette();
+  }
 });
+
+// Lightweight command palette — list every recording title + every
+// channel name and route the user there on pick. Single-pass filter.
+async function openCommandPalette() {
+  if (document.getElementById("cmd-palette")) return;
+  const dlg = document.createElement("div");
+  dlg.id = "cmd-palette";
+  dlg.className = "app-modal open";
+  dlg.innerHTML = `
+    <form class="card cmd-card" role="dialog" aria-label="Quick jump">
+      <input id="cmd-q" type="search" placeholder="Search recordings, channels, settings…" autofocus />
+      <div id="cmd-results" class="cmd-results">Loading…</div>
+      <p class="cmd-hint">↑↓ to navigate · Enter to open · Esc to close</p>
+    </form>`;
+  document.body.appendChild(dlg);
+  document.body.classList.add("modal-open");
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) closeAppModal(dlg); });
+
+  const [recs, chans] = await Promise.all([
+    API.recordings().then((r) => r.recordings || []).catch(() => []),
+    API.channels().then((r) => r.channels || []).catch(() => []),
+  ]);
+  const items = [
+    ...recs.map((r) => ({
+      label: niceTitle(r.stream_title) || "(no title)",
+      sub: `${r.channel_name || ""} · recording`,
+      href: `#/recordings`,
+      hay: `${niceTitle(r.stream_title)} ${r.channel_name}`.toLowerCase(),
+    })),
+    ...chans.map((c) => ({
+      label: c.display_name || c.name,
+      sub: `${c.platform} · channel`,
+      href: c.is_live ? "#/library" : `#/recordings?channel=${encodeURIComponent(c.display_name || c.name)}`,
+      hay: `${c.display_name} ${c.name} ${c.platform}`.toLowerCase(),
+    })),
+    ...["library", "recordings", "schedule", "plugins", "settings", "system", "logs", "history"].map((r) => ({
+      label: r[0].toUpperCase() + r.slice(1),
+      sub: "page",
+      href: `#/${r}`,
+      hay: r,
+    })),
+  ];
+  const out = dlg.querySelector("#cmd-results");
+  const q = dlg.querySelector("#cmd-q");
+  let active = 0;
+  const paint = () => {
+    const term = q.value.trim().toLowerCase();
+    const hits = term
+      ? items.filter((it) => it.hay.includes(term)).slice(0, 25)
+      : items.slice(0, 25);
+    if (!hits.length) {
+      out.innerHTML = '<div class="empty sm">No matches.</div>';
+      return;
+    }
+    active = Math.min(active, hits.length - 1);
+    out.innerHTML = hits
+      .map(
+        (it, i) =>
+          `<a class="cmd-item${i === active ? " is-active" : ""}" href="${escape(it.href)}" data-i="${i}">
+            <span class="cmd-label">${escape(it.label)}</span>
+            <span class="cmd-sub">${escape(it.sub)}</span>
+          </a>`,
+      )
+      .join("");
+    out.querySelectorAll(".cmd-item").forEach((el, i) => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        location.hash = hits[i].href;
+        closeAppModal(dlg);
+      });
+    });
+  };
+  q.addEventListener("input", paint);
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const visible = [...out.querySelectorAll(".cmd-item")];
+      if (!visible.length) return;
+      visible[active]?.classList.remove("is-active");
+      active = (active + (e.key === "ArrowDown" ? 1 : visible.length - 1)) % visible.length;
+      visible[active]?.classList.add("is-active");
+      visible[active]?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      out.querySelectorAll(".cmd-item")[active]?.click();
+    }
+  });
+  paint();
+}
 window.addEventListener("hashchange", closeAllAppModals);
 
 function paintAddWizardSearch(modal, opts = {}) {

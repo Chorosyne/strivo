@@ -1576,6 +1576,52 @@ a.media-pill:hover,
   color: var(--muted);
 }
 .log-more { color: var(--accent2); font-size: 0.7rem; margin-left: 0.4rem; }
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0.4rem 0;
+}
+.login-recovery { color: var(--muted); display: block; margin-top: 0.5rem; }
+.cmd-card { width: min(640px, 92vw); padding: 0; overflow: hidden; }
+#cmd-q {
+  width: 100%;
+  padding: 0.9rem 1.1rem;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--border-light);
+}
+#cmd-q:focus { outline: 0; }
+.cmd-results { max-height: 50vh; overflow-y: auto; }
+.cmd-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.5rem 1.1rem;
+  text-decoration: none;
+  color: inherit;
+  border-left: 2px solid transparent;
+  gap: 1rem;
+}
+.cmd-item .cmd-label { color: var(--text); }
+.cmd-item .cmd-sub { color: var(--muted); font-size: 0.78rem; }
+.cmd-item.is-active,
+.cmd-item:hover {
+  background: rgba(0, 188, 212, 0.08);
+  border-left-color: var(--accent2);
+}
+.cmd-hint {
+  margin: 0;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border-light);
+}
 
 .sys-domain { margin-bottom: 0.8rem; }
 .sys-domain-title {
