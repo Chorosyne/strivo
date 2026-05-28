@@ -3987,6 +3987,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-pipelines-dag"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-plugins"
 version = "0.3.0"
 source = "git+https://github.com/Chorosyne/strivo-plugins?branch=main#8a061668ea1a8c4514b2559c34f06e5742ee7b1c"
@@ -4076,6 +4084,7 @@ dependencies = [
  "strivo-heatmap",
  "strivo-insights-compare",
  "strivo-multitrack",
+ "strivo-pipelines-dag",
  "strivo-plugins",
  "strivo-reuse",
  "strivo-thumbnails",

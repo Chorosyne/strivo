@@ -2073,8 +2073,34 @@ async fn patreon_pull(
     }
 }
 
+/// `GET /api/v1/pipelines/dag` — the canonical DAW-vision pipeline
+/// DAG. Public surface (not Pro-gated) so the SPA's Pipelines page
+/// renders even on free builds, where it doubles as a roadmap teaser
+/// alongside the upgrade card.
+async fn pipelines_dag() -> impl IntoResponse {
+    let pipelines = strivo_pipelines_dag::default_pipelines();
+    // Bundle each pipeline with its topological order so the SPA can
+    // lay nodes left-to-right deterministically.
+    let payload: Vec<serde_json::Value> = pipelines
+        .into_iter()
+        .map(|p| {
+            let order = strivo_pipelines_dag::topo_order(&p).unwrap_or_default();
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "nodes": p.nodes,
+                "edges": p.edges,
+                "order": order,
+            })
+        })
+        .collect();
+    Json(json!({ "pipelines": payload }))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/v1/pipelines/dag", get(pipelines_dag))
         .route("/api/v1/health", get(health))
         .route("/api/v1/health/checks", get(health_checks))
         .route("/api/v1/channels", get(channels))

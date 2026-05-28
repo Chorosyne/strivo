@@ -184,6 +184,7 @@ const API = {
   editorRender: (recordingId) =>
     API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}/render`, { method: "POST" }),
   viewguardTrend: () => API._fetch("/plugins/viewguard/trend"),
+  pipelinesDag: () => API._fetch("/pipelines/dag"),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -529,9 +530,9 @@ const TOPNAV = [
   ["library", "▣", "Home", "l", "/assets/icons/candy/home.svg"],
   ["recordings", "📁", "Recordings", "r", "/assets/icons/candy/recordings.svg"],
   ["schedule", "📅", "Monitor", "s", "/assets/icons/candy/schedule.svg"],
-  // Pipelines stays in ROUTES (deep-linkable) but is dropped from the
-  // topnav until plugins actually submit DAGs over IPC — surfacing a
-  // permanently-empty tab is worse than no tab (audit U4).
+  // Pipelines now ships the DAW-vision cross-plugin DAG; restored to
+  // the topnav (was hidden in the audit when the page was empty).
+  ["pipelines", "🔁", "Pipelines", "d", "/assets/icons/candy/pipelines.svg"],
   ["plugins", "🧩", "Plugins", "g", "/assets/icons/candy/plugins.svg"],
   ["settings", "⚙", "Settings", "c", "/assets/icons/candy/settings.svg"],
   ["system", "🛠", "System", "y", "/assets/icons/candy/system.svg"],
@@ -2449,18 +2450,69 @@ function renderGantt(items) {
 
 // ── Pipelines (W5 — read PluginRpc dispatch state from daemon) ────────
 async function renderPipelines() {
+  let payload = { pipelines: [] };
+  try {
+    payload = await API.pipelinesDag();
+  } catch (_) {}
   root.removeAttribute("aria-busy");
+  const pipelines = payload.pipelines || [];
+
+  const flow = (pipe) => {
+    // Layout the nodes left→right by the topological order the server
+    // shipped. Edges are encoded as " → " arrows between consecutive
+    // nodes that actually connect, with a tag chip.
+    const order = pipe.order && pipe.order.length ? pipe.order : pipe.nodes.map((n) => n.id);
+    const nodeById = new Map(pipe.nodes.map((n) => [n.id, n]));
+    const edges = pipe.edges || [];
+    const edgeBetween = (a, b) => edges.find((e) => e.from === a && e.to === b);
+    const cells = [];
+    for (let i = 0; i < order.length; i++) {
+      const node = nodeById.get(order[i]);
+      if (!node) continue;
+      const statusClass = node.status === "available" ? "is-avail" : "is-roadmap";
+      const produces = (node.produces || [])
+        .map((c) => `<span class="pl-cap pl-cap-produces">${escape(c.replace(/_/g, " "))}</span>`)
+        .join("");
+      const consumes = (node.consumes || [])
+        .map((c) => `<span class="pl-cap pl-cap-consumes">${escape(c.replace(/_/g, " "))}</span>`)
+        .join("");
+      cells.push(`<div class="pl-node ${statusClass}" title="${escape(node.blurb)}">
+          <div class="pl-node-head">
+            <span class="pl-node-label">${escape(node.label)}</span>
+            <span class="pl-node-status">${escape(node.status)}</span>
+          </div>
+          <div class="pl-node-caps">${consumes}${produces}</div>
+        </div>`);
+      const next = order[i + 1];
+      if (next) {
+        const eRec = edgeBetween(node.id, next);
+        const viaLabel = eRec ? eRec.via.replace(/_/g, " ") : "";
+        cells.push(`<div class="pl-arrow${eRec ? "" : " pl-arrow-loose"}" title="${escape(viaLabel)}">
+          <span class="pl-arrow-line"></span>
+          ${eRec ? `<span class="pl-arrow-via">${escape(viaLabel)}</span>` : ""}
+          <span class="pl-arrow-tip">▸</span>
+        </div>`);
+      }
+    }
+    return cells.join("");
+  };
+
+  const cards = pipelines
+    .map(
+      (p) => `
+    <section class="cfg-card pl-pipe-card">
+      <h2 class="cfg-title">${escape(p.name)} <span class="pg-cap-hint">${escape(p.description)}</span></h2>
+      <div class="pl-flow">${flow(p)}</div>
+    </section>`,
+    )
+    .join("");
+
   root.innerHTML = chrome(`
     <h1 class="page-title">Pipelines</h1>
     <p class="page-subtitle">
-      Cross-plugin DAG mirror — Ctrl+G overlay equivalent.
+      Cross-plugin pipelines. Every artefact the DAW-vision toolkit ships rides one of these chains.
     </p>
-    <div class="empty" role="status">
-      <div class="glyph" aria-hidden="true">🔁</div>
-      Daemon pipeline registry is empty.<br>
-      Pipelines appear here when plugins submit them via <code>PluginAction::SubmitPipeline</code>.<br>
-      <small>(Daemon plugins load at startup but verb dispatch over IPC is W2-phase-3.)</small>
-    </div>
+    ${cards || '<div class="empty">No pipelines defined.</div>'}
   `);
   setupChromeHandlers();
 }
