@@ -3681,3 +3681,26 @@ body.modal-open { overflow: hidden; }
   background: rgba(255,255,255,0.02);
 }
 .massbar.massbar-empty .muted { opacity: 0.7; font-style: italic; }
+
+/* History page — extends .media-pill with an action column + group
+ * sub-headers. Layout: thumb · info · meta · actions on the right. */
+.hist-pill {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.hist-pill:hover { background: rgba(255,255,255,0.04); }
+.hist-actions {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin-left: 0.6rem;
+}
+.hist-actions .sm { padding: 0.22rem 0.5rem; font-size: 0.78rem; border-radius: var(--radius-sm); }
+.hist-actions .rec-play-disabled { opacity: 0.4; pointer-events: none; cursor: not-allowed; }
+.hist-group { margin-bottom: 1rem; }
+.hist-group-head {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  margin: 0.6rem 0 0.35rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-light);
+}

@@ -6713,6 +6713,15 @@ async function _renderSchedule_legacy_cron_unused() {
 
 // ── Durable History (item 17) — completed/failed audit from the jobs DB,
 // survives restarts (unlike the in-memory /recordings snapshot). ──
+// History page filter / group state — persisted like the Recordings ones.
+let histFilter = "";
+let histGroupBy = localStorage.getItem("strivo-hist-groupby") || "none"; // "none" | "channel" | "date"
+let histStateFilter = new Set(
+  (localStorage.getItem("strivo-hist-state-filter") || "")
+    .split(",").filter(Boolean),
+);
+let histCache = [];
+
 async function renderHistory() {
   // Fetch history alongside the live /recordings snapshot so we can
   // overlay file_exists state (audit B4). Without this, History happily
@@ -6728,7 +6737,7 @@ async function renderHistory() {
     recs = r.recordings || [];
   } catch (_) {}
   const liveById = new Map(recs.map((r) => [r.id, r]));
-  const rows = hist.map((row) => {
+  histCache = hist.map((row) => {
     const live = liveById.get(row.id);
     if (live && live.file_exists === false) {
       return { ...row, file_exists: false, state: "Failed" };
@@ -6736,15 +6745,236 @@ async function renderHistory() {
     return row;
   });
   root.removeAttribute("aria-busy");
-  const body = rows.length
-    ? rows.map(recordingPillHtml).join("")
-    : '<div class="empty">No recording history yet.</div>';
+
+  if (histCache.length === 0) {
+    root.innerHTML = chrome(`
+      <h1 class="page-title">History</h1>
+      <div class="empty">
+        <div class="glyph">🗂</div>
+        No recording history yet. Captures land here automatically.
+      </div>
+    `);
+    setupChromeHandlers();
+    return;
+  }
+
   root.innerHTML = chrome(`
     <h1 class="page-title">History</h1>
-    <p class="page-subtitle">Durable record of every capture (survives restarts) · ${rows.length} entries</p>
-    <div class="media-list">${body}</div>
+    <p class="page-subtitle" id="hist-count"></p>
+    <div class="rec-toolbar">
+      <input id="hist-filter" class="grid-filter" type="search"
+             placeholder="Filter by channel or title…"
+             aria-label="Filter history" value="${escape(histFilter)}">
+      <button id="hist-groupby" class="sm" title="Group rows">
+        ${histGroupBy === "channel" ? "▼ Grouped by channel"
+          : histGroupBy === "date" ? "▼ Grouped by month"
+          : "≣ Group by…"}
+      </button>
+    </div>
+    <div id="hist-state-chips" class="rec-state-chips" role="group" aria-label="Filter by state"></div>
+    <div id="hist-list" class="media-list"></div>
   `);
   setupChromeHandlers();
+  paintHistChips();
+  paintHistory();
+
+  document.getElementById("hist-filter")?.addEventListener("input", (e) => {
+    histFilter = e.target.value;
+    paintHistory();
+  });
+  document.getElementById("hist-groupby")?.addEventListener("click", () => {
+    histGroupBy = histGroupBy === "none"
+      ? "channel"
+      : histGroupBy === "channel" ? "date" : "none";
+    localStorage.setItem("strivo-hist-groupby", histGroupBy);
+    renderHistory().catch((e) => Toast.error(e.message));
+  });
+}
+
+function paintHistChips() {
+  const host = document.getElementById("hist-state-chips");
+  if (!host) return;
+  const counts = new Map();
+  for (const r of histCache) {
+    const key = stateClassName(r.state);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  if (counts.size <= 1) { host.innerHTML = ""; return; }
+  const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  const allActive = histStateFilter.size === 0;
+  host.innerHTML = `
+    <button class="rec-state-chip rec-state-chip-all ${allActive ? "active" : ""}" type="button">
+      <span class="rec-state-chip-dot"></span>All <span class="rec-state-chip-count">${histCache.length}</span>
+    </button>
+    ${sorted.map(([state, n]) => {
+      const active = histStateFilter.size === 0 || histStateFilter.has(state);
+      return `<button class="rec-state-chip state-${escape(state)} ${active ? "active" : ""}"
+                data-state="${escape(state)}" type="button">
+        <span class="rec-state-chip-dot"></span>
+        ${escape(stateChipLabel(state))}
+        <span class="rec-state-chip-count">${n}</span>
+      </button>`;
+    }).join("")}`;
+  host.querySelector(".rec-state-chip-all")?.addEventListener("click", () => {
+    histStateFilter.clear();
+    localStorage.setItem("strivo-hist-state-filter", "");
+    paintHistChips();
+    paintHistory();
+  });
+  host.querySelectorAll("[data-state]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const s = btn.dataset.state;
+      if (histStateFilter.size === 0) histStateFilter = new Set([s]);
+      else if (histStateFilter.has(s)) histStateFilter.delete(s);
+      else histStateFilter.add(s);
+      localStorage.setItem("strivo-hist-state-filter",
+        Array.from(histStateFilter).join(","));
+      paintHistChips();
+      paintHistory();
+    });
+  });
+}
+
+function paintHistory() {
+  const host = document.getElementById("hist-list");
+  if (!host) return;
+  const q = histFilter.trim().toLowerCase();
+  const rows = histCache.filter((r) => {
+    if (histStateFilter.size > 0 && !histStateFilter.has(stateClassName(r.state))) return false;
+    if (!q) return true;
+    return (r.channel_name || "").toLowerCase().includes(q)
+        || niceTitle(r.stream_title).toLowerCase().includes(q);
+  });
+  // Newest-first inside each cluster + as the default flat order.
+  rows.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+  const countEl = document.getElementById("hist-count");
+  if (countEl) {
+    countEl.textContent = (q || histStateFilter.size > 0 || rows.length !== histCache.length)
+      ? `${rows.length} of ${histCache.length} entries`
+      : `${histCache.length} entries · durable record of every capture (survives restarts)`;
+  }
+
+  if (rows.length === 0) {
+    host.innerHTML = `<div class="empty"><div class="glyph">🗂</div>No history rows match the current filter.</div>`;
+    return;
+  }
+  let html;
+  if (histGroupBy === "channel") {
+    const order = [];
+    const groups = new Map();
+    for (const r of rows) {
+      const k = r.channel_name || "(unknown)";
+      if (!groups.has(k)) { groups.set(k, []); order.push(k); }
+      groups.get(k).push(r);
+    }
+    html = order.map((ch) => {
+      const list = groups.get(ch);
+      const totalBytes = list.reduce((a, b) => a + (b.bytes_written || 0), 0);
+      return `<div class="hist-group">
+        <div class="hist-group-head">
+          <span class="rec-group-name">${escape(ch)}</span>
+          <span class="rec-group-meta">${list.length} entr${list.length === 1 ? "y" : "ies"} · ${formatBytes(totalBytes)}</span>
+        </div>
+        ${list.map(historyPillHtml).join("")}
+      </div>`;
+    }).join("");
+  } else if (histGroupBy === "date") {
+    const order = [];
+    const groups = new Map();
+    for (const r of rows) {
+      const d = new Date(r.started_at);
+      const k = isNaN(d.getTime()) ? "(unknown)"
+        : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      if (!groups.has(k)) { groups.set(k, []); order.push(k); }
+      groups.get(k).push(r);
+    }
+    html = order.map((mo) => {
+      const list = groups.get(mo);
+      const totalBytes = list.reduce((a, b) => a + (b.bytes_written || 0), 0);
+      const niceMonth = mo === "(unknown)" ? mo
+        : new Date(mo + "-01").toLocaleString(undefined, { year: "numeric", month: "long" });
+      return `<div class="hist-group">
+        <div class="hist-group-head">
+          <span class="rec-group-name">${escape(niceMonth)}</span>
+          <span class="rec-group-meta">${list.length} entr${list.length === 1 ? "y" : "ies"} · ${formatBytes(totalBytes)}</span>
+        </div>
+        ${list.map(historyPillHtml).join("")}
+      </div>`;
+    }).join("");
+  } else {
+    html = rows.map(historyPillHtml).join("");
+  }
+  host.innerHTML = html;
+
+  // Wire per-row buttons. Reuses the same handlers Recordings table
+  // mounts so behaviours stay consistent.
+  host.querySelectorAll("[data-action=rec-play]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRecordingPlayer(btn.dataset.jobId);
+    });
+  });
+  host.querySelectorAll("[data-action=rec-info]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRecordingInfo(btn.dataset.jobId);
+    });
+  });
+  host.querySelectorAll("[data-action=rec-delete]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!(await confirmDialog("Delete this recording? The file moves to the 7-day trash.", { ok: "Delete", danger: true })))
+        return;
+      await withBusy(btn, "Deleting…", async () => {
+        await API.deleteRecordingFile(btn.dataset.jobId);
+        Toast.success("Deleted");
+        histCache = histCache.filter((r) => r.id !== btn.dataset.jobId);
+        renderHistory().catch(() => {});
+      }).catch((err) => Toast.error(`Delete failed: ${err.message}`));
+    });
+  });
+  // Clicking anywhere on the pill (outside buttons) opens the Info
+  // modal — same convention as the Recordings table.
+  host.querySelectorAll(".media-pill").forEach((pill) => {
+    pill.addEventListener("click", (e) => {
+      if (e.target.closest("button, input, a")) return;
+      const id = pill.dataset.jobId;
+      if (id) openRecordingInfo(id);
+    });
+  });
+}
+
+// Action-rich pill used on the History page. Mirrors recordingPillHtml's
+// layout but adds the Recordings-page Play/Info/Delete affordance set.
+function historyPillHtml(j) {
+  const when = j.started_at ? new Date(j.started_at).toLocaleString() : "—";
+  const missingOverlay = j.file_exists === false
+    ? '<span class="mp-missing">FILE MISSING</span>' : "";
+  const sourceBadge = j.source_url
+    ? '<span class="mp-source" title="From Twitch/YouTube VOD backfill">VOD</span>' : "";
+  const isFinished = stateClassName(j.state) === "finished" && j.file_exists !== false;
+  const playBtn = isFinished
+    ? `<button class="primary sm" data-action="rec-play" data-job-id="${escape(j.id)}" title="Open player">▶ Play</button>`
+    : `<button class="primary sm rec-play-disabled" disabled aria-disabled="true" title="${j.file_exists === false ? "File missing" : "Not finished"}">▶ Play</button>`;
+  return `
+    <div class="media-pill hist-pill${j.file_exists === false ? " mp-broken" : ""}"
+         data-job-id="${escape(j.id)}">
+      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" alt=""
+        src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
+      <div class="mp-info">
+        <div class="mp-title">${escape(niceTitle(j.stream_title) || j.channel_name || "(recording)")} ${sourceBadge}</div>
+        <div class="mp-sub">${escape(j.channel_name || "")} · ${escape(when)}</div>
+      </div>
+      <div class="mp-meta">
+        ${(() => { const d = recordingDisplayState(j); return `<span class="state-pill ${d.className}">${escape(d.label)}</span>`; })()}
+        <span class="mp-size">${formatBytes(j.bytes_written || 0)}</span>
+      </div>
+      <div class="hist-actions">
+        ${playBtn}
+        <button class="sm" data-action="rec-info" data-job-id="${escape(j.id)}" title="Recording details">ⓘ Info</button>
+        <button class="danger sm" data-action="rec-delete" data-job-id="${escape(j.id)}" title="Delete (moves file to 7-day trash)">✕</button>
+      </div>
+    </div>`;
 }
 
 // ── Live-count ticker ────────────────────────────────────────────────
