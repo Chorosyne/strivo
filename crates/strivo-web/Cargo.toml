@@ -28,6 +28,7 @@ strivo-chapters = { path = "../chapters" }
 strivo-cuepoints = { path = "../cuepoints" }
 strivo-clipper = { path = "../clipper" }
 strivo-thumbnails = { path = "../thumbnails" }
+strivo-insights-compare = { path = "../insights-compare" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

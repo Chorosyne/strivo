@@ -566,6 +566,158 @@ struct ThumbFilePayload {
     p: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct InsightsCompareQuery {
+    /// Comma-separated list of recording UUIDs (exactly two; first two
+    /// taken if more are supplied).
+    recs: String,
+    #[serde(default = "default_compare_limit")]
+    limit: u32,
+    #[serde(default)]
+    include_stopwords: bool,
+}
+
+fn default_compare_limit() -> u32 {
+    50
+}
+
+/// `GET /api/v1/plugins/insights/compare?recs=A,B` — pull each
+/// recording's top-N word list from Crunchr and run the comparator.
+/// Returns the shared / only_a / only_b sets + Jaccard score.
+async fn insights_compare(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Query(q): Query<InsightsCompareQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("insights") { return r; }
+    let ids: Vec<String> = q
+        .recs
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if ids.len() < 2 {
+        return Problem::bad_request("recs= must list at least two recording ids").into_response();
+    }
+    let Some(conn) = open_ro(&crunchr_db()) else {
+        return Problem::not_found("crunchr has no data yet").into_response();
+    };
+    let limit = q.limit.clamp(10, 500) as usize;
+    let fetch = |rid: &str| -> Vec<strivo_insights_compare::WordCount> {
+        strivo_plugins::insights::frequency::top_words_for_recording(
+            &conn,
+            rid,
+            limit,
+            q.include_stopwords,
+        )
+        .ok()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|w| strivo_insights_compare::WordCount {
+            word: w.word,
+            count: w.count as u64,
+        })
+        .collect()
+    };
+    let a = fetch(&ids[0]);
+    let b = fetch(&ids[1]);
+    let cmp = strivo_insights_compare::compare_words(&a, &b);
+    Json(json!({
+        "recording_a": ids[0],
+        "recording_b": ids[1],
+        "limit": limit,
+        "comparison": cmp,
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct RetentionQuery {
+    #[serde(default = "default_bucket_secs")]
+    bucket_secs: f32,
+}
+
+fn default_bucket_secs() -> f32 {
+    30.0
+}
+
+/// `GET /api/v1/plugins/insights/retention/<recording_id>` — bucket
+/// transcript activity + cuepoint density into a retention curve.
+async fn insights_retention(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<RetentionQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("insights") { return r; }
+    // Pull Crunchr segments.
+    let Some(conn) = open_ro(&crunchr_db()) else {
+        return Problem::not_found("crunchr has no data yet").into_response();
+    };
+    let detail = match strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Problem::not_found("recording not transcribed").into_response(),
+        Err(e) => return Problem::internal(e.to_string()).into_response(),
+    };
+    let segments: Vec<strivo_insights_compare::Segment> = detail
+        .segments
+        .iter()
+        .map(|s| {
+            // Word count proxy: split on whitespace. Cheap, deterministic.
+            let words = s.text.split_whitespace().count() as u32;
+            strivo_insights_compare::Segment {
+                start_sec: s.start_sec as f32,
+                end_sec: s.end_sec as f32,
+                word_count: words,
+            }
+        })
+        .collect();
+    // Pull cuepoints for the same recording (best-effort).
+    let cp_path = strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("cuepoints")
+        .join("cuepoints.db");
+    let cuepoint_times: Vec<f32> = strivo_cuepoints::store::CuepointsStore::open(&cp_path)
+        .ok()
+        .and_then(|store| {
+            store
+                .load(&recording_id, strivo_cuepoints::DEFAULT_THRESHOLD)
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| c.time_sec)
+        .collect();
+    // Duration: max segment end_sec; clamp to a sane floor so even
+    // a 3-second test recording yields a curve.
+    let duration = segments
+        .iter()
+        .map(|s| s.end_sec)
+        .fold(0.0_f32, f32::max)
+        .max(q.bucket_secs * 2.0);
+    let bucket = q.bucket_secs.max(5.0);
+    let curve = strivo_insights_compare::compute_retention(
+        &segments,
+        &cuepoint_times,
+        duration,
+        bucket,
+    );
+    Json(json!({
+        "recording_id": recording_id,
+        "duration_sec": duration,
+        "bucket_secs": bucket,
+        "points": curve,
+    }))
+    .into_response()
+}
+
 /// Open a plugin DB read-only. Returns None when the file is absent (plugin
 /// idle) so callers can serve an empty payload.
 fn open_ro(path: &std::path::Path) -> Option<Connection> {
@@ -1282,4 +1434,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/thumbnails/{id}", axum::routing::post(thumbnails_generate))
         .route("/api/v1/plugins/thumbnails/{id}/{stem}", get(thumbnails_list))
         .route("/api/v1/plugins/thumbnails/file", get(thumbnails_serve_file))
+        .route("/api/v1/plugins/insights/compare", get(insights_compare))
+        .route("/api/v1/plugins/insights/retention/{id}", get(insights_retention))
 }

@@ -155,6 +155,10 @@ const API = {
     API._fetch(`/plugins/thumbnails/${encodeURIComponent(recordingId)}/${encodeURIComponent(stem)}`),
   thumbnailFileUrl: (absPath) =>
     `/api/v1/plugins/thumbnails/file?p=${encodeURIComponent(absPath)}`,
+  insightsCompare: (recordingA, recordingB) =>
+    API._fetch(`/plugins/insights/compare?recs=${encodeURIComponent(recordingA + "," + recordingB)}`),
+  insightsRetention: (recordingId, bucketSecs = 30) =>
+    API._fetch(`/plugins/insights/retention/${encodeURIComponent(recordingId)}?bucket_secs=${bucketSecs}`),
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -2832,10 +2836,44 @@ async function renderCrunchrRecording(id) {
     ${analysis}
     <section class="cfg-card">
       <h2 class="cfg-title">Transcript <span class="pg-cap-hint">${speakers.length} speaker${speakers.length === 1 ? "" : "s"} · ${blocks.length} block${blocks.length === 1 ? "" : "s"}</span></h2>
+      <div class="cr-retention" id="cr-retention" hidden></div>
       ${chipsRow}
       <div class="pg-transcript cr-transcript">${blockHtml || '<div class="empty sm">No segments — transcription may still be running.</div>'}</div>
     </section>
   `);
+  // Lazy retention curve — async so the transcript paints first.
+  if (d.recording_id) {
+    API.insightsRetention(d.recording_id, 30).then((retention) => {
+      const host = document.getElementById("cr-retention");
+      if (!host || !retention || !retention.points || !retention.points.length) return;
+      const dur = retention.duration_sec || 1;
+      // Compose a sparkline-ish strip: each bucket is a vertical bar
+      // whose height encodes retention and whose hue carries the
+      // talk/action mix (cyan-ish for talk-heavy, magenta-ish for
+      // action-heavy). Click any bar → seek the (future) player.
+      const bars = retention.points
+        .map((p) => {
+          const pct = Math.max(0, Math.min(1, p.retention || 0));
+          const hue = 200 - Math.round((p.action_density - p.talk_density) * 60);
+          return `<a class="cr-ret-bar" href="#" data-seek="${p.bucket_start}" title="${fmtClock(p.bucket_start)} · retention ${(pct * 100).toFixed(0)}%" style="--ret-h:${(pct * 100).toFixed(0)}%; --ret-hue:${hue}"></a>`;
+        })
+        .join("");
+      host.hidden = false;
+      host.innerHTML = `
+        <div class="cr-ret-head">
+          <span>Retention proxy</span>
+          <span class="pg-cap-hint">${retention.points.length} buckets · ${retention.bucket_secs}s each · talk + cuepoint density</span>
+        </div>
+        <div class="cr-ret-strip" role="img" aria-label="Retention curve">${bars}</div>
+        <div class="rec-cp-axis"><span>0:00</span><span>${fmtClock(dur)}</span></div>`;
+      host.querySelectorAll(".cr-ret-bar").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          e.preventDefault();
+          seek(parseFloat(el.dataset.seek || "0"));
+        });
+      });
+    }).catch(() => {});
+  }
   setupChromeHandlers();
 
   const btn = document.getElementById("retranscribe");
@@ -3074,9 +3112,13 @@ let insightsState = { stopwords: false };
 async function renderInsights() {
   const parts = routeParts();
   const recId = parts[2] === "rec" ? parts[3] : null;
-  const [wordsResp, topicsResp] = await Promise.all([
+  const [wordsResp, topicsResp, crunchrResp] = await Promise.all([
     API.insightsWords({ stopwords: insightsState.stopwords, limit: 40 }),
     API.insightsTopics(),
+    // Pull the list of transcribed recordings so the comparison
+    // picker has options. Failure is fine — the picker just stays
+    // empty.
+    API.crunchrRecordings().catch(() => ({ recordings: [] })),
   ]);
   root.removeAttribute("aria-busy");
   const words = (wordsResp && wordsResp.words) || [];
@@ -3100,6 +3142,15 @@ async function renderInsights() {
     )
     .join("");
 
+  // Comparison picker: pick any two transcribed recordings.
+  const allRecs = (crunchrResp && crunchrResp.recordings) || [];
+  const recOptions = allRecs
+    .map(
+      (r) =>
+        `<option value="${escape(r.recording_id)}">${escape(niceTitle(r.title) || r.recording_id)} · ${escape(r.channel_name)}</option>`,
+    )
+    .join("");
+
   root.innerHTML = chrome(`
     ${pluginHeader("Insights", "Aggregate signals across every transcribed recording.", "#/plugins")}
     <div class="cfg-grid">
@@ -3120,6 +3171,15 @@ async function renderInsights() {
         <h2 class="cfg-title">Speaker airtime</h2>
         <div id="ins-speakers"><div class="empty sm">Open a transcript and choose “View insights” to load speaker airtime.</div></div>
       </section>
+      <section class="cfg-card" id="ins-compare-card">
+        <h2 class="cfg-title">Compare two streams <span class="pg-cap-hint">word overlap · Jaccard · what's new vs gone</span></h2>
+        <form id="ins-compare-form" class="mon-add">
+          <select id="ins-compare-a">${recOptions}</select>
+          <select id="ins-compare-b">${recOptions}</select>
+          <button class="btn-primary" type="submit">Compare</button>
+        </form>
+        <div id="ins-compare-result"></div>
+      </section>
     </div>
   `);
   setupChromeHandlers();
@@ -3131,6 +3191,56 @@ async function renderInsights() {
     });
   }
   if (recId) await loadInsightsSpeakers(recId);
+
+  // Comparison submit — POSTs nothing (idempotent GET).
+  document.getElementById("ins-compare-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const a = document.getElementById("ins-compare-a").value;
+    const b = document.getElementById("ins-compare-b").value;
+    if (!a || !b || a === b) {
+      Toast.error("Pick two different recordings");
+      return;
+    }
+    const host = document.getElementById("ins-compare-result");
+    host.innerHTML = '<div class="empty sm">Comparing…</div>';
+    try {
+      const r = await API.insightsCompare(a, b);
+      const c = r.comparison;
+      const sharedRows = (c.shared || [])
+        .slice(0, 30)
+        .map(
+          (s) =>
+            `<tr><td>${escape(s.word)}</td><td>${s.count_a}</td><td>${s.count_b}</td><td>${isFinite(s.a_over_b) ? s.a_over_b.toFixed(2) : "∞"}</td></tr>`,
+        )
+        .join("");
+      const onlyA = (c.only_a || []).slice(0, 20).map((w) => `<li>${escape(w.word)} <em>${w.count}</em></li>`).join("");
+      const onlyB = (c.only_b || []).slice(0, 20).map((w) => `<li>${escape(w.word)} <em>${w.count}</em></li>`).join("");
+      host.innerHTML = `
+        <div class="ins-cmp-summary">
+          <span class="cfg-badge">Jaccard ${(c.jaccard * 100).toFixed(0)}%</span>
+          <span class="pg-cap-hint">${c.shared.length} shared · ${c.only_a.length} only-A · ${c.only_b.length} only-B</span>
+        </div>
+        <div class="ins-cmp-grid">
+          <div class="ins-cmp-table-wrap">
+            <h3 class="ins-cmp-h">Shared words</h3>
+            <table class="ins-cmp-table">
+              <thead><tr><th>word</th><th>A</th><th>B</th><th>A÷B</th></tr></thead>
+              <tbody>${sharedRows || '<tr><td colspan="4" class="empty sm">No shared words</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div>
+            <h3 class="ins-cmp-h">Only in A</h3>
+            <ul class="ins-cmp-list">${onlyA || '<li class="empty sm">None</li>'}</ul>
+          </div>
+          <div>
+            <h3 class="ins-cmp-h">Only in B</h3>
+            <ul class="ins-cmp-list">${onlyB || '<li class="empty sm">None</li>'}</ul>
+          </div>
+        </div>`;
+    } catch (err) {
+      host.innerHTML = `<div class="empty sm">Compare failed: ${escape(err.message)}</div>`;
+    }
+  });
 }
 
 async function loadInsightsSpeakers(recId) {

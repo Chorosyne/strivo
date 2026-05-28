@@ -2785,6 +2785,63 @@ body.modal-open { overflow: hidden; }
   gap: 0.4rem;
   flex: 1;
 }
+/* Retention strip on transcript page (Insights iter 7). */
+.cr-retention { margin-bottom: 0.8rem; }
+.cr-ret-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.cr-ret-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 60px;
+  padding: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.cr-ret-bar {
+  flex: 1;
+  min-width: 2px;
+  height: var(--ret-h, 0%);
+  background: hsl(var(--ret-hue, 200), 70%, 55%);
+  border-radius: 1px;
+  opacity: 0.78;
+  transition: opacity 0.1s, transform 0.1s;
+}
+.cr-ret-bar:hover { opacity: 1; transform: scaleY(1.1); }
+/* Compare-streams card on /plugins/insights (iter 7). */
+#ins-compare-card .mon-add select { min-width: 220px; }
+.ins-cmp-summary { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; }
+.ins-cmp-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 1rem;
+}
+.ins-cmp-h {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.ins-cmp-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.ins-cmp-table th, .ins-cmp-table td {
+  text-align: left;
+  padding: 0.25rem 0.45rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.ins-cmp-table th { font-weight: 600; color: var(--muted); }
+.ins-cmp-list { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; color: var(--text); }
+.ins-cmp-list em { color: var(--muted); font-style: normal; margin-left: 0.3rem; }
+@media (max-width: 900px) {
+  .ins-cmp-grid { grid-template-columns: 1fr; }
+}
 .mon-cron-hint {
   margin: 0.6rem 0 0;
   font-size: 0.78rem;
