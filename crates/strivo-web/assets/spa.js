@@ -2289,9 +2289,20 @@ async function renderPluginHub() {
   root.removeAttribute("aria-busy");
   const plugins = (resp && resp.plugins) || [];
   const upgrade = renderUpgradeCard(licence);
+  // Plugin first-action hints. Keyed by plugin name; shown when the
+  // plugin reports zero data (audit U12). Long-form copy lives here
+  // so non-engineers can iterate on it without touching render code.
+  const PLUGIN_GETSTARTED = {
+    crunchr: "Open a recording's ⓘ Info → Generate subtitles to transcribe it.",
+    archiver: "Enable Archiver tandem on a channel from the channel row to start backfilling.",
+    insights: "Insights aggregate Crunchr output — transcribe at least one recording.",
+    viewguard: "Viewguard scores Twitch viewer signals during live captures.",
+  };
   const cards = plugins
     .map((p) => {
-      const statBits = Object.entries(p.stats || {})
+      const stats = p.stats || {};
+      const totalStats = Object.values(stats).reduce((a, b) => a + (Number(b) || 0), 0);
+      const statBits = Object.entries(stats)
         .map(
           ([k, v]) =>
             `<span class="pg-stat"><strong>${formatCount(v)}</strong> ${escape(k.replace(/_/g, " "))}</span>`,
@@ -2304,6 +2315,24 @@ async function renderPluginHub() {
         ? `<span class="cfg-badge ok">ready</span>`
         : `<span class="cfg-badge">idle</span>`;
       const href = p.available ? `#/plugins/${p.name}` : null;
+      // Get-started guidance fills the stats footprint while there's
+      // nothing to count yet — replaces the bland "no data yet" stub.
+      const statsHtml = statBits
+        ? `<div class="pg-stats">${statBits}</div>`
+        : totalStats === 0 && PLUGIN_GETSTARTED[p.name]
+          ? `<div class="pg-getstarted"><strong>Get started:</strong> ${escape(PLUGIN_GETSTARTED[p.name])}</div>`
+          : '<div class="pg-stats"><span class="pg-stat muted">no data yet</span></div>';
+      const verbs = Array.isArray(p.verbs) && p.verbs.length
+        ? `<div class="pg-verbs">${p.verbs
+            .map(
+              (v) =>
+                `<span class="pg-verb-chip" title="${escape(v.scope ? `Scope: ${v.scope}` : "")}">${escape(v.label || v.verb)}</span>`,
+            )
+            .join("")}</div>`
+        : "";
+      const dataDir = p.data_dir
+        ? `<div class="pg-meta"><code title="Plugin data folder">${escape(p.data_dir)}</code></div>`
+        : "";
       const body = `
         <div class="pg-card-head">
           <span class="pg-icon pg-icon-${p.name}" aria-hidden="true">${escape((p.display || p.name)[0])}</span>
@@ -2311,7 +2340,9 @@ async function renderPluginHub() {
           ${status}
         </div>
         <p class="pg-card-desc">${escape(p.description || "")}</p>
-        <div class="pg-stats">${statBits || '<span class="pg-stat muted">no data yet</span>'}</div>`;
+        ${statsHtml}
+        ${verbs}
+        ${dataDir}`;
       return href
         ? `<a class="pg-card" href="${href}" data-plugin="${p.name}">${body}</a>`
         : `<div class="pg-card pg-card-idle" data-plugin="${p.name}">${body}</div>`;
@@ -2419,7 +2450,8 @@ async function renderCrunchr() {
              autocomplete="off" aria-label="Search transcripts" />
     </div>
     <div id="crunchr-search-results"></div>
-    <div class="pg-list">${rows || '<div class="empty">Nothing transcribed yet.</div>'}</div>
+    <div class="pg-list">${rows || `<div class="empty">Nothing transcribed yet.</div>
+      <div class="pg-getstarted"><strong>Get started:</strong> open a finished recording's ⓘ Info on the Recordings page and click <em>Generate subtitles</em>. Transcripts land here after the run completes.</div>`}</div>
   `);
   setupChromeHandlers();
 
@@ -2538,7 +2570,8 @@ async function renderArchiver() {
     .join("");
   root.innerHTML = chrome(`
     ${pluginHeader("Archiver", "Tracked channels and their back-catalog download status.", "#/plugins")}
-    <div class="pg-list">${rows || '<div class="empty">No channels archived yet.</div>'}</div>
+    <div class="pg-list">${rows || `<div class="empty">No channels archived yet.</div>
+      <div class="pg-getstarted"><strong>Get started:</strong> add a channel and enable Archiver tandem from its row — Archiver back-fills the channel's existing VODs in priority order.</div>`}</div>
   `);
   setupChromeHandlers();
 }
@@ -2608,7 +2641,8 @@ async function renderViewguard() {
     .join("");
   root.innerHTML = chrome(`
     ${pluginHeader("Viewguard", "Latest viewbot-fraud verdict per channel. Higher = more suspicious.", "#/plugins")}
-    <div class="cfg-grid">${cards || '<div class="empty">No verdicts yet — viewers are sampled while channels are live.</div>'}</div>
+    <div class="cfg-grid">${cards || `<div class="empty">No verdicts yet — viewers are sampled while channels are live.</div>
+      <div class="pg-getstarted"><strong>Get started:</strong> Viewguard runs automatically during live Twitch captures. Verdicts appear here after a stream ends and samples are scored.</div>`}</div>
   `);
   setupChromeHandlers();
 }

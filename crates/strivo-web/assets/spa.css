@@ -1621,6 +1621,36 @@ a.media-pill:hover,
 }
 .pg-card:hover { transform: translateY(-2px); border-color: var(--border-light); }
 .pg-card-idle { opacity: 0.6; }
+.pg-getstarted {
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: rgba(0, 188, 212, 0.06);
+  border-left: 2px solid var(--accent2);
+  padding: 0.45rem 0.6rem;
+  border-radius: 0 6px 6px 0;
+  margin: 0.4rem 0 0.5rem;
+}
+.pg-getstarted strong { color: var(--text); margin-right: 0.25rem; }
+.pg-verbs { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.3rem 0 0.4rem; }
+.pg-verb-chip {
+  font-size: 0.74rem;
+  color: var(--accent2);
+  border: 1px solid rgba(0, 188, 212, 0.4);
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  background: rgba(0, 188, 212, 0.08);
+}
+.pg-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.4rem;
+  word-break: break-all;
+}
+.pg-meta code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
 .pg-card-head { display: flex; align-items: center; gap: 0.6rem; }
 .pg-icon {
   display: grid;

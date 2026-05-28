@@ -113,6 +113,21 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
     let viewguard_ok = pro_entitled("viewguard");
     let insights_ok = pro_entitled("insights");
 
+    // Per-plugin data_dir surfaces in the response so the SPA can show
+    // a "data" hint without the user having to know the layout (M6).
+    let crunchr_data = crunchr_db()
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let archiver_data = archiver_db()
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let viewguard_data = viewguard_db()
+        .as_deref()
+        .and_then(|p| p.parent().map(|p| p.to_string_lossy().to_string()))
+        .unwrap_or_default();
+
     let crunchr_conn = open_ro(&crunchr_db());
     let crunchr = match &crunchr_conn {
         Some(c) => json!({
@@ -122,6 +137,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "available": crunchr_ok,
             "pro": true,
             "entitled": crunchr_ok,
+            "data_dir": crunchr_data,
             "stats": {
                 "recordings": count(c, "SELECT COUNT(*) FROM videos"),
                 "analyzed": count(c, "SELECT COUNT(*) FROM video_analysis"),
@@ -148,6 +164,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "available": insights_ok,
             "pro": true,
             "entitled": insights_ok,
+            "data_dir": crunchr_data,
             "stats": {
                 "words": count(c, "SELECT COUNT(DISTINCT word) FROM word_frequency"),
                 "topics_videos": count(c, "SELECT COUNT(*) FROM video_analysis WHERE topics IS NOT NULL AND topics != ''"),
@@ -169,6 +186,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "available": archiver_ok,
             "pro": true,
             "entitled": archiver_ok,
+            "data_dir": archiver_data,
             "stats": {
                 "channels": count(&c, "SELECT COUNT(*) FROM channels"),
                 "videos": count(&c, "SELECT COUNT(*) FROM videos"),
@@ -193,6 +211,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
             "available": viewguard_ok,
             "pro": true,
             "entitled": viewguard_ok,
+            "data_dir": viewguard_data,
             "stats": {
                 "verdicts": count(&c, "SELECT COUNT(DISTINCT channel_id) FROM verdicts"),
                 "samples": count(&c, "SELECT COUNT(*) FROM samples"),
