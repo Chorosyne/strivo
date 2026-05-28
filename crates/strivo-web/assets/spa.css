@@ -3480,3 +3480,29 @@ body.modal-open { overflow: hidden; }
   .upgrade-card { flex-direction: column; text-align: center; }
   .upgrade-bullets { text-align: left; }
 }
+
+/* Watch route — multi-stream viewer. Tiles are absolutely positioned by
+ * the layout calculator; the iframe inside fills its tile. */
+.watch-root { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.5rem 0.8rem; }
+.watch-toolbar {
+  display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-light); border-radius: 6px;
+  background: var(--bg-soft, rgba(255,255,255,0.02));
+}
+.watch-count { margin-right: 0.5rem; }
+.watch-mode-btn.active { background: var(--brand, #6e56cf); color: white; }
+.watch-stage { background: rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; }
+.watch-tile {
+  background: #000; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.watch-tile-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.3rem 0.55rem; background: rgba(0,0,0,0.55);
+  font-size: 0.8em;
+}
+.watch-tile-name { font-weight: 600; }
+.watch-tile-iframe { flex: 1; width: 100%; border: 0; background: #000; }
+.watch-empty .glyph { font-size: 3em; opacity: 0.5; }

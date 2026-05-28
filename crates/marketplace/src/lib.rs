@@ -290,6 +290,28 @@ pub fn default_catalog() -> Catalog {
             },
             CatalogEntry {
                 manifest: PluginManifest {
+                    name: "multistream".into(),
+                    version: "0.1.0".into(),
+                    author: "Chorosyne".into(),
+                    license: Some("MIT".into()),
+                    description:
+                        "Multi-stream viewer — auto-tile any subset of currently live followed channels, Twitch + YouTube embeds, focus + PiP modes."
+                            .into(),
+                    capabilities: vec!["x.multistream".into()],
+                    consumes: vec!["x.channel_state".into()],
+                    entry_point: EntryPoint::Cdylib { path: "multistream.so".into() },
+                    min_host_version: "0.3.0".into(),
+                    price_cents: None,
+                    repository: Some("https://github.com/Chorosyne/multistream".into()),
+                    icon: None,
+                    screenshots: vec![],
+                    category: Some("Viewer".into()),
+                },
+                source: "first_party".into(),
+                installed: true,
+            },
+            CatalogEntry {
+                manifest: PluginManifest {
                     name: "yt-publish".into(),
                     version: "0.2.0".into(),
                     author: "Chorosyne".into(),

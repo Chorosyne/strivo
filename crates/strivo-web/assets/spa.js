@@ -197,6 +197,11 @@ const API = {
     const qs = p.toString() ? `?${p.toString()}` : "";
     return API._fetch(`/plugins/deadair/${encodeURIComponent(recordingId)}${qs}`, { method: "POST" });
   },
+  multistreamTiles: (containerW, containerH, mode, host) => {
+    const p = new URLSearchParams({ container_w: containerW, container_h: containerH, host });
+    if (mode) p.set("mode", JSON.stringify(mode));
+    return API._fetch(`/plugins/multistream/tiles?${p.toString()}`);
+  },
   brandingLoad: (recordingId) =>
     API._fetch(`/plugins/branding/${encodeURIComponent(recordingId)}`),
   brandingSave: (recordingId, spec) =>
@@ -455,6 +460,7 @@ const ROUTES = [
   "schedule",
   "pipelines",
   "plugins",
+  "watch",
   "settings",
   "system",
   "logs",
@@ -524,6 +530,9 @@ async function render() {
     case "plugins":
       await renderPlugins();
       break;
+    case "watch":
+      await renderWatch();
+      break;
     case "settings":
       await renderSettings();
       break;
@@ -552,6 +561,7 @@ const TOPNAV = [
   // Pipelines now ships the DAW-vision cross-plugin DAG; restored to
   // the topnav (was hidden in the audit when the page was empty).
   ["pipelines", "🔁", "Pipelines", "d", "/assets/icons/candy/pipelines.svg"],
+  ["watch", "▦", "Watch", "w"],
   ["plugins", "🧩", "Plugins", "g", "/assets/icons/candy/plugins.svg"],
   ["settings", "⚙", "Settings", "c", "/assets/icons/candy/settings.svg"],
   ["system", "🛠", "System", "y", "/assets/icons/candy/system.svg"],
@@ -2558,6 +2568,92 @@ async function renderPipelines() {
 //   #/plugins/archiver/<channelId>  → channel catalog
 //   #/plugins/viewguard             → fraud verdicts
 //   #/plugins/insights              → word freq / topics / speakers
+// Multi-stream viewer route. Server returns tiles already laid out for
+// the requested container size + mode, plus each stream's ready-to-mount
+// embed URL. Mode is kept in URL params so refresh / share preserves the
+// view.
+async function renderWatch() {
+  const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  const modeName = params.get("mode") || "auto";
+  const focusId = params.get("focus") || "";
+  const sideId = params.get("side") || "";
+  let mode;
+  if (modeName === "focus" && focusId) mode = { mode: "focus", stream_id: focusId };
+  else if (modeName === "pip" && focusId) mode = { mode: "pip", main: focusId, side: sideId };
+  else mode = { mode: "auto" };
+  root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading live streams…</div></div>`);
+  const watch = document.getElementById("watch");
+  // Reserve the full viewport below the topbar for the tile area.
+  // Integer pixels — the backend's u32 Query<> rejects floats.
+  const cw = Math.max(320, Math.floor(watch.clientWidth));
+  const ch = Math.max(180, Math.floor(window.innerHeight - watch.getBoundingClientRect().top - 32));
+  let resp;
+  try {
+    resp = await API.multistreamTiles(cw, ch, mode, window.location.host);
+  } catch (e) {
+    watch.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${escape(e.message)}</div>`;
+    return;
+  }
+  const streams = resp.streams || [];
+  if (!streams.length) {
+    watch.innerHTML = `<div class="empty watch-empty"><div class="glyph">▦</div>
+      <p>No followed channels are live right now.</p>
+      <p class="pg-cap-hint">Follow Twitch / YouTube channels in Settings — they'll auto-appear here when they go live.</p></div>`;
+    return;
+  }
+  const tiles = resp.tiles || [];
+  const modeBtn = (m, label, target) =>
+    `<button class="sm watch-mode-btn ${modeName === m ? "active" : ""}" data-mode="${m}" data-target="${target || ""}">${label}</button>`;
+  const toolbar = `
+    <div class="watch-toolbar">
+      <span class="watch-count pg-cap-hint">${streams.length} live</span>
+      ${modeBtn("auto", "▦ Auto")}
+      ${streams.map((s) => modeBtn("focus", `◉ ${escape(s.channel_name)}`, s.stream_id)).join("")}
+      ${streams.length >= 2 ? modeBtn("pip", "⧉ PiP", `${streams[0].stream_id}|${streams[1].stream_id}`) : ""}
+    </div>`;
+  const stage = document.createElement("div");
+  stage.className = "watch-stage";
+  stage.style.position = "relative";
+  stage.style.width = `${cw}px`;
+  stage.style.height = `${ch}px`;
+  for (const t of tiles) {
+    const s = streams.find((x) => x.stream_id === t.stream_id);
+    if (!s) continue;
+    const tile = document.createElement("div");
+    tile.className = "watch-tile";
+    Object.assign(tile.style, {
+      position: "absolute", left: `${t.x}px`, top: `${t.y}px`,
+      width: `${t.w}px`, height: `${t.h}px`, zIndex: t.z,
+    });
+    tile.innerHTML = `
+      <div class="watch-tile-head">
+        <span class="watch-tile-name">${escape(s.channel_name)}</span>
+        <span class="watch-tile-plat pg-cap-hint">${escape(s.platform)}${s.viewer_count != null ? ` · ${formatCount(s.viewer_count)}` : ""}</span>
+      </div>
+      <iframe class="watch-tile-iframe" loading="lazy"
+              src="${escape(s.embed_url)}" allowfullscreen frameborder="0"></iframe>`;
+    stage.appendChild(tile);
+  }
+  watch.innerHTML = "";
+  watch.insertAdjacentHTML("beforeend", toolbar);
+  watch.appendChild(stage);
+  watch.querySelectorAll(".watch-mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const m = btn.dataset.mode;
+      const target = btn.dataset.target || "";
+      const p = new URLSearchParams();
+      p.set("mode", m);
+      if (m === "focus") p.set("focus", target);
+      if (m === "pip") {
+        const [main, side] = target.split("|");
+        p.set("focus", main || "");
+        p.set("side", side || "");
+      }
+      window.location.hash = `#/watch?${p.toString()}`;
+    });
+  });
+}
+
 async function renderPlugins() {
   const parts = routeParts(); // ["plugins", <slug?>, …]
   const slug = parts[1];
