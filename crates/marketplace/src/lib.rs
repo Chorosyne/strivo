@@ -312,6 +312,28 @@ pub fn default_catalog() -> Catalog {
             },
             CatalogEntry {
                 manifest: PluginManifest {
+                    name: "beat-detect".into(),
+                    version: "0.1.0".into(),
+                    author: "Chorosyne".into(),
+                    license: Some("MIT".into()),
+                    description:
+                        "DAW-style tempo grid — onset picker + autocorrelation BPM estimator from ffmpeg astats envelopes."
+                            .into(),
+                    capabilities: vec!["x.tempo".into()],
+                    consumes: vec!["recording".into()],
+                    entry_point: EntryPoint::Cdylib { path: "beat_detect.so".into() },
+                    min_host_version: "0.3.0".into(),
+                    price_cents: None,
+                    repository: Some("https://github.com/Chorosyne/beat-detect".into()),
+                    icon: None,
+                    screenshots: vec![],
+                    category: Some("Editor".into()),
+                },
+                source: "first_party".into(),
+                installed: true,
+            },
+            CatalogEntry {
+                manifest: PluginManifest {
                     name: "schedule-optimizer".into(),
                     version: "0.1.0".into(),
                     author: "Chorosyne".into(),

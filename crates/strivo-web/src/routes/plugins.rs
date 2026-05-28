@@ -2001,6 +2001,141 @@ async fn multistream_tiles(
     .into_response()
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct BeatDetectQuery {
+    /// Window seconds to sample (0 = whole recording). Capped server-
+    /// side so a one-hour stream doesn't run the detector across the
+    /// full envelope; 120s is plenty for tempo detection.
+    #[serde(default)]
+    window_sec: Option<f32>,
+    /// BPM search range.
+    #[serde(default)]
+    min_bpm: Option<f32>,
+    #[serde(default)]
+    max_bpm: Option<f32>,
+    #[serde(default)]
+    top_n: Option<usize>,
+}
+
+/// Parse `ametadata=print` output (channel-aware RMS dB) into the
+/// envelope shape the beat-detect crate expects. The format is:
+///   frame:N    pts:N       pts_time:T
+///   lavfi.astats.1.RMS_level=DB
+///   lavfi.astats.Overall.RMS_level=DB
+///   …
+/// where pts_time is mid-line, not line-start. Pick up the first
+/// non-finite-skipped Overall.RMS per frame.
+fn parse_astats_rms(stderr: &str) -> Vec<strivo_beat_detect::OnsetSample> {
+    let mut out = Vec::new();
+    let mut current_t: Option<f32> = None;
+    for line in stderr.lines() {
+        if let Some(idx) = line.find("pts_time:") {
+            let tail = &line[idx + "pts_time:".len()..];
+            let token: String = tail.chars().take_while(|c| !c.is_whitespace()).collect();
+            current_t = token.parse().ok();
+        }
+        if let Some(rest) = line.trim_start().strip_prefix("lavfi.astats.Overall.RMS_level=") {
+            if let (Some(t), Ok(db)) = (current_t, rest.trim().parse::<f32>()) {
+                if db.is_finite() {
+                    out.push(strivo_beat_detect::OnsetSample { time_sec: t, rms_db: db });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `POST /api/v1/plugins/beat-detect/<recording_id>?window_sec=120` —
+/// extract the RMS envelope via ffmpeg's astats filter, run the onset
+/// picker + BPM autocorrelation, and return the detected tempo + onset
+/// list + tempo grid the editor can render. Pro-gated.
+async fn beat_detect_run(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Query(q): Query<BeatDetectQuery>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("beat-detect") { return r; }
+    let input = match resolve_recording_path(&recording_id).await {
+        Ok(p) => p,
+        Err(e) => return Problem::not_found(e).into_response(),
+    };
+    if !input.exists() {
+        return Problem::not_found("recording file missing").into_response();
+    }
+    let window = q.window_sec.unwrap_or(120.0).clamp(10.0, 600.0);
+    let min_bpm = q.min_bpm.unwrap_or(60.0);
+    let max_bpm = q.max_bpm.unwrap_or(200.0);
+    let top_n = q.top_n.unwrap_or(3).clamp(1, 8);
+    // Strategy: take the first `window` seconds + downmix to mono +
+    // resample to 8 kHz (the envelope doesn't need high fidelity) +
+    // emit RMS every 50 ms via astats. ametadata=print's `file=-` route
+    // doesn't flush through the null muxer reliably; write to a temp
+    // file and read it back instead.
+    let tmp = std::env::temp_dir().join(format!(
+        "strivo-bd-{}.log",
+        uuid::Uuid::new_v4().simple()
+    ));
+    // aresample=8000 downsamples to 8 kHz (the envelope doesn't need
+    // higher fidelity); asetnsamples=400:p=0 chunks the stream into
+    // exact 50 ms frames; astats reset=1 emits per-frame (not
+    // cumulative) RMS so clicks/hits register as discrete peaks
+    // against the silent floor.
+    let filter = format!(
+        "aresample=8000,asetnsamples=400:p=0,astats=metadata=1:reset=1,ametadata=print:file={}",
+        tmp.display()
+    );
+    let output = match tokio::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "warning", "-t", &format!("{:.3}", window), "-i"])
+        .arg(&input)
+        .args(["-af", &filter, "-vn", "-ac", "1", "-f", "null", "-"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Problem::internal(format!("spawn ffmpeg: {e}")).into_response();
+        }
+    };
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Problem::internal(format!(
+            "ffmpeg exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ))
+        .into_response();
+    }
+    let metadata = std::fs::read_to_string(&tmp).unwrap_or_default();
+    let _ = std::fs::remove_file(&tmp);
+    let envelope = parse_astats_rms(&metadata);
+    if envelope.is_empty() {
+        return Problem::internal("beat-detect: ffmpeg emitted no astats frames").into_response();
+    }
+    let knobs = strivo_beat_detect::OnsetKnobs::default();
+    let onsets = strivo_beat_detect::detect_onsets(&envelope, &knobs);
+    let candidates = strivo_beat_detect::estimate_bpm(&onsets, min_bpm, max_bpm, top_n);
+    let grid = if let Some(top) = candidates.first() {
+        strivo_beat_detect::align_to_grid(&onsets, top.bpm, 0.0)
+    } else {
+        vec![]
+    };
+    Json(json!({
+        "recording_id": recording_id,
+        "window_sec": window,
+        "envelope_frames": envelope.len(),
+        "onset_count": onsets.len(),
+        "tempo_candidates": candidates,
+        "tempo_grid_secs": grid,
+        "onsets": onsets,
+    }))
+    .into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ScheduleOptimizerBody {
     pub samples: Vec<strivo_schedule_optimizer::EngagementSample>,
@@ -3315,4 +3450,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/scenes/{id}/{scene_id}/restore", axum::routing::post(scenes_restore))
         .route("/api/v1/plugins/scenes/{id}/{scene_id}", axum::routing::delete(scenes_delete))
         .route("/api/v1/plugins/schedule-optimizer/{id}", axum::routing::post(schedule_optimizer_recommend))
+        .route("/api/v1/plugins/beat-detect/{id}", axum::routing::post(beat_detect_run))
 }

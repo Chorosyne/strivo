@@ -3843,6 +3843,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-beat-detect"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-bin"
 version = "0.3.0"
 dependencies = [
@@ -4185,6 +4193,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "strivo-automation",
+ "strivo-beat-detect",
  "strivo-branding",
  "strivo-brandsafe",
  "strivo-broll",

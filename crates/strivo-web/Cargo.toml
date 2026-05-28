@@ -50,6 +50,7 @@ strivo-structure = { path = "../structure" }
 strivo-automation = { path = "../automation" }
 strivo-scenes = { path = "../scenes" }
 strivo-schedule-optimizer = { path = "../schedule-optimizer" }
+strivo-beat-detect = { path = "../beat-detect" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP
