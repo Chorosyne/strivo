@@ -53,6 +53,25 @@ impl FfmpegBuilder {
     }
 
     pub fn build(self) -> Result<FfmpegProcess> {
+        // Map a container name (config) or output extension (fallback) to the
+        // ffmpeg muxer name. Browser-playable picks are kept first.
+        fn container_to_muxer(c: &str) -> &'static str {
+            match c.trim().to_ascii_lowercase().as_str() {
+                "mkv" | "matroska" => "matroska",
+                "mp4" | "m4v" | "m4a" => "mp4",
+                "webm" => "webm",
+                "ts" | "mpegts" => "mpegts",
+                "mov" => "mov",
+                "wav" => "wav",
+                "flac" => "flac",
+                "ogg" | "opus" | "oga" => "ogg",
+                "mp3" => "mp3",
+                "aac" | "adts" => "adts",
+                // Unknown → safest default for the webui player.
+                _ => "matroska",
+            }
+        }
+
         if let Some(parent) = self.output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -81,6 +100,11 @@ impl FfmpegBuilder {
 
         if vcodec == "copy" && acodec == "copy" {
             cmd.args(["-c", "copy"]);
+            // HLS-from-Twitch carries AAC in ADTS framing; raw AAC in a
+            // Matroska/MP4 container needs ASC headers instead, or the
+            // file ends up with TS-style packets the browser refuses.
+            // No-op on already-ASC sources, so always safe.
+            cmd.args(["-bsf:a", "aac_adtstoasc"]);
         } else {
             cmd.args(["-c:v", &vcodec]);
             if vcodec == "h264_nvenc" {
@@ -103,6 +127,25 @@ impl FfmpegBuilder {
                 cmd.args(["-b:a", "192k"]);
             }
         }
+
+        // Pin the muxer explicitly. Without `-f`, ffmpeg infers from the
+        // output extension — but for HLS-in / copy-out it can keep the
+        // input demuxer's container (TS) intact, which is what produced
+        // the in-the-wild `.mkv` files that ffprobe reports as `mpegts`
+        // and `<video>` refuses to play. The container name comes from
+        // the resolved format if set, otherwise from the output extension.
+        let muxer = self
+            .format
+            .as_ref()
+            .map(|f| container_to_muxer(&f.container))
+            .or_else(|| {
+                self.output_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(container_to_muxer)
+            })
+            .unwrap_or("matroska");
+        cmd.args(["-f", muxer]);
 
         cmd.arg(&self.output_path);
 
