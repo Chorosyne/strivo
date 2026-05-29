@@ -303,6 +303,8 @@ impl ChannelMonitor {
                             if ch.auto_record
                                 && !self.auto_recorded.get(&ch.id).copied().unwrap_or(false)
                                 && !self.cutoff_reached(ch).await
+                                && !self.max_concurrent_reached().await
+                                && !self.disk_budget_exhausted().await
                             {
                                 self.auto_recorded.insert(ch.id.clone(), true);
                                 let cookies_path = self.get_cookies_path(ch.platform);
@@ -408,6 +410,56 @@ impl ChannelMonitor {
         }
     }
 
+    /// Honour monitor_limits.max_concurrent_recordings. Returns true
+    /// (= skip this capture) when the count of jobs currently in the
+    /// Recording state has reached the configured ceiling. A ceiling
+    /// of 0 (the default) disables the gate so existing setups don't
+    /// silently regress.
+    async fn max_concurrent_reached(&self) -> bool {
+        let cap = self.config.monitor_limits.max_concurrent_recordings;
+        if cap == 0 {
+            return false;
+        }
+        let Some(db) = &self.persist else { return false };
+        match db.load_jobs_in_states(&["Recording"]).await {
+            Ok(active) if (active.len() as u32) >= cap => {
+                tracing::info!(
+                    "auto-record gated: max_concurrent_recordings={cap} already in flight ({} active)",
+                    active.len()
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Honour monitor_limits.disk_budget_reserved_gb — defer new
+    /// captures when the free space on the recording dir would drop
+    /// below the reserved buffer. 0 disables the gate. The check is
+    /// best-effort (statvfs); a stat failure falls through to "allow"
+    /// so a transient FS hiccup doesn't lose captures.
+    async fn disk_budget_exhausted(&self) -> bool {
+        let reserved_gb = self.config.monitor_limits.disk_budget_reserved_gb;
+        if reserved_gb == 0 {
+            return false;
+        }
+        let dir = self.config.recording_dir.as_path();
+        let free_bytes = match free_space_bytes(dir) {
+            Some(b) => b,
+            None => return false,
+        };
+        let reserved_bytes = (reserved_gb as u64) * 1_000_000_000;
+        if free_bytes < reserved_bytes {
+            tracing::info!(
+                "auto-record gated: disk_budget_reserved_gb={reserved_gb} would be crossed (free={} bytes)",
+                free_bytes
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     fn get_cookies_path(&self, platform: PlatformKind) -> Option<PathBuf> {
         // Reload config to get fresh auto_record and cookies settings
         let cfg =
@@ -417,4 +469,22 @@ impl ChannelMonitor {
             PlatformKind::Twitch | PlatformKind::Patreon => None,
         }
     }
+}
+
+/// Free-space lookup for the disk-budget enforcement gate. statvfs on
+/// Unix; None on lookup failure so the gate falls through to "allow".
+#[cfg(unix)]
+fn free_space_bytes(dir: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut buf) };
+    if rc != 0 {
+        return None;
+    }
+    Some((buf.f_bavail as u64) * (buf.f_frsize as u64))
+}
+#[cfg(not(unix))]
+fn free_space_bytes(_dir: &std::path::Path) -> Option<u64> {
+    None
 }

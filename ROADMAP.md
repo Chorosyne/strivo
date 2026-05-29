@@ -244,13 +244,9 @@ Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shi
 (all shipped — last cleared at iter 60)
 
 ### Surface gaps from the v1 audit (lower-priority)
-- **History date heatmap** — small calendar grid above the History list, click a day to filter
+(all shipped — last cleared at iter 70 with the history date heatmap)
 
 ### Operational
-- **Per-plugin runtime gate** — `plugin_toggles.<name>.enabled` is currently advisory only. Wire it into the daemon's plugin scheduler so disabled plugins genuinely skip work.
-- **Disk-budget circuit breaker enforcement** — `monitor_limits.disk_budget_reserved_gb` is surfaced but not yet wired to defer new captures when crossed.
-- **Max-concurrent-recordings enforcement** — same; the field is read, the gauge renders, but the daemon doesn't enforce.
-- **License backend integration** — `/licence/trial` + `/licence/activate` return 503 when `STRIVO_LICENCE_URL` isn't set. Future iter brings up the activation backend.
 - **Self-hosted CI** — `Chorosyne/strivo` repo has runners for Arch Linux (this host), macOS Sonoma (QEMU VM), Tiny11 (Windows VM). All three currently idle; future iter ships a `release.yml` that bundles per-platform binaries.
 
 ### Doc + ops

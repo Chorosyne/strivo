@@ -219,7 +219,17 @@ impl PluginRegistry {
         let kind = DaemonEventKind::from_event(event);
         let mut actions = Vec::new();
 
+        // Per-plugin runtime gate. Plugins.<name>.enabled defaults to
+        // true; an explicit false in app.config.plugin_toggles short-
+        // circuits the dispatch so disabled plugins genuinely skip
+        // work (no IPC verb fan-out, no on_event call, no resources
+        // burned). Was previously advisory-only at the SPA layer.
         for plugin in &mut self.plugins {
+            if let Some(toggle) = app.config.plugin_toggles.get(plugin.name()) {
+                if !toggle.enabled {
+                    continue;
+                }
+            }
             let interested = match plugin.event_filter() {
                 None => true,
                 Some(ref kinds) => kinds.contains(&kind),

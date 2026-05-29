@@ -8686,6 +8686,8 @@ async function _renderSchedule_legacy_cron_unused() {
 // History page filter / group state — persisted like the Recordings ones.
 let histFilter = "";
 let histGroupBy = localStorage.getItem("strivo-hist-groupby") || "none"; // "none" | "channel" | "date"
+// Date heatmap click-day filter — "YYYY-MM-DD" or "" for unset.
+let histDay = "";
 let histStateFilter = new Set(
   (localStorage.getItem("strivo-hist-state-filter") || "")
     .split(",").filter(Boolean),
@@ -8731,6 +8733,7 @@ async function renderHistory() {
   root.innerHTML = chrome(`
     <h1 class="page-title">History</h1>
     <p class="page-subtitle" id="hist-count"></p>
+    <div id="hist-heatmap"></div>
     <div class="rec-toolbar">
       <input id="hist-filter" class="grid-filter" type="search"
              placeholder="Filter by channel or title…"
@@ -8740,13 +8743,19 @@ async function renderHistory() {
           : histGroupBy === "date" ? "▼ Grouped by month"
           : "≣ Group by…"}
       </button>
+      ${histDay ? `<button id="hist-clear-day" class="sm" type="button" title="Clear day filter">✕ ${htmlEscape(histDay)}</button>` : ""}
     </div>
     <div id="hist-state-chips" class="rec-state-chips" role="group" aria-label="Filter by state"></div>
     <div id="hist-list" class="media-list"></div>
   `);
   setupChromeHandlers();
+  paintHistHeatmap();
   paintHistChips();
   paintHistory();
+  document.getElementById("hist-clear-day")?.addEventListener("click", () => {
+    histDay = "";
+    renderHistory().catch((e) => Toast.error(e.message));
+  });
 
   document.getElementById("hist-filter")?.addEventListener("input", (e) => {
     histFilter = e.target.value;
@@ -8805,12 +8814,72 @@ function paintHistChips() {
   });
 }
 
+// GitHub-style calendar heatmap above the history list: last 12 weeks
+// of recording activity. Each day cell is colour-scaled by the
+// recording count that day. Click a cell to set histDay and filter.
+function paintHistHeatmap() {
+  const host = document.getElementById("hist-heatmap");
+  if (!host) return;
+  const counts = new Map();
+  for (const r of histCache) {
+    const d = (r.started_at || "").slice(0, 10);
+    if (!d) continue;
+    counts.set(d, (counts.get(d) || 0) + 1);
+  }
+  // Build a 12-week × 7-day grid ending today. Empty days render as
+  // the lowest-tier colour so the grid stays visually anchored.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setDate(start.getDate() - 7 * 12 + 1);
+  const max = Math.max(1, ...counts.values());
+  const cells = [];
+  for (let i = 0; i < 7 * 12; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const iso = d.toISOString().slice(0, 10);
+    const c = counts.get(iso) || 0;
+    const tier = c === 0 ? 0 : Math.min(4, Math.ceil((c / max) * 4));
+    cells.push({ iso, count: c, tier });
+  }
+  // Arrange column-major so each column is a week.
+  const weeks = [];
+  for (let w = 0; w < 12; w++) {
+    weeks.push(cells.slice(w * 7, w * 7 + 7));
+  }
+  host.innerHTML = `
+    <div class="hist-hm-wrap" title="Last 12 weeks of recording activity. Click a day to filter.">
+      <div class="hist-hm-grid">
+        ${weeks.map((col) => `<div class="hist-hm-col">${col.map((cell) => `
+          <button class="hist-hm-cell hist-hm-t${cell.tier} ${histDay === cell.iso ? "active" : ""}"
+                  data-day="${cell.iso}" type="button"
+                  title="${cell.iso} · ${cell.count} recording${cell.count === 1 ? "" : "s"}"></button>`).join("")}</div>`).join("")}
+      </div>
+      <div class="hist-hm-legend">
+        <span>less</span>
+        ${[0,1,2,3,4].map((t) => `<span class="hist-hm-cell hist-hm-t${t}"></span>`).join("")}
+        <span>more</span>
+      </div>
+    </div>`;
+  host.querySelectorAll(".hist-hm-cell[data-day]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const day = btn.dataset.day;
+      histDay = histDay === day ? "" : day;
+      renderHistory().catch((e) => Toast.error(e.message));
+    });
+  });
+}
+
 function paintHistory() {
   const host = document.getElementById("hist-list");
   if (!host) return;
   const q = histFilter.trim().toLowerCase();
   const rows = histCache.filter((r) => {
     if (histStateFilter.size > 0 && !histStateFilter.has(stateClassName(r.state))) return false;
+    if (histDay) {
+      const d = (r.started_at || "").slice(0, 10);
+      if (d !== histDay) return false;
+    }
     if (!q) return true;
     return (r.channel_name || "").toLowerCase().includes(q)
         || niceTitle(r.stream_title).toLowerCase().includes(q);

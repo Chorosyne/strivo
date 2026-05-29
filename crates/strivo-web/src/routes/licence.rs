@@ -116,20 +116,52 @@ async fn activate(
 }
 
 async fn trial(State(_state): State<AppState>) -> impl IntoResponse {
-    let Some(url) = backend_url() else {
-        return crate::problem::Problem::unavailable("licence backend not configured")
+    if let Some(url) = backend_url() {
+        // Backend live — go through the proper activation server.
+        let resp = match post_backend(
+            &format!("{url}/trial"),
+            json!({ "machine_hash": machine_id::hashed_machine_id() }),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return crate::problem::Problem::unavailable(e).into_response(),
+        };
+        return persist_and_reply(resp, Tier::Trial, String::new()).await;
+    }
+    // No backend configured — fall back to a self-issued local trial
+    // so free clones / unmanaged installs can still kick the tyres.
+    // 72h validity matches the backend default; machine_hash binding
+    // keeps the trial single-machine. Once-only per machine: if a
+    // local trial already exists we refuse to mint another.
+    if let Ok(Some(existing)) = LicenceCache::load() {
+        if matches!(existing.tier, Tier::Trial) {
+            return crate::problem::Problem::bad_request(
+                "trial already issued for this machine — wait for expiry or activate a key",
+            )
             .into_response();
+        }
+    }
+    let expires = (chrono::Utc::now() + chrono::Duration::hours(72)).to_rfc3339();
+    let lic = Licence {
+        tier: Tier::Trial,
+        machine_hash: machine_id::hashed_machine_id(),
+        expires_at: Some(expires.clone()),
+        last_refreshed: chrono::Utc::now().to_rfc3339(),
+        token: format!("local-trial.{}", machine_id::hashed_machine_id()),
+        licence_key: String::new(),
     };
-    let resp = match post_backend(
-        &format!("{url}/trial"),
-        json!({ "machine_hash": machine_id::hashed_machine_id() }),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return crate::problem::Problem::unavailable(e).into_response(),
-    };
-    persist_and_reply(resp, Tier::Trial, String::new()).await
+    if let Err(e) = LicenceCache::save(&lic) {
+        return crate::problem::Problem::internal(format!("save cache: {e}")).into_response();
+    }
+    Json(json!({
+        "ok": true,
+        "tier": "trial",
+        "expires_at": expires,
+        "local_trial": true,
+        "note": "STRIVO_LICENCE_URL unset — issued a local 72h trial. Run the Cloudflare Worker in licence-backend/ and set STRIVO_LICENCE_URL to enable hosted activation / Lemon Squeezy purchases.",
+    }))
+    .into_response()
 }
 
 async fn refresh(State(_state): State<AppState>) -> impl IntoResponse {
