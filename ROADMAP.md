@@ -11,7 +11,7 @@ and the concrete TODOs that future iters should pick up. **Status legend:**
 
 ---
 
-## Shipping plugins (35 in-tree)
+## Shipping plugins (38 in-tree)
 
 Every plugin below ships in `crates/<name>/` as a pure-data Rust crate
 (no IO outside the host) with its own unit tests. The host
@@ -230,6 +230,12 @@ Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shi
 
 ### Backend integrations that would unblock today's roadmap catalog entries
 - **YouTube OAuth + Helix publish** — drives the `yt-publish` catalog entry. Needs the device-code flow + scope `youtube.upload`. Requires Google Cloud creds the user must register; tracked but deferred from the cron.
+
+### Doc + ops
+(all shipped — last cleared at iter 80–82 with the gen-plugin-readmes.sh, WRITING-A-PLUGIN guide, and product/index.md)
+
+### Remaining DAW analogues
+(all shipped — last cleared at iter 83/84 with strivo-ab-render + strivo-submix)
 
 ### Collaboration / multi-user features
 - **Per-segment comments** — SQLite-backed comments tied to a recording's timecode. Plus optional WS for live updates so a team can review a stream together.

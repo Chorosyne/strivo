@@ -1,0 +1,17 @@
+[package]
+name = "strivo-submix"
+version = "0.1.0"
+edition = "2021"
+description = "Sub-mix / bus routing — per-track InsertChain + master InsertChain composing into one filter_complex graph."
+authors = ["revelri <slrevoy@mailbox.org>"]
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+strivo-insert-fx = { path = "../insert-fx" }
+
+[dev-dependencies]
+serde_json = "1"

@@ -1,0 +1,18 @@
+[package]
+name = "strivo-ab-render"
+version = "0.1.0"
+edition = "2021"
+description = "A/B render variants — snapshot iter-50/52/53 settings into two slots, diff them, parse VMAF/SSIM output."
+authors = ["revelri <slrevoy@mailbox.org>"]
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+strivo-insert-fx = { path = "../insert-fx" }
+strivo-pitch = { path = "../pitch" }
+
+[dev-dependencies]
+serde_json = "1"
