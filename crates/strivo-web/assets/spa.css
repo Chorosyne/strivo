@@ -3628,6 +3628,138 @@ body.modal-open { overflow: hidden; }
 .watch-count { margin-right: 0.5rem; }
 .watch-mode-btn.active { background: var(--brand, #6e56cf); color: white; }
 .watch-stage { background: rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; }
+
+/* ── Player stage (multi-view collapsed into the player) ─────────── */
+.ms-stage {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: calc(100vh - 180px);
+  min-height: 360px;
+  background: rgba(0,0,0,0.5);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ms-stage > * { flex: 1; min-width: 0; min-height: 0; }
+.ms-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 0; }
+.ms-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ms-pane > * { flex: 1; min-width: 0; min-height: 0; }
+/* Gutter — 6px draggable strip between two children of a split. */
+.ms-gutter {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.05);
+  flex: 0 0 6px;
+  position: relative;
+  user-select: none;
+}
+.ms-gutter:hover { background: var(--accent, #b07cff); border-color: var(--accent, #b07cff); }
+.ms-gutter-h { cursor: col-resize; }
+.ms-gutter-v { cursor: row-resize; }
+body.ms-resizing { cursor: ew-resize; user-select: none; }
+
+/* Leaf tile — populated or empty. */
+.ms-leaf {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  border: 1px solid rgba(255,255,255,0.06);
+  min-width: 0; min-height: 0;
+}
+.ms-leaf.is-focused { box-shadow: inset 0 0 0 2px var(--accent, #b07cff); }
+.ms-leaf .ms-iframe { flex: 1; width: 100%; height: 100%; border: 0; background: #000; }
+
+/* Empty slot — translucent box with the Select stream pill. */
+.ms-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255,255,255,0.03) 0 12px,
+    rgba(255,255,255,0.06) 12px 24px
+  );
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.ms-empty-pill {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  backdrop-filter: blur(6px);
+}
+.ms-empty-pill > span { font-weight: 600; }
+.ms-empty-pill select {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+}
+.ms-empty-hint { font-size: 0.7rem; }
+.ms-empty.is-drop-target { box-shadow: inset 0 0 0 3px var(--accent, #b07cff); }
+.ms-leaf.is-drop-target { box-shadow: inset 0 0 0 3px var(--accent, #b07cff); }
+.ms-leaf.is-dragging { opacity: 0.5; }
+
+/* Preset dropdown (replaces the old Quadrant button). */
+.ms-preset { position: relative; }
+.ms-preset > summary { list-style: none; cursor: pointer; user-select: none; }
+.ms-preset > summary::-webkit-details-marker { display: none; }
+.ms-preset .ms-preset-menu {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  min-width: 200px;
+  z-index: 10;
+  padding: 0.25rem;
+  gap: 0.15rem;
+}
+.ms-preset-opt {
+  text-align: left;
+  width: 100%;
+  margin: 0;
+}
+.ms-preset-opt.active { background: rgba(176,124,255,0.15); border-color: var(--accent, #b07cff); }
+
+/* ── Pro app tabbed panes (Studio / Analytics / Publish) ─────────── */
+.pro-tabs {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 1rem;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 0.5rem;
+}
+.pro-tab {
+  text-decoration: none;
+  color: var(--muted, #aaa);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.pro-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.pro-tab.is-active {
+  background: rgba(176,124,255,0.12);
+  border-color: var(--accent, #b07cff);
+  color: var(--text);
+}
+.pro-pane-card { padding: 1rem 1.25rem; }
+.pro-tab-body p { margin: 0.5rem 0; }
+.pro-tab-detail summary { cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--muted); }
+.pro-tab-detail pre {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  overflow-x: auto;
+}
 .watch-tile {
   background: #000; border: 1px solid rgba(255,255,255,0.08);
   border-radius: 4px; overflow: hidden;

@@ -600,11 +600,14 @@ const ROUTES = [
   "library",
   "recordings",
   "schedule",
+  "watch",
+  "studio",
+  "analytics",
+  "publish",
   "pipelines",
   "viewer",
   "dataviz",
   "plugins",
-  "watch",
   "chat",
   "settings",
   "system",
@@ -691,6 +694,15 @@ async function render() {
     case "plugins":
       await renderPlugins();
       break;
+    case "studio":
+      await renderProApp("studio");
+      break;
+    case "analytics":
+      await renderProApp("analytics");
+      break;
+    case "publish":
+      await renderProApp("publish");
+      break;
     case "watch":
       await renderWatch();
       break;
@@ -732,17 +744,19 @@ async function render() {
 // /assets/icons/candy/ with the upstream LICENSE + ATTRIBUTION). History
 // keeps its Unicode glyph by the user's choice.
 const TOPNAV = [
+  // Free panes — capture-loop core.
   ["library", "▣", "Home", "l", "/assets/icons/candy/home.svg"],
   ["recordings", "📁", "Recordings", "r", "/assets/icons/candy/recordings.svg"],
   ["schedule", "📅", "Monitor", "s", "/assets/icons/candy/schedule.svg"],
-  // Pipelines now ships the DAW-vision cross-plugin DAG; restored to
-  // the topnav (was hidden in the audit when the page was empty).
-  ["pipelines", "🔁", "Pipelines", "d", "/assets/icons/candy/pipelines.svg"],
-  ["watch", "▦", "Multi-stream", "w", "/assets/icons/candy/watch.svg"],
-  ["viewer", "📺", "Viewer", "v", "/assets/icons/candy/watch.svg"],
-  ["dataviz", "📊", "Data viz", "z", "/assets/icons/sweet-folders/folder-documents.svg"],
+  ["watch", "▶", "Player", "w", "/assets/icons/candy/watch.svg"],
+  // Pro panes — unified app, each pane bundles every contributing
+  // plugin's UI under its own tabs. Discrete plugin entries are kept
+  // accessible via /plugins → deep-link rows but no longer hold the
+  // primary topnav slot.
+  ["studio", "🎬", "Studio", "u", "/assets/icons/candy/plugins.svg"],
+  ["analytics", "📈", "Analytics", "a", "/assets/icons/sweet-folders/folder-documents.svg"],
+  ["publish", "🚀", "Publish", "p", "/assets/icons/candy/pipelines.svg"],
   ["chat", "💬", "Chat", "t", "/assets/icons/candy/chat.svg"],
-  ["plugins", "🧩", "Plugins", "g", "/assets/icons/candy/plugins.svg"],
   ["settings", "⚙", "Settings", "c", "/assets/icons/candy/settings.svg"],
   ["system", "🛠", "System", "y", "/assets/icons/candy/system.svg"],
   ["logs", "📜", "Logs", "o", "/assets/icons/candy/logs.svg"],
@@ -909,10 +923,14 @@ function paintChannelList() {
     const href = c.is_live
       ? "#/library"
       : `#/recordings?channel=${encodeURIComponent(c.display_name || c.name || "")}`;
+    // Live rows expose a drag handle to the player stage. The id shape
+    // here must match the backend's stream_id format (`PlatformKind:id`)
+    // so dropping onto a tile resolves to a known stream.
+    const liveStreamId = c.is_live ? `${c.platform}:${c.id}` : "";
     return `
       <a class="ch-row ${c.is_live ? "live" : ""} ${isPatreon ? "patreon" : ""} ${sel}"
          data-channel-key="${key}" data-channel-id="${c.id}"
-         data-platform="${c.platform}" href="${href}">
+         data-platform="${c.platform}" data-live-stream-id="${htmlEscape(liveStreamId)}" href="${href}">
         <span class="ch-plat ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
         <span class="ch-name">${htmlEscape(c.display_name || c.name)}</span>
         ${tier}${viewers}${liveDot}${rec}
@@ -4186,198 +4204,490 @@ async function renderViewer() {
 // timer before mounting a new one.
 let _watchRefreshTimer = null;
 
-// Append the muted-state parameter Twitch / YouTube embeds use. Sticky-
-// muted by default keeps every tile silent on mount (browsers block
-// autoplay-with-audio anyway), and the per-tile Unmute button forces
-// the solo stream to audible via a src reload.
+// Append the muted-state parameter Twitch / YouTube embeds use.
 function withMuted(url, muted) {
   if (!url) return url;
   const param = url.includes("youtube.com") ? `mute=${muted ? 1 : 0}` : `muted=${muted}`;
   return url + (url.includes("?") ? "&" : "?") + param;
 }
 
+// ── Player layout tree (multi-view collapsed into the player) ────────
+//
+// The viewing stage is a recursive layout tree. Two node kinds:
+//   slot:  { kind: "slot", streamId: string|null }
+//   split: { kind: "split", dir: "h"|"v", ratio: 0..1, a: node, b: node }
+//
+// 'h' splits stack left|right, 'v' splits stack top|bottom. The split
+// ratio governs how much room the 'a' child gets. Presets always
+// create EMPTY slots (per user request) — picking a preset never
+// auto-populates streams.
+//
+// Cap at 9 leaves keeps the iframe count reasonable; beyond that the
+// browser starts paging and Twitch/YT rate-limit your IP.
+
+const PLAYER_LEAF_CAP = 9;
+const PLAYER_LAYOUT_KEY = "strivo-player-layout";
+const PLAYER_PRESET_KEY = "strivo-player-preset";
+
+function _slot(streamId = null) { return { kind: "slot", streamId }; }
+function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
+
+const PLAYER_PRESETS = {
+  single: () => _slot(),
+  "split-screen": () => _split("h", 0.5, _slot(), _slot()),
+  // Split / quadrant = 3 streams: left half single, right split top/bottom.
+  "split-quadrant": () => _split("h", 0.5, _slot(), _split("v", 0.5, _slot(), _slot())),
+  // 2×2 grid.
+  quadrant: () => _split("v", 0.5,
+    _split("h", 0.5, _slot(), _slot()),
+    _split("h", 0.5, _slot(), _slot()),
+  ),
+  custom: () => _slot(),
+};
+
+const PLAYER_PRESET_LABELS = {
+  single: "Single",
+  "split-screen": "Split-screen (2)",
+  "split-quadrant": "Split / Quadrant (3)",
+  quadrant: "Quadrant (4)",
+  custom: "Custom",
+};
+
+const playerState = {
+  layout: null,        // root layout node
+  preset: "single",    // last-applied preset name (for the toolbar label)
+  soloPath: "",        // path to soloed (audible) slot — "" = mute-all
+  refreshTimer: null,
+  resizeFx: null,      // gutter drag state
+};
+
+// Path strings are dot-joined sequences of "a"/"b" descending the tree.
+// Root = "". Example: "a.b" → root.a.b.
+function pathParts(path) { return path ? path.split(".") : []; }
+function pathStr(parts) { return parts.join("."); }
+
+// Walk a layout. Calls cb(node, path) for every node (depth-first).
+function walkLayout(layout, cb, path = "") {
+  cb(layout, path);
+  if (layout.kind === "split") {
+    walkLayout(layout.a, cb, path ? `${path}.a` : "a");
+    walkLayout(layout.b, cb, path ? `${path}.b` : "b");
+  }
+}
+
+function countLeaves(layout) {
+  let n = 0;
+  walkLayout(layout, (node) => { if (node.kind === "slot") n++; });
+  return n;
+}
+
+function getNodeAt(layout, path) {
+  let n = layout;
+  for (const step of pathParts(path)) n = n[step];
+  return n;
+}
+
+// Replace the node at path with newNode (immutably-ish — we structuredClone
+// the root and patch). Returns the new root.
+function setNodeAt(layout, path, newNode) {
+  const root = structuredClone(layout);
+  if (!path) return newNode;
+  const parts = pathParts(path);
+  let parent = root;
+  for (let i = 0; i < parts.length - 1; i++) parent = parent[parts[i]];
+  parent[parts[parts.length - 1]] = newNode;
+  return root;
+}
+
+function savePlayerLayout() {
+  try {
+    localStorage.setItem(PLAYER_LAYOUT_KEY, JSON.stringify(playerState.layout));
+    localStorage.setItem(PLAYER_PRESET_KEY, playerState.preset);
+  } catch (_) {}
+}
+
+function loadPlayerLayout() {
+  try {
+    const raw = localStorage.getItem(PLAYER_LAYOUT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && (parsed.kind === "slot" || parsed.kind === "split")) {
+        playerState.layout = parsed;
+        playerState.preset = localStorage.getItem(PLAYER_PRESET_KEY) || "custom";
+        return;
+      }
+    }
+  } catch (_) {}
+  playerState.layout = PLAYER_PRESETS.single();
+  playerState.preset = "single";
+}
+
 async function renderWatch() {
   // Stop any prior refresh poll before we mount a new stage.
   if (_watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
+  if (!playerState.layout) loadPlayerLayout();
 
+  // Honour a focus param from the home Live Now carousel: if it's
+  // present and the single-slot layout is empty, pre-fill it.
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
-  const modeName = params.get("mode") || "auto";
   const focusId = params.get("focus") || "";
-  const sideId = params.get("side") || "";
-  const soloId = params.get("solo") || "";
-  let mode;
-  if (modeName === "focus" && focusId) mode = { mode: "focus", stream_id: focusId };
-  else if (modeName === "pip" && focusId) mode = { mode: "pip", main: focusId, side: sideId };
-  else if (modeName === "quadrant") mode = { mode: "quadrant" };
-  else if (modeName === "highlight") mode = { mode: "highlight", stream_id: focusId || "" };
-  else if (modeName === "theatre") mode = { mode: "theatre", stream_id: focusId || "" };
-  else mode = { mode: "auto" };
+  if (focusId && playerState.layout.kind === "slot" && !playerState.layout.streamId) {
+    playerState.layout = _slot(focusId);
+  }
+
   root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading live streams…</div></div>`);
   const watch = document.getElementById("watch");
-  const cw = Math.max(320, Math.floor(watch.clientWidth));
-  const ch = Math.max(180, Math.floor(window.innerHeight - watch.getBoundingClientRect().top - 32));
   let resp;
   try {
-    resp = await API.multistreamTiles(cw, ch, mode, window.location.host);
+    // Backend still drives 'which streams are live + their embed URLs';
+    // we ignore the tile geometry it returns and lay things out via the
+    // local layout tree.
+    resp = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
   } catch (e) {
     watch.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
   }
   const streams = resp.streams || [];
   if (!streams.length) {
-    watch.innerHTML = `<div class="empty watch-empty"><div class="glyph">▦</div>
+    watch.innerHTML = `<div class="empty watch-empty"><div class="glyph">▶</div>
       <p>No followed channels are live right now.</p>
-      <p class="pg-cap-hint">Follow Twitch / YouTube channels in Settings — they'll auto-appear here when they go live.</p></div>`;
+      <p class="pg-cap-hint">Follow Twitch / YouTube channels in Settings — they'll auto-appear here, ready to drop into the stage.</p></div>`;
     return;
   }
-  const tiles = resp.tiles || [];
-  const modeBtn = (m, label, target) =>
-    `<button class="sm watch-mode-btn ${modeName === m ? "active" : ""}" data-mode="${m}" data-target="${target || ""}">${label}</button>`;
-  // Resolve the solo stream — defaults to none, but if the URL says
-  // 'solo=<id>' the matching tile is the only one audible.
-  const effectiveSolo = soloId && streams.find((s) => s.stream_id === soloId) ? soloId : "";
-  const muteAllPressed = effectiveSolo ? "" : "active";
-  const toolbar = `
-    <div class="watch-toolbar">
-      <span class="watch-count pg-cap-hint">${streams.length} live</span>
-      ${modeBtn("auto", "▦ Auto")}
-      ${streams.map((s) => modeBtn("focus", `◉ ${htmlEscape(s.channel_name)}`, s.stream_id)).join("")}
-      ${streams.length >= 2 ? modeBtn("pip", "⧉ PiP", `${streams[0].stream_id}|${streams[1].stream_id}`) : ""}
-      <span class="watch-tb-sep" aria-hidden="true">·</span>
-      ${modeBtn("quadrant", "▢▢ Quadrant")}
-      ${streams.length >= 2 ? modeBtn("highlight", "◐ Highlight", streams[0].stream_id) : ""}
-      ${streams.length >= 2 ? modeBtn("theatre", "🎭 Theatre", streams[0].stream_id) : ""}
-      <span class="watch-tb-sep" aria-hidden="true">·</span>
-      <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>
-    </div>`;
-  const stage = document.createElement("div");
-  stage.className = "watch-stage";
-  stage.style.position = "relative";
-  stage.style.width = `${cw}px`;
-  stage.style.height = `${ch}px`;
-  for (const t of tiles) {
-    const s = streams.find((x) => x.stream_id === t.stream_id);
-    if (!s) continue;
-    const tile = document.createElement("div");
-    tile.className = "watch-tile";
-    tile.dataset.streamId = s.stream_id;
-    Object.assign(tile.style, {
-      position: "absolute", left: `${t.x}px`, top: `${t.y}px`,
-      width: `${t.w}px`, height: `${t.h}px`, zIndex: t.z,
-    });
-    const muted = effectiveSolo ? s.stream_id !== effectiveSolo : true;
-    const audioBtn = muted
-      ? `<button class="watch-tile-btn watch-tile-unmute" title="Unmute this stream (mutes all others)" data-stream="${htmlEscape(s.stream_id)}">🔇</button>`
-      : `<button class="watch-tile-btn watch-tile-mute" title="Mute this stream" data-stream="${htmlEscape(s.stream_id)}">🔊</button>`;
-    tile.innerHTML = `
-      <div class="watch-tile-head">
-        <span class="watch-tile-name">${htmlEscape(s.channel_name)}</span>
-        <span class="watch-tile-meta">
-          <span class="watch-tile-plat pg-cap-hint" data-watch-meta="plat">${htmlEscape(s.platform)}${s.viewer_count != null ? ` · <span data-watch-meta="viewers">${formatCount(s.viewer_count)}</span>` : ""}</span>
-          ${audioBtn}
-          <button class="watch-tile-btn watch-tile-fs" title="Fullscreen this tile" data-stream="${htmlEscape(s.stream_id)}">⛶</button>
-        </span>
-      </div>
-      <iframe class="watch-tile-iframe" loading="lazy" allow="autoplay; fullscreen"
-              src="${htmlEscape(withMuted(s.embed_url, muted))}" allowfullscreen frameborder="0"></iframe>`;
-    stage.appendChild(tile);
-  }
-  watch.innerHTML = "";
-  watch.insertAdjacentHTML("beforeend", toolbar);
-  watch.appendChild(stage);
-
-  // Helper: rewrite the hash with a new param key/value, preserving
-  // every other key. Re-renders the route automatically via hashchange.
-  const setHashParam = (key, value) => {
-    const p = new URLSearchParams(window.location.hash.split("?")[1] || "");
-    if (value == null || value === "") p.delete(key);
-    else p.set(key, value);
-    window.location.hash = `#/watch${p.toString() ? "?" + p.toString() : ""}`;
-  };
-
-  watch.querySelectorAll(".watch-mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const m = btn.dataset.mode;
-      const target = btn.dataset.target || "";
-      const p = new URLSearchParams();
-      p.set("mode", m);
-      if (m === "focus") p.set("focus", target);
-      if (m === "pip") {
-        const [main, side] = target.split("|");
-        p.set("focus", main || "");
-        p.set("side", side || "");
-      }
-      // Highlight + Theatre use the same focus= param to identify the
-      // hero stream; Quadrant has no hero (fixed 2×2 over the first
-      // four streams) so no param is needed.
-      if ((m === "highlight" || m === "theatre") && target) p.set("focus", target);
-      // Preserve solo across mode changes.
-      if (effectiveSolo) p.set("solo", effectiveSolo);
-      window.location.hash = `#/watch?${p.toString()}`;
-    });
-  });
-
-  // Unmute → solo this stream (mutes all others). Pure URL-state
-  // transition; re-render swaps each iframe's muted param.
-  watch.querySelectorAll(".watch-tile-unmute").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      setHashParam("solo", btn.dataset.stream);
-    });
-  });
-  watch.querySelectorAll(".watch-tile-mute").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Mute the currently-soloed stream → mute-all state.
-      setHashParam("solo", "");
-    });
-  });
-  document.getElementById("watch-mute-all")?.addEventListener("click", () => {
-    setHashParam("solo", "");
-  });
-  // Per-tile fullscreen. Use the tile container rather than the iframe so
-  // the head row stays visible inside the fullscreen overlay.
-  watch.querySelectorAll(".watch-tile-fs").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const tile = btn.closest(".watch-tile");
-      if (!tile) return;
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.();
-      } else {
-        tile.requestFullscreen?.();
-      }
-    });
-  });
+  paintPlayerStage(watch, streams);
 
   // Background refresh: poll the tiles endpoint every 30s and patch the
   // per-tile viewer counts in place. Avoids tearing the iframes (the
   // streams keep playing) but keeps the meta-line fresh.
-  const liveRefresh = async () => {
+  playerState.refreshTimer = setInterval(async () => {
     try {
-      const r = await API.multistreamTiles(cw, ch, mode, window.location.host);
+      const r = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
       const byId = new Map((r.streams || []).map((s) => [s.stream_id, s]));
-      // If the live-set changed (someone went offline / live), trigger a
-      // full re-render so the toolbar + tile grid match reality.
       const have = new Set(streams.map((s) => s.stream_id));
       const got = new Set([...byId.keys()]);
       const sameSet = have.size === got.size && [...have].every((x) => got.has(x));
       if (!sameSet) {
+        // Live-set changed: re-render so the rail's stream-picker
+        // dropdown reflects reality. Existing iframes survive.
         renderWatch().catch(() => {});
         return;
       }
-      // Same streams, just patch viewer counts.
-      watch.querySelectorAll(".watch-tile").forEach((tile) => {
+      // Same set — patch viewer counts in place.
+      watch.querySelectorAll(".ms-leaf").forEach((tile) => {
         const s = byId.get(tile.dataset.streamId);
         if (!s) return;
         const meta = tile.querySelector('[data-watch-meta="viewers"]');
-        if (meta && s.viewer_count != null) {
-          meta.textContent = formatCount(s.viewer_count);
-        }
+        if (meta && s.viewer_count != null) meta.textContent = formatCount(s.viewer_count);
       });
-    } catch (_) { /* one bad poll shouldn't tear the page */ }
+    } catch (_) {}
+  }, 30000);
+  _watchRefreshTimer = playerState.refreshTimer;
+}
+
+// ── Player stage rendering + interactions ────────────────────────────
+//
+// paintPlayerStage walks the layout tree, emits HTML, then wires every
+// interaction (preset menu, split buttons, gutter drag, slot stream
+// picker, click-to-swap drag-drop, fullscreen, solo).
+
+function paintPlayerStage(watch, streams) {
+  const layout = playerState.layout;
+  const leaves = countLeaves(layout);
+
+  // Build the preset menu (rendered as a details element). The current
+  // preset's label is the summary; click expands to the option list.
+  const presetLabel = PLAYER_PRESET_LABELS[playerState.preset] || "Custom";
+  const presetOpts = Object.entries(PLAYER_PRESET_LABELS).map(([k, v]) => `
+    <button class="sm ms-preset-opt${k === playerState.preset ? " active" : ""}" type="button" data-preset="${k}">${htmlEscape(v)}</button>`).join("");
+
+  // Toolbar — preset dropdown · split buttons (custom-mode) · mute-all.
+  const muteAllPressed = playerState.soloPath ? "" : "active";
+  const customTools = playerState.preset === "custom" ? `
+    <span class="watch-tb-sep" aria-hidden="true">·</span>
+    <span class="pg-cap-hint">Focus a tile, then split:</span>
+    <button class="sm ms-split-h" type="button" title="Split focused tile horizontally (side-by-side)">▥ Split H</button>
+    <button class="sm ms-split-v" type="button" title="Split focused tile vertically (top + bottom)">▤ Split V</button>
+    <button class="sm ms-collapse" type="button" title="Collapse the focused tile back into its sibling">↶ Undo split</button>` : "";
+  const toolbar = `
+    <div class="watch-toolbar">
+      <span class="watch-count pg-cap-hint">${streams.length} live · ${leaves}/${PLAYER_LEAF_CAP} tile${leaves === 1 ? "" : "s"}</span>
+      <details class="ms-preset" id="ms-preset-menu">
+        <summary class="sm ms-preset-summary" title="Multi-stream layout presets">▦ Multi-stream: ${htmlEscape(presetLabel)} ▾</summary>
+        <div class="ms-preset-menu">${presetOpts}</div>
+      </details>
+      ${customTools}
+      <span class="watch-tb-sep" aria-hidden="true">·</span>
+      <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>
+    </div>`;
+
+  const stage = document.createElement("div");
+  stage.className = "ms-stage";
+  stage.innerHTML = renderLayoutNode(layout, "", streams);
+
+  watch.innerHTML = "";
+  watch.insertAdjacentHTML("beforeend", toolbar);
+  watch.appendChild(stage);
+
+  // ── Preset menu ──
+  watch.querySelectorAll(".ms-preset-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.preset;
+      if (!PLAYER_PRESETS[p]) return;
+      playerState.preset = p;
+      playerState.layout = PLAYER_PRESETS[p]();
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  });
+
+  // ── Custom-mode split / collapse ──
+  const splitFocused = (dir) => {
+    const focused = stage.querySelector(".ms-leaf.is-focused") || stage.querySelector(".ms-leaf");
+    if (!focused) return;
+    const path = focused.dataset.path || "";
+    if (countLeaves(playerState.layout) >= PLAYER_LEAF_CAP) {
+      Toast.error(`Tile cap reached (${PLAYER_LEAF_CAP}) — collapse a tile first.`);
+      return;
+    }
+    const node = getNodeAt(playerState.layout, path);
+    if (node.kind !== "slot") return;
+    const next = _split(dir, 0.5, _slot(node.streamId), _slot());
+    playerState.layout = setNodeAt(playerState.layout, path, next);
+    playerState.preset = "custom";
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
   };
-  _watchRefreshTimer = setInterval(liveRefresh, 30000);
+  watch.querySelector(".ms-split-h")?.addEventListener("click", () => splitFocused("h"));
+  watch.querySelector(".ms-split-v")?.addEventListener("click", () => splitFocused("v"));
+  watch.querySelector(".ms-collapse")?.addEventListener("click", () => {
+    const focused = stage.querySelector(".ms-leaf.is-focused") || stage.querySelector(".ms-leaf");
+    if (!focused) return;
+    const path = focused.dataset.path || "";
+    if (!path) return; // can't collapse the root
+    const parts = pathParts(path);
+    const parentPath = pathStr(parts.slice(0, -1));
+    const parent = getNodeAt(playerState.layout, parentPath);
+    if (!parent || parent.kind !== "split") return;
+    const siblingKey = parts[parts.length - 1] === "a" ? "b" : "a";
+    playerState.layout = setNodeAt(playerState.layout, parentPath, parent[siblingKey]);
+    playerState.preset = "custom";
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
+  });
+
+  // ── Tile focus (click on background, not on iframe / buttons) ──
+  stage.querySelectorAll(".ms-leaf").forEach((tile) => {
+    tile.addEventListener("mousedown", (e) => {
+      if (e.target.closest("button, select, iframe")) return;
+      stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
+      tile.classList.add("is-focused");
+    });
+  });
+
+  // ── Empty-slot stream pickers ──
+  stage.querySelectorAll("select.ms-slot-pick").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const path = sel.dataset.path || "";
+      const id = sel.value;
+      if (!id) return;
+      playerState.layout = setNodeAt(playerState.layout, path, _slot(id));
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  });
+
+  // ── Solo / mute toggles ──
+  stage.querySelectorAll(".ms-solo").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      playerState.soloPath = btn.dataset.path || "";
+      paintPlayerStage(watch, streams);
+    });
+  });
+  stage.querySelectorAll(".ms-unsolo").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      playerState.soloPath = "";
+      paintPlayerStage(watch, streams);
+    });
+  });
+  watch.querySelector("#watch-mute-all")?.addEventListener("click", () => {
+    playerState.soloPath = "";
+    paintPlayerStage(watch, streams);
+  });
+
+  // ── Remove stream from slot (X button) ──
+  stage.querySelectorAll(".ms-remove").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const path = btn.dataset.path || "";
+      playerState.layout = setNodeAt(playerState.layout, path, _slot());
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  });
+
+  // ── Fullscreen tile ──
+  stage.querySelectorAll(".ms-fs").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const tile = btn.closest(".ms-leaf");
+      if (!tile) return;
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      else tile.requestFullscreen?.();
+    });
+  });
+
+  // ── Drag-and-drop: rail channels → empty slot · tile ↔ tile swap ──
+  stage.querySelectorAll(".ms-leaf").forEach((tile) => {
+    // Make populated tiles draggable.
+    if (tile.dataset.streamId) {
+      tile.draggable = true;
+      tile.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("application/x-strivo-tile", tile.dataset.path || "");
+        e.dataTransfer.setData("text/plain", tile.dataset.streamId);
+        e.dataTransfer.effectAllowed = "move";
+        tile.classList.add("is-dragging");
+      });
+      tile.addEventListener("dragend", () => tile.classList.remove("is-dragging"));
+    }
+    tile.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      tile.classList.add("is-drop-target");
+    });
+    tile.addEventListener("dragleave", () => tile.classList.remove("is-drop-target"));
+    tile.addEventListener("drop", (e) => {
+      e.preventDefault();
+      tile.classList.remove("is-drop-target");
+      const fromTilePath = e.dataTransfer.getData("application/x-strivo-tile");
+      const streamId = e.dataTransfer.getData("text/plain");
+      const toPath = tile.dataset.path || "";
+      const toNode = getNodeAt(playerState.layout, toPath);
+      if (fromTilePath !== "" || fromTilePath === toPath) {
+        // Tile-to-tile swap (the empty-string case is the root).
+        if (fromTilePath === toPath) return;
+        const fromNode = getNodeAt(playerState.layout, fromTilePath);
+        let next = setNodeAt(playerState.layout, fromTilePath, _slot(toNode.streamId || null));
+        next = setNodeAt(next, toPath, _slot(fromNode.streamId || null));
+        playerState.layout = next;
+      } else if (streamId) {
+        // Rail-to-slot drop: drop streamId into target slot.
+        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(streamId));
+      }
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  });
+  // Make rail channel rows draggable as a stream source.
+  document.querySelectorAll(".ch-row[data-channel-key]").forEach((row) => {
+    if (!row.dataset.liveStreamId) return;
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", row.dataset.liveStreamId);
+      e.dataTransfer.effectAllowed = "copy";
+    });
+  });
+
+  // ── Resize gutters ──
+  stage.querySelectorAll(".ms-gutter").forEach((gutter) => {
+    gutter.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const path = gutter.dataset.path || "";
+      const split = getNodeAt(playerState.layout, path);
+      if (!split || split.kind !== "split") return;
+      const parent = gutter.parentElement;
+      const rect = parent.getBoundingClientRect();
+      const dir = split.dir;
+      playerState.resizeFx = { path, parentRect: rect, dir };
+      document.body.classList.add("ms-resizing");
+      const onMove = (ev) => {
+        const fx = playerState.resizeFx;
+        if (!fx) return;
+        const pos = fx.dir === "h"
+          ? (ev.clientX - fx.parentRect.left) / fx.parentRect.width
+          : (ev.clientY - fx.parentRect.top) / fx.parentRect.height;
+        const ratio = Math.min(0.9, Math.max(0.1, pos));
+        const node = getNodeAt(playerState.layout, fx.path);
+        node.ratio = ratio;
+        // Live update without full repaint — tweak flex on siblings.
+        const a = parent.children[0];
+        const b = parent.children[2];
+        if (a && b) {
+          a.style.flex = `${ratio} ${ratio} 0`;
+          b.style.flex = `${1 - ratio} ${1 - ratio} 0`;
+        }
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.classList.remove("ms-resizing");
+        playerState.resizeFx = null;
+        savePlayerLayout();
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+
+// Recursive renderer. Returns an HTML string.
+function renderLayoutNode(node, path, streams) {
+  if (node.kind === "slot") return renderSlot(node, path, streams);
+  // Split: flex container with two children + a gutter between.
+  const flexDir = node.dir === "h" ? "row" : "column";
+  const r = node.ratio;
+  return `
+    <div class="ms-split ms-split-${node.dir}" style="flex-direction:${flexDir}" data-path="${htmlEscape(path)}">
+      <div class="ms-pane" style="flex:${r} ${r} 0">${renderLayoutNode(node.a, path ? `${path}.a` : "a", streams)}</div>
+      <div class="ms-gutter ms-gutter-${node.dir}" data-path="${htmlEscape(path)}" title="Drag to resize"></div>
+      <div class="ms-pane" style="flex:${1 - r} ${1 - r} 0">${renderLayoutNode(node.b, path ? `${path}.b` : "b", streams)}</div>
+    </div>`;
+}
+
+function renderSlot(slot, path, streams) {
+  const muted = playerState.soloPath ? playerState.soloPath !== path : true;
+  if (slot.streamId) {
+    const s = streams.find((x) => x.stream_id === slot.streamId);
+    if (!s) {
+      return `
+        <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}">
+          <div class="ms-empty-pill">Stream offline · drag a live channel here</div>
+        </div>`;
+    }
+    const soloBtn = muted
+      ? `<button class="watch-tile-btn ms-solo" title="Unmute (solo this tile)" data-path="${htmlEscape(path)}">🔇</button>`
+      : `<button class="watch-tile-btn ms-unsolo" title="Mute (mute-all)" data-path="${htmlEscape(path)}">🔊</button>`;
+    return `
+      <div class="ms-leaf" data-path="${htmlEscape(path)}" data-stream-id="${htmlEscape(s.stream_id)}">
+        <div class="watch-tile-head">
+          <span class="watch-tile-name">${htmlEscape(s.channel_name)}</span>
+          <span class="watch-tile-meta">
+            <span class="watch-tile-plat pg-cap-hint" data-watch-meta="plat">${htmlEscape(s.platform)}${s.viewer_count != null ? ` · <span data-watch-meta="viewers">${formatCount(s.viewer_count)}</span>` : ""}</span>
+            ${soloBtn}
+            <button class="watch-tile-btn ms-fs" title="Fullscreen this tile">⛶</button>
+            <button class="watch-tile-btn ms-remove" title="Remove from layout" data-path="${htmlEscape(path)}">✕</button>
+          </span>
+        </div>
+        <iframe class="watch-tile-iframe ms-iframe" allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
+                src="${htmlEscape(withMuted(s.embed_url, muted))}" allowfullscreen frameborder="0"></iframe>
+      </div>`;
+  }
+  // Empty slot — translucent box + Select stream pill + dropdown.
+  const opts = (streams || []).map((s) =>
+    `<option value="${htmlEscape(s.stream_id)}">${htmlEscape(s.channel_name)} · ${htmlEscape(s.platform)}</option>`
+  ).join("");
+  return `
+    <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}">
+      <div class="ms-empty-pill">
+        <span>Select stream</span>
+        <select class="ms-slot-pick" data-path="${htmlEscape(path)}" aria-label="Pick a stream for this tile">
+          <option value="">— pick a live channel —</option>
+          ${opts}
+        </select>
+      </div>
+      <div class="ms-empty-hint pg-cap-hint">…or drag a channel from the rail.</div>
+    </div>`;
 }
 
 function toTitleCase(slug) {
@@ -4501,6 +4811,100 @@ function wireProUpsell(host, plugin) {
       }
     });
   });
+}
+
+// ── Pro App (Studio / Analytics / Publish unified panes) ─────────────
+//
+// Plugin entries are no longer discrete topnav slots. Instead they
+// contribute to one of three Pro panes. Each pane is a single page
+// with a tab strip across the top; switching tabs swaps the body.
+// Plugins not yet rendered in-pane open via legacy /plugins/<slug>
+// — those slugs still work as deep-links.
+
+const PRO_PANES = {
+  studio: {
+    title: "Studio",
+    subtitle: "The editor stack — every Pro tool that shapes the recording into a publishable cut.",
+    tabs: [
+      { slug: "editor",     label: "EDL editor",     route: "#/plugins/crunchr",   description: "Non-destructive splits, ripple-delete, dead-air trim, undo history. Open Crunchr → a recording to access." },
+      { slug: "automation", label: "Automation",    route: null,                  description: "DAW-style volume curves baked via asendcmd at render. Set per-recording from the EDL editor." },
+      { slug: "branding",   label: "Branding",      route: null,                  description: "Watermark + intro/outro banner overlay applied via ffmpeg filter_complex." },
+      { slug: "captions",   label: "Captions",       route: null,                  description: "SRT / VTT / TXT + styled ASS with per-speaker colour + karaoke highlight." },
+      { slug: "loudness",   label: "Loudness",       route: null,                  description: "EBU R128 measurement + per-platform normalisation (YouTube / Spotify / Apple / EBU / Twitch)." },
+      { slug: "insert-fx",  label: "Insert FX",      route: null,                  description: "Ordered HP / NR / de-esser / comp / limiter chain with voice + game bus presets." },
+      { slug: "sidechain",  label: "Sidechain",      route: null,                  description: "VAD voice intervals → ducking automation curve. Composes with Automation." },
+      { slug: "pitch",      label: "Pitch / time",   route: null,                  description: "Independent tempo + semitone shift via rubberband; fit-to-duration helper." },
+      { slug: "scenes",     label: "Scenes",         route: null,                  description: "Save / recall every plugin's per-recording state as a single scene snapshot." },
+      { slug: "beat-detect", label: "Beat grid",     route: null,                  description: "Tempo + onset detection. Drives the EDL editor's snap-to-beat." },
+      { slug: "vad",        label: "Voice gate",     route: null,                  description: "Hysteresis noise gate + auto-tighten ripple-delete recs." },
+      { slug: "deadair",    label: "Dead-air trim",  route: null,                  description: "Silence detection + one-click EDL trim." },
+      { slug: "ab-render",  label: "A/B compare",   route: null,                  description: "Snapshot the render-relevant settings into A and B variants. Diff before committing." },
+      { slug: "submix",     label: "Sub-mix bus",   route: null,                  description: "Per-track InsertChain + master InsertChain via filter_complex." },
+    ],
+  },
+  analytics: {
+    title: "Analytics",
+    subtitle: "Every analytical lens — viewer-side fraud, audience retention, cross-stream comparison, density.",
+    tabs: [
+      { slug: "insights",       label: "Insights",         route: "#/plugins/insights",        description: "Cross-stream analytics, word frequency, topic shifts, retention proxy." },
+      { slug: "viewguard",      label: "Viewguard",        route: "#/plugins/viewguard",       description: "Live fraud-signal scoring during captures + cross-stream trend dashboard." },
+      { slug: "chat-density",   label: "Chat density",     route: null,                        description: "Audience-retention proxy derived from chat rate over the broadcast." },
+      { slug: "heatmap",        label: "Heatmap",          route: null,                        description: "Multi-signal retention overlay — talk / action / highlight / brand-safe." },
+      { slug: "structure",      label: "Structure",        route: null,                        description: "DAW-style section labeller — intro / gameplay / break / outro tiling." },
+      { slug: "dataviz",        label: "Data viz",         route: "#/dataviz",                 description: "Pick recordings → run experiments → chart the result. Open the dedicated page." },
+    ],
+  },
+  publish: {
+    title: "Publish",
+    subtitle: "Get the cut out the door — clips, chapters, thumbnails, schedule, B-roll, publish queue.",
+    tabs: [
+      { slug: "schedule-optimizer", label: "Schedule optimizer", route: "#/plugins/schedule-optimizer", description: "Publish-slot recommender — 7×24 heatmap → top weekly times with confidence + plateau coverage." },
+      { slug: "clipper",            label: "Clipper",            route: null,                          description: "Highlight detection + clip extraction." },
+      { slug: "thumbnails",         label: "Thumbnails",         route: null,                          description: "Frame ranking + facecam crop." },
+      { slug: "chapters",           label: "Chapters",           route: null,                          description: "Heuristic chapter generation from pacing." },
+      { slug: "casebook",           label: "Casebook",           route: null,                          description: "Post-stream markdown briefing." },
+      { slug: "reuse",              label: "Reuse",              route: null,                          description: "Cross-format publish-queue drafter." },
+      { slug: "broll",              label: "B-roll finder",      route: null,                          description: "Suggest B-roll cuts from a tagged local library based on transcript topics." },
+      { slug: "brandsafe",          label: "Brand safety",       route: null,                          description: "Pre-publish content classifier." },
+      { slug: "multitrack",         label: "Multitrack",         route: null,                          description: "Audio track enumeration + extraction." },
+      { slug: "cuepoints",          label: "Cue points",         route: null,                          description: "Scene-change detection via ffmpeg select." },
+    ],
+  },
+};
+
+async function renderProApp(paneKey) {
+  const pane = PRO_PANES[paneKey];
+  if (!pane) { route("library"); return; }
+
+  // Pick the active tab from the hash sub-route (e.g. #/studio/loudness).
+  const parts = routeParts();
+  const tabSlug = parts[1] || pane.tabs[0]?.slug || "";
+  const activeTab = pane.tabs.find((t) => t.slug === tabSlug) || pane.tabs[0];
+
+  const tabStrip = pane.tabs.map((t) => `
+    <a class="pro-tab ${t.slug === activeTab.slug ? "is-active" : ""}" href="#/${paneKey}/${t.slug}">${htmlEscape(t.label)}</a>`).join("");
+
+  const body = activeTab.route
+    ? `<div class="pro-tab-body">
+         <p class="pg-cap-hint">${htmlEscape(activeTab.description)}</p>
+         <p><a class="btn-primary sm" href="${htmlEscape(activeTab.route)}">Open ${htmlEscape(activeTab.label)} →</a></p>
+       </div>`
+    : `<div class="pro-tab-body">
+         <p class="pg-cap-hint">${htmlEscape(activeTab.description)}</p>
+         <p class="empty sm">This tool is reached from inside the Editor view (open a recording → ⓘ Info → ✄ EDL editor) or via its per-recording API. The unified pane is the conceptual home; the controls live where the artefact does.</p>
+         <details class="pro-tab-detail">
+           <summary>API reference</summary>
+           <pre>POST /api/v1/plugins/${htmlEscape(activeTab.slug)}/&lt;recording_id&gt;</pre>
+         </details>
+       </div>`;
+
+  root.innerHTML = chrome(`
+    <h1 class="page-title">${htmlEscape(pane.title)}</h1>
+    <p class="page-subtitle">${htmlEscape(pane.subtitle)}</p>
+    <nav class="pro-tabs" role="tablist">${tabStrip}</nav>
+    <section class="cfg-card pro-pane-card">${body}</section>
+  `);
+  setupChromeHandlers();
 }
 
 async function renderPlugins() {
@@ -10134,7 +10538,7 @@ const TOUR_STEPS = [
   { route: "library",    title: "Library",    body: "Your home. Live channel rail on the left; current captures + recent recordings in the centre." },
   { route: "recordings", title: "Recordings", body: "Every past + active recording in a sortable / filterable / groupable table. Bulk actions on selection." },
   { route: "schedule",   title: "Monitor",    body: "Tell StriVo which channels to auto-record + auto-download. Capture limits + disk-budget circuit breaker live here." },
-  { route: "watch",      title: "Multi-stream", body: "Multi-stream viewer with auto-tile, focus, PiP, Quadrant, Highlight, and Theatre modes. One tile unmuted at a time." },
+  { route: "watch",      title: "Player", body: "Single + multi-stream player. Pick a preset (split-screen, split/quadrant, quadrant) or build a custom split layout. Drag channels from the rail into empty tiles; drag tiles to swap." },
   { route: "chat",       title: "Chat",       body: "Twitch IRC client with filter chips, mention highlighting, BTTV global emotes." },
   { route: "pipelines",  title: "Pipelines",  body: "Cross-plugin DAGs. Click a node to open it; 'Run on…' picks a recording + opens the right plugin." },
   { route: "plugins",    title: "Plugins",    body: "The shipped plugin set + marketplace catalog. Click any card to open; gear icon → per-plugin Settings." },
