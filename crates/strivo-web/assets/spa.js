@@ -3883,8 +3883,15 @@ function renderCapabilityMatrix(matrix) {
         )
         .join("");
       const label = row.capability.replace(/_/g, " ");
+      // audience_retention is the canonical bridge from the analytics
+      // bucket world (heatmap, chat-density) into the publish-time
+      // recommender. Surface the bridge directly on the row.
+      const isRetentionRow = row.capability === "audience_retention";
+      const bridgeLink = isRetentionRow
+        ? ` <a class="pg-cap-bridge" href="#/plugins/schedule-optimizer" title="Open the schedule-optimizer page so you can feed it any recording's retention buckets via Crunchr → Heatmap → ↘ Send to schedule optimizer.">▶ optimize publish slot</a>`
+        : "";
       return `<div class="pg-cap-row">
-        <span class="pg-cap-label">${htmlEscape(label)}</span>
+        <span class="pg-cap-label">${htmlEscape(label)}${bridgeLink}</span>
         <span class="pg-cap-providers">${chips}</span>
       </div>`;
     })
@@ -4073,6 +4080,23 @@ let schedOptState = {
 };
 
 async function renderScheduleOptimizer() {
+  // Consume a deep-link prefill if any other page (heatmap, capability
+  // matrix) stashed engagement samples for us. One-shot: clear the key
+  // after consuming so a reload doesn't re-apply stale data.
+  try {
+    const raw = localStorage.getItem("strivo-sopt-prefill");
+    if (raw) {
+      const prefill = JSON.parse(raw);
+      if (prefill && Array.isArray(prefill.samples) && prefill.samples.length) {
+        schedOptState.samplesText = JSON.stringify(prefill.samples, null, 2);
+        schedOptState.lastResp = null; // force re-run with new samples
+        Toast.success(`Loaded ${prefill.samples.length} sample(s) from ${prefill.source || "deep-link"}`);
+      }
+      localStorage.removeItem("strivo-sopt-prefill");
+    }
+  } catch {
+    localStorage.removeItem("strivo-sopt-prefill");
+  }
   root.innerHTML = chrome(`
     ${pluginHeader("Schedule optimizer",
       "DAW launch-quantize for publish slots — engagement samples → 7×24 grid → top weekly publish times."
@@ -4226,6 +4250,52 @@ function densityToEngagementSamples(densityPoints, startedAtMs) {
   }
   out.sort((a, b) => (a.day_of_week - b.day_of_week) || (a.hour_of_day - b.hour_of_day));
   return out;
+}
+
+/** Map heatmap fused buckets (per-recording) → engagement samples
+ * keyed by (day_of_week, hour_of_day). bucket_start is seconds from
+ * the recording's start, so wall-clock time = startedAtMs + bucket
+ * × 1000. Score = fused retention proxy × bucket coverage. */
+function heatmapBucketsToSamples(buckets, startedAtMs) {
+  const cells = new Map();
+  const weights = new Map();
+  for (const b of buckets || []) {
+    const t = (Number(b.bucket_start) || 0) * 1000 + startedAtMs;
+    const d = new Date(t);
+    if (isNaN(d.getTime())) continue;
+    const key = `${d.getDay()},${d.getHours()}`;
+    const score = Math.max(0, Number(b.fused) || 0);
+    cells.set(key, (cells.get(key) || 0) + score);
+    weights.set(key, (weights.get(key) || 0) + 1);
+  }
+  let max = 0;
+  for (const v of cells.values()) if (v > max) max = v;
+  const out = [];
+  for (const [k, v] of cells.entries()) {
+    const [dow, hour] = k.split(",").map(Number);
+    // Average × 5 keeps the score in the same 0..5 scale as the
+    // seeded dataset.
+    const w = weights.get(k) || 1;
+    const score = max > 0 ? (v / w) * 5.0 : 0.1;
+    out.push({ day_of_week: dow, hour_of_day: hour, score: Math.max(0.1, score) });
+  }
+  out.sort((a, b) => (a.day_of_week - b.day_of_week) || (a.hour_of_day - b.hour_of_day));
+  return out;
+}
+
+/** Stash a deep-link prefill so the schedule-optimizer page can
+ * consume it on next mount. localStorage so it survives the hash
+ * change without state plumbing through the router. */
+function stashOptimizerPrefill(samples, source) {
+  try {
+    localStorage.setItem("strivo-sopt-prefill", JSON.stringify({
+      samples,
+      source,
+      stashed_at: Date.now(),
+    }));
+  } catch {
+    // Quota errors are non-fatal — the user can still paste manually.
+  }
 }
 
 async function autoFeedFromChatDensity() {
@@ -4569,6 +4639,35 @@ async function renderCrunchrRecording(id) {
           e.preventDefault();
           seek(parseFloat(el.dataset.seek || "0"));
         });
+      });
+      // Deep-link action: hand the recording's retention buckets to
+      // the schedule-optimizer so the user can ask 'when should I
+      // publish a stream that retains people like this one?'.
+      const actionRow = document.createElement("div");
+      actionRow.className = "cr-hm-actions";
+      actionRow.innerHTML = `<button class="sm cr-hm-to-sopt" type="button" title="Map this recording's fused retention buckets to (DoW, hour) engagement samples and open the schedule optimizer pre-loaded with them.">↘ Send to schedule optimizer</button>`;
+      topHost.appendChild(actionRow);
+      actionRow.querySelector(".cr-hm-to-sopt")?.addEventListener("click", async () => {
+        try {
+          // Look up the recording's started_at from the global list so
+          // the heatmap-bucket → wall-clock mapping is accurate.
+          const list = await API.recordings();
+          const recs = list.recordings || list.items || [];
+          const rec = recs.find((x) => x.id === d.recording_id);
+          if (!rec || !rec.started_at) {
+            Toast.error("No started_at on this recording — can't map buckets to wall-clock cells");
+            return;
+          }
+          const samples = heatmapBucketsToSamples(buckets, Date.parse(rec.started_at) || 0);
+          if (!samples.length) {
+            Toast.error("Heatmap buckets produced no engagement samples");
+            return;
+          }
+          stashOptimizerPrefill(samples, `heatmap of ${rec.stream_title || rec.id.slice(0, 8)}`);
+          location.hash = "#/plugins/schedule-optimizer";
+        } catch (err) {
+          Toast.error(`Deep-link failed: ${err.message}`);
+        }
       });
       card.hidden = false;
     }).catch(() => {});

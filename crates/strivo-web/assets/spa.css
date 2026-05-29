@@ -4120,6 +4120,12 @@ body.modal-open { overflow: hidden; }
    hand-roll the JSON. */
 .sopt-autofeed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.2rem; }
 .sopt-autofeed-hint { font-style: italic; }
+/* Heatmap → schedule-optimizer bridge: action button below 'Top
+   moments' and a small label-attached link on the capability matrix
+   audience_retention row. */
+.cr-hm-actions { margin-top: 0.5rem; }
+.pg-cap-bridge { margin-left: 0.4rem; font-size: 0.8em; color: var(--accent, #b07cff); text-decoration: none; }
+.pg-cap-bridge:hover { text-decoration: underline; }
 .sopt-controls label {
   display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85em;
 }
