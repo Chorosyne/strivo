@@ -4476,8 +4476,33 @@ function paintPlayerStage(watch, streams) {
     btn.addEventListener("click", () => {
       const p = btn.dataset.preset;
       if (!PLAYER_PRESETS[p]) return;
+      // Preserve any populated streams across the preset switch. The
+      // user expects 'go from single to quadrant' to keep the open
+      // stream in the first slot, not to wipe it. Collect every
+      // populated slot from the current layout (depth-first, a→b),
+      // build the fresh preset, then refill the first N empty slots
+      // with the preserved streams in order.
+      const preserved = [];
+      walkLayout(playerState.layout, (n) => {
+        if (n.kind === "slot" && (n.streamId || n.recordingId)) {
+          preserved.push({ streamId: n.streamId || null, recordingId: n.recordingId || null });
+        }
+      });
+      let next = PLAYER_PRESETS[p]();
+      if (preserved.length) {
+        // Build a list of slot paths in the new layout, depth-first,
+        // left/top to right/bottom. Assign the preserved streams in
+        // order; extras drop off when the new layout has fewer slots.
+        const slotPaths = [];
+        walkLayout(next, (n, path) => {
+          if (n.kind === "slot") slotPaths.push(path);
+        });
+        for (let i = 0; i < Math.min(preserved.length, slotPaths.length); i++) {
+          next = setNodeAt(next, slotPaths[i], _slot(preserved[i].streamId, preserved[i].recordingId));
+        }
+      }
       playerState.preset = p;
-      playerState.layout = PLAYER_PRESETS[p]();
+      playerState.layout = next;
       savePlayerLayout();
       paintPlayerStage(watch, streams);
     });
