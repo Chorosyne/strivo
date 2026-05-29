@@ -645,14 +645,65 @@ window.addEventListener("hashchange", render);
 // ── Render ───────────────────────────────────────────────────────────
 const root = document.getElementById("app");
 
-async function render() {
-  const r = currentRoute();
-  // Always dismiss the keymap overlay + any lingering body modal-open
-  // class on route change. Without this, navigating away from a page
-  // that opened the keymap (or a modal player) left the overlay
-  // stranded over the new route with no obvious dismiss path.
+// Per-route cache requirements. Every entry lists which module-scoped
+// caches the route's render needs hydrated before chrome() paints.
+// Routes that depend on the chrome's rail (channelCache + recCache)
+// MUST list both — direct deep-link entry never runs renderHome() so
+// the rail would otherwise be empty.
+const ROUTE_HYDRATION = {
+  library:     ["channels", "recordings", "schedule", "patreon"],
+  recordings:  ["recordings"],
+  watch:       ["channels", "recordings"],
+  schedule:    ["recordings"], // active-count chip needs it
+  pipelines:   ["channels"],
+  studio:      ["channels"],
+  analytics:   ["channels"],
+  publish:     ["channels"],
+  viewer:      ["channels", "recordings"],
+  dataviz:     ["recordings"],
+  plugins:     ["channels"],
+  chat:        ["channels"],
+  history:     ["recordings"],
+};
+
+async function ensureRouteHydration(route) {
+  const wants = ROUTE_HYDRATION[route] || ["channels"];
+  const jobs = [];
+  if (wants.includes("channels") && !channelCache.length) {
+    jobs.push(API.channels().then((r) => { channelCache = r.channels || []; }).catch(() => {}));
+  }
+  if (wants.includes("recordings") && !recCache.length) {
+    jobs.push(API.recordings().then((r) => { recCache = r.recordings || []; dashRecordings = recCache; }).catch(() => {}));
+  }
+  if (wants.includes("schedule") && !dashSchedule.length) {
+    jobs.push(API.schedule().then((r) => { dashSchedule = r.schedule || []; }).catch(() => {}));
+  }
+  if (wants.includes("patreon") && !(patreonState.creators || []).length) {
+    jobs.push(typeof seedPatreon === "function" ? seedPatreon().catch(() => {}) : Promise.resolve());
+  }
+  if (jobs.length) await Promise.allSettled(jobs);
+}
+
+// Centralised per-route teardown — all per-route timers + transient
+// UI flags get cleared on every render() call so no route bleed.
+function teardownAcrossRoutes() {
+  // Modals: kbd-help + body class + every app-modal still in the DOM.
   document.getElementById("kbd-help")?.classList.remove("open");
   document.body.classList.remove("modal-open");
+  try { closeAllAppModals?.(); } catch (_) {}
+  try { closeRecordingModals?.(); } catch (_) {}
+  // Per-route timers that previously leaked between routes.
+  if (typeof cdPosterTimer !== "undefined" && cdPosterTimer) { clearInterval(cdPosterTimer); cdPosterTimer = null; }
+  if (playerState && playerState.refreshTimer) { clearInterval(playerState.refreshTimer); playerState.refreshTimer = null; }
+  if (typeof _watchRefreshTimer !== "undefined" && _watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
+  // Transient keyboard-prefix + command-palette state.
+  if (typeof prefixActive !== "undefined") prefixActive = false;
+  if (typeof prefixTimer !== "undefined" && prefixTimer) { clearTimeout(prefixTimer); prefixTimer = null; }
+}
+
+async function render() {
+  const r = currentRoute();
+  teardownAcrossRoutes();
   // P0 perf: tear down per-route long-lived resources before painting
   // the next route. Chat WebSockets, chat buffers, and dataviz resize
   // listeners were accumulating across navigations.
@@ -669,6 +720,13 @@ async function render() {
   // re-mounted (if applicable) by maybeMountPageHint after the route
   // renderer finishes. Avoids stale Library copy bleeding onto Chat etc.
   document.getElementById("page-hint")?.remove();
+  // Universal pre-paint hydration. Every chrome-painting route gets
+  // its declared cache dependencies fetched in parallel before its
+  // renderer runs. Prevents the 'rail empty on deep-link' family of
+  // bugs across every Pro / Free / Util route.
+  if (r !== "login") {
+    await ensureRouteHydration(r);
+  }
   // Probe auth — if /health returns 401-ish, we land on login.
   if (r !== "login") {
     try {
@@ -4248,6 +4306,36 @@ const PLAYER_PRESET_KEY = "strivo-player-preset";
 function _slot(streamId = null, recordingId = null) { return { kind: "slot", streamId, recordingId }; }
 function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
 
+// Strict drag-payload parser. Validates the shape and ID grammar so a
+// stray browser URL drag (or a corrupted/old payload) can't slip into
+// the layout as a real stream. Returns:
+//   { type: "tile",      path: string }
+//   { type: "stream",    id:   string }
+//   { type: "recording", id:   string }
+// or null when the payload doesn't match any known schema.
+function parsePlayerDragPayload(text) {
+  if (typeof text !== "string" || !text) return null;
+  // Path can be empty (root); slug chars only beyond that.
+  if (text.startsWith("strivo-tile:")) {
+    const path = text.slice("strivo-tile:".length);
+    if (path !== "" && !/^[ab](\.[ab])*$/.test(path)) return null;
+    return { type: "tile", path };
+  }
+  if (text.startsWith("strivo-stream:")) {
+    const id = text.slice("strivo-stream:".length);
+    // Backend stream-id shape: 'PlatformDebug:Id' — alphanumeric +
+    // colons/dashes/underscores. Reject anything wilder.
+    if (!/^[A-Za-z0-9:_-]+$/.test(id)) return null;
+    return { type: "stream", id };
+  }
+  if (text.startsWith("strivo-recording:")) {
+    const id = text.slice("strivo-recording:".length);
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+    return { type: "recording", id };
+  }
+  return null;
+}
+
 const PLAYER_PRESETS = {
   single: () => _slot(),
   "split-screen": () => _split("h", 0.5, _slot(), _slot()),
@@ -4322,18 +4410,39 @@ function savePlayerLayout() {
   } catch (_) {}
 }
 
+// Validate a parsed layout tree. Rejects null/undefined, unknown kinds,
+// out-of-range ratios, malformed children. Recursive — every node has
+// to pass on its own merits.
+function validatePlayerLayout(node) {
+  if (!node || typeof node !== "object") return false;
+  if (node.kind === "slot") {
+    // streamId / recordingId either null/undefined or non-empty string.
+    if (node.streamId !== null && node.streamId !== undefined && typeof node.streamId !== "string") return false;
+    if (node.recordingId !== null && node.recordingId !== undefined && typeof node.recordingId !== "string") return false;
+    return true;
+  }
+  if (node.kind === "split") {
+    if (node.dir !== "h" && node.dir !== "v") return false;
+    if (typeof node.ratio !== "number" || node.ratio <= 0 || node.ratio >= 1) return false;
+    return validatePlayerLayout(node.a) && validatePlayerLayout(node.b);
+  }
+  return false;
+}
+
 function loadPlayerLayout() {
   try {
     const raw = localStorage.getItem(PLAYER_LAYOUT_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && (parsed.kind === "slot" || parsed.kind === "split")) {
+      if (validatePlayerLayout(parsed)) {
         playerState.layout = parsed;
         playerState.preset = localStorage.getItem(PLAYER_PRESET_KEY) || "custom";
         return;
       }
     }
   } catch (_) {}
+  // Anything invalid drops back to a single empty slot. The user is
+  // never silently stuck with a corrupted layout.
   playerState.layout = PLAYER_PRESETS.single();
   playerState.preset = "single";
 }
@@ -4360,23 +4469,8 @@ async function renderWatch() {
     savePlayerLayout();
   }
 
-  // Make sure the rail has channels to render. /watch is reachable
-  // directly via deep-link (the home page never ran first), so
-  // hydrate channelCache before painting chrome.
-  if (!channelCache.length) {
-    try {
-      const chRes = await API.channels();
-      channelCache = chRes.channels || [];
-    } catch (_) { /* rail stays empty but page still loads */ }
-  }
-  // Ditto recordings — needed to resolve a ?recording=<id>.
-  if (!recCache.length) {
-    try {
-      const r = await API.recordings();
-      recCache = r.recordings || [];
-    } catch (_) {}
-  }
-
+  // Channel + recording caches are guaranteed hydrated by render()'s
+  // ensureRouteHydration() before this runs.
   root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading…</div></div>`);
   setupChromeHandlers();
   const watch = document.getElementById("watch");
@@ -4488,26 +4582,31 @@ function paintPlayerStage(watch, streams) {
       // build the fresh preset, then refill the first N empty slots
       // with the preserved streams in order.
       const preserved = [];
-      walkLayout(playerState.layout, (n) => {
+      // Also capture which source path was previously soloed so the
+      // user's audio choice survives the layout switch.
+      const prevSoloPath = playerState.soloPath || "";
+      walkLayout(playerState.layout, (n, path) => {
         if (n.kind === "slot" && (n.streamId || n.recordingId)) {
-          preserved.push({ streamId: n.streamId || null, recordingId: n.recordingId || null });
+          preserved.push({ streamId: n.streamId || null, recordingId: n.recordingId || null, wasSoloed: path === prevSoloPath });
         }
       });
       let next = PLAYER_PRESETS[p]();
+      let newSoloPath = "";
       if (preserved.length) {
-        // Build a list of slot paths in the new layout, depth-first,
-        // left/top to right/bottom. Assign the preserved streams in
-        // order; extras drop off when the new layout has fewer slots.
         const slotPaths = [];
         walkLayout(next, (n, path) => {
           if (n.kind === "slot") slotPaths.push(path);
         });
         for (let i = 0; i < Math.min(preserved.length, slotPaths.length); i++) {
           next = setNodeAt(next, slotPaths[i], _slot(preserved[i].streamId, preserved[i].recordingId));
+          if (preserved[i].wasSoloed) newSoloPath = slotPaths[i];
         }
       }
       playerState.preset = p;
       playerState.layout = next;
+      // Restore soloPath if the soloed source landed in the new layout.
+      if (newSoloPath) playerState.soloPath = newSoloPath;
+      else if (prevSoloPath) playerState.soloPath = ""; // its source dropped off — fall back to mute-all
       savePlayerLayout();
       paintPlayerStage(watch, streams);
     });
@@ -4612,8 +4711,15 @@ function paintPlayerStage(watch, streams) {
       e.stopPropagation();
       const tile = btn.closest(".ms-leaf");
       if (!tile) return;
-      if (document.fullscreenElement) document.exitFullscreen?.();
-      else tile.requestFullscreen?.();
+      // Safari / iOS throw a NotAllowedError if requestFullscreen is
+      // called from anything but a user-gesture handler; catch it so
+      // a denied request doesn't leak into the console + Toast the user.
+      try {
+        if (document.fullscreenElement) document.exitFullscreen?.();
+        else tile.requestFullscreen?.();
+      } catch (err) {
+        Toast.error(`Fullscreen denied: ${err && err.message || err}`);
+      }
     });
   });
 
@@ -4645,15 +4751,14 @@ function paintPlayerStage(watch, streams) {
     tile.addEventListener("drop", (e) => {
       e.preventDefault();
       tile.classList.remove("is-drop-target");
-      const payload = e.dataTransfer.getData("text/plain");
+      const parsed = parsePlayerDragPayload(e.dataTransfer.getData("text/plain"));
       const toPath = tile.dataset.path || "";
-      if (payload.startsWith("strivo-tile:")) {
-        const fromPath = payload.slice("strivo-tile:".length);
+      if (!parsed) return; // unknown / corrupted / browser URL drag — leave the tile alone
+      if (parsed.type === "tile") {
+        const fromPath = parsed.path;
         if (fromPath === toPath) return;
         const fromNode = getNodeAt(playerState.layout, fromPath);
         const toNode = getNodeAt(playerState.layout, toPath);
-        // Swap streams between the two slots (preserving recording vs
-        // live identity per side).
         let next = setNodeAt(
           playerState.layout,
           fromPath,
@@ -4665,14 +4770,10 @@ function paintPlayerStage(watch, streams) {
           _slot(fromNode.streamId || null, fromNode.recordingId || null),
         );
         playerState.layout = next;
-      } else if (payload.startsWith("strivo-stream:")) {
-        const id = payload.slice("strivo-stream:".length);
-        if (!id) return;
-        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(id, null));
-      } else {
-        // Unknown payload — ignore so a stray browser URL drag doesn't
-        // accidentally erase a tile.
-        return;
+      } else if (parsed.type === "stream") {
+        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(parsed.id, null));
+      } else if (parsed.type === "recording") {
+        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(null, parsed.id));
       }
       savePlayerLayout();
       paintPlayerStage(watch, streams);
@@ -6644,6 +6745,10 @@ function closeRecordingModals() {
     if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
     pl.remove();
   }
+  // Closing a recording modal should also tear down any lingering
+  // keymap overlay — they were stacking + the kbd-help's ESC was being
+  // eaten by the modal's ESC handler, leaving it stranded.
+  document.getElementById("kbd-help")?.classList.remove("open");
   document.body.classList.remove("modal-open");
 }
 
@@ -8131,109 +8236,16 @@ async function openRecordingPlayer(jobId, _opts = {}) {
   document.body.classList.remove("modal-open");
   const seek = _opts && _opts.seekTo ? `&t=${encodeURIComponent(_opts.seekTo)}` : "";
   window.location.hash = `#/watch?recording=${encodeURIComponent(jobId)}&fresh=1${seek}`;
-  return;
-  // unreachable — old modal implementation kept below for reference
-  // during the deprecation window.
-  // eslint-disable-next-line no-unreachable
-  const overlay = ensureModalContainer("rec-player-modal");
-  overlay.innerHTML = `<div class="modal-card rec-player-card"><div class="empty sm">Loading…</div></div>`;
-  document.body.classList.add("modal-open");
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeRecordingModals(); });
-
-  let rec;
-  try {
-    rec = await API.recordingOne(jobId);
-  } catch (e) {
-    overlay.querySelector(".modal-card").innerHTML =
-      `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
-    return;
-  }
-
-  const src = `/api/v1/recordings/${encodeURIComponent(jobId)}/download`;
-  const captionsUrl = `/api/v1/recordings/${encodeURIComponent(jobId)}/captions.vtt`;
-  overlay.querySelector(".modal-card").innerHTML = `
-    <header class="rec-player-head">
-      <h2 class="rec-player-title">${htmlEscape(niceTitle(rec.stream_title) || rec.channel_name || "Recording")}</h2>
-      <button class="modal-close" aria-label="Close" data-action="modal-close">✕</button>
-    </header>
-    <div class="rec-player-stage">
-      <video id="rec-player-vid" preload="metadata" tabindex="-1"></video>
-      <div class="rec-player-overlay" id="rec-player-overlay" hidden>
-        <div class="rec-player-overlay-msg" id="rec-player-overlay-msg"></div>
-      </div>
-    </div>
-    <div class="rec-player-controls">
-      <button class="rec-pc-btn" id="rec-pc-play" title="Play / Pause (Space)">▶</button>
-      <span class="rec-pc-time" id="rec-pc-cur">0:00</span>
-      <input type="range" class="rec-pc-seek" id="rec-pc-seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
-      <span class="rec-pc-time" id="rec-pc-dur">0:00</span>
-      <span class="rec-pc-ab" id="rec-pc-ab" title="A-B loop (I / O / C)"></span>
-      <label class="rec-pc-speed">
-        Speed
-        <select id="rec-pc-speed-sel">
-          <option value="0.25">0.25×</option>
-          <option value="0.5">0.5×</option>
-          <option value="0.75">0.75×</option>
-          <option value="1" selected>1×</option>
-          <option value="1.25">1.25×</option>
-          <option value="1.5">1.5×</option>
-          <option value="1.75">1.75×</option>
-          <option value="2">2×</option>
-          <option value="3">3×</option>
-          <option value="4">4×</option>
-        </select>
-      </label>
-      <button class="rec-pc-btn" id="rec-pc-mute" title="Mute (M)">🔊</button>
-      <input type="range" class="rec-pc-vol" id="rec-pc-vol" min="0" max="1" step="0.05" value="1" aria-label="Volume">
-      <button class="rec-pc-btn" id="rec-pc-cc" title="Captions (T)" hidden>CC</button>
-      <button class="rec-pc-btn" id="rec-pc-pip" title="Picture-in-picture (P)">⧉</button>
-      <button class="rec-pc-btn" id="rec-pc-fs" title="Fullscreen (F)">⛶</button>
-      <button class="rec-pc-btn" id="rec-pc-help" title="Keyboard help (?)">?</button>
-    </div>
-    <div class="rec-player-help" id="rec-player-help" hidden>
-      <div class="rec-player-help-card">
-        <h3>Keyboard</h3>
-        <dl>
-          <dt>Space</dt><dd>Play / Pause</dd>
-          <dt>← / →</dt><dd>Skip ±5 s</dd>
-          <dt>J / L</dt><dd>Skip ±10 s</dd>
-          <dt>K</dt><dd>Play / Pause</dd>
-          <dt>, / .</dt><dd>Frame step (1/30 s)</dd>
-          <dt>&lt; / &gt;</dt><dd>Speed −/+</dd>
-          <dt>↑ / ↓</dt><dd>Volume</dd>
-          <dt>M</dt><dd>Mute</dd>
-          <dt>I / O / C</dt><dd>Set A loop / Set B loop / Clear</dd>
-          <dt>F</dt><dd>Fullscreen</dd>
-          <dt>P</dt><dd>Picture-in-picture</dd>
-          <dt>T</dt><dd>Toggle captions</dd>
-          <dt>0 – 9</dt><dd>Seek to N · 10 %</dd>
-          <dt>Esc</dt><dd>Close player</dd>
-        </dl>
-      </div>
-    </div>`;
-
-  const v = overlay.querySelector("#rec-player-vid");
-  v.src = src;
-  v.focus();
-  // Probe captions sidecar; reveal the CC button only when present.
-  fetch(captionsUrl, { method: "HEAD", credentials: "same-origin" })
-    .then((r) => {
-      if (r.ok) {
-        const t = document.createElement("track");
-        t.kind = "subtitles";
-        t.src = captionsUrl;
-        t.default = true;
-        t.label = "Captions";
-        v.appendChild(t);
-        overlay.querySelector("#rec-pc-cc").hidden = false;
-      }
-    })
-    .catch(() => {});
-
-  wirePlayer(overlay, v);
-  overlay.querySelectorAll("[data-action=modal-close]").forEach((b) =>
-    b.addEventListener("click", closeRecordingModals));
 }
+
+// Legacy modal-player implementation removed. The shim above redirects
+// every call site to the Player route. If a future iter needs an
+// inline mini-player (e.g. preview-in-context inside an Analytics
+// pane), build it as a separate, narrower function rather than
+// resurrecting the modal.
+
+// (Legacy modal-player implementation deleted — ~100 lines of
+// unreachable code after openRecordingPlayer's return.)
 
 function wirePlayer(overlay, v) {
   const playBtn = overlay.querySelector("#rec-pc-play");
@@ -8317,8 +8329,13 @@ function wirePlayer(overlay, v) {
     } catch (e) { flash(e.message); }
   });
   fsBtn.addEventListener("click", () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else overlay.querySelector(".rec-player-stage").requestFullscreen?.();
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else overlay.querySelector(".rec-player-stage").requestFullscreen?.();
+    } catch (err) {
+      // Safari/iOS reject fullscreen outside user-gesture context.
+      Toast.error?.(`Fullscreen denied: ${err && err.message || err}`);
+    }
   });
   helpBtn.addEventListener("click", () => { helpEl.hidden = !helpEl.hidden; });
 
@@ -10525,9 +10542,14 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  // Don't intercept while typing in an input.
+  // Don't intercept while the user is typing. Catches:
+  //   - native text fields (input / textarea)
+  //   - contenteditable widgets (custom rich-text editors, chat compose
+  //     boxes, anything with the global isContentEditable flag)
+  //   - select dropdowns mid-keyboard-navigation
   const tag = (e.target.tagName || "").toLowerCase();
-  if (tag === "input" || tag === "textarea") return;
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+  if (e.target.isContentEditable) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
 
   // `/` focuses the recordings filter when on that route.
