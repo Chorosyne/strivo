@@ -266,6 +266,18 @@ const API = {
       method: "POST",
       body: { source_duration_sec: sourceSec, target_duration_sec: targetSec },
     }),
+  beatDetectRun: (recordingId, opts = {}) => {
+    const p = new URLSearchParams();
+    if (opts.window_sec != null) p.set("window_sec", opts.window_sec);
+    if (opts.min_bpm != null) p.set("min_bpm", opts.min_bpm);
+    if (opts.max_bpm != null) p.set("max_bpm", opts.max_bpm);
+    if (opts.top_n != null) p.set("top_n", opts.top_n);
+    const qs = p.toString();
+    return API._fetch(
+      `/plugins/beat-detect/${encodeURIComponent(recordingId)}${qs ? "?" + qs : ""}`,
+      { method: "POST" },
+    );
+  },
   vadAnalyze: (recordingId, opts = {}) => {
     const p = new URLSearchParams();
     if (opts.window_sec != null) p.set("window_sec", opts.window_sec);
@@ -5397,6 +5409,11 @@ async function openRecordingInfo(jobId) {
       if (!host) return;
       let { edl, total_duration } = await API.editorLoad(jobId);
       host.hidden = false;
+      // Beat-grid state lives outside paint() so it survives EDL
+      // re-renders. When loaded, the strip is painted into the
+      // .rec-beatgrid placeholder and Split at time… snaps to the
+      // nearest beat within ±60 ms.
+      let beatGridState = null; // { tempo_bpm, beats: number[], window_sec }
 
       const paint = () => {
         const dur = edl.cuts.reduce((a, c) => a + Math.max(0, c.end_sec - c.start_sec), 0);
@@ -5413,10 +5430,12 @@ async function openRecordingInfo(jobId) {
             <button class="sm rec-ed-pitch" type="button" title="Pitch / time-stretch — fit the recording to a target slot length without changing voices' pitch, or transpose a stinger without changing tempo. Wraps ffmpeg rubberband.">🎚 Pitch/time…</button>
             <button class="sm rec-ed-branding" type="button" title="Watermark + intro/outro banner overlay applied at render">★ Branding…</button>
             <button class="sm rec-ed-loudness" type="button" title="EBU R128 loudness check + per-platform normalisation target">♪ Loudness…</button>
+            <button class="sm rec-ed-beatgrid" type="button" title="Beat grid — onset-detect a tempo, paint vertical guides on the EDL strip. While the grid is loaded, Split at time… snaps to the nearest beat.">🎼 Beat grid…</button>
             <button class="sm rec-ed-history" type="button" title="Revision history — revert across saves (DAW-style undo)">↺ History…</button>
             <button class="sm rec-ed-scenes" type="button" title="Scenes — Ableton-style session save/recall bundling EDL + branding + automation + loudness + captions style">🎬 Scenes…</button>
             <button class="btn-primary rec-ed-render" type="button">⚡ Render to MKV</button>
           </div>
+          <div class="rec-beatgrid" hidden></div>
           <div class="rec-branding" hidden></div>
           <div class="rec-loudness" hidden></div>
           <div class="rec-history" hidden></div>
@@ -5445,13 +5464,87 @@ async function openRecordingInfo(jobId) {
             Toast.error(`Save failed: ${err.message}`);
           }
         };
+
+        // ── Beat-grid strip ───────────────────────────────────────
+        // Snaps an output-timeline time to the nearest beat within
+        // ±60ms. Returns the same time when no grid is loaded so
+        // every caller can opt in unconditionally.
+        const snapToBeat = (t) => {
+          if (!beatGridState || !beatGridState.beats || !beatGridState.beats.length) return t;
+          const beats = beatGridState.beats;
+          // Binary search for nearest.
+          let lo = 0, hi = beats.length - 1;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (beats[mid] < t) lo = mid + 1; else hi = mid;
+          }
+          const candidates = [beats[lo]];
+          if (lo > 0) candidates.push(beats[lo - 1]);
+          let best = t, bestDelta = Infinity;
+          for (const b of candidates) {
+            const d = Math.abs(b - t);
+            if (d < bestDelta) { bestDelta = d; best = b; }
+          }
+          return bestDelta < 0.06 ? best : t;
+        };
+
+        const paintBeatStrip = () => {
+          const strip = host.querySelector(".rec-beatgrid");
+          if (!strip) return;
+          if (!beatGridState) { strip.hidden = true; strip.innerHTML = ""; return; }
+          const { tempo_bpm, beats } = beatGridState;
+          // Limit visible ticks to keep DOM cheap; thin to ~400 evenly.
+          const stride = Math.max(1, Math.ceil(beats.length / 400));
+          const sampled = beats.filter((_, i) => i % stride === 0);
+          strip.hidden = false;
+          strip.innerHTML = `
+            <div class="rec-bg-head">
+              <span>🎼 Tempo grid</span>
+              <span class="pg-cap-hint">${tempo_bpm.toFixed(1)} BPM · ${beats.length} beat(s) over ${fmtClock(sourceDur)} · Split snaps within ±60 ms</span>
+              <button class="sm rec-bg-clear" type="button" title="Hide the grid and disable snap">✕</button>
+            </div>
+            <div class="rec-bg-strip">${sampled.map((t) => {
+              const pct = sourceDur > 0 ? (t / sourceDur) * 100 : 0;
+              return `<span class="rec-bg-tick" style="left:${pct.toFixed(3)}%" title="${fmtClock(t)}"></span>`;
+            }).join("")}</div>`;
+          strip.querySelector(".rec-bg-clear")?.addEventListener("click", () => {
+            beatGridState = null;
+            paintBeatStrip();
+          });
+        };
+        paintBeatStrip();
+
+        host.querySelector(".rec-ed-beatgrid")?.addEventListener("click", async (e2) => {
+          const bbtn = e2.currentTarget;
+          await withBusy(bbtn, "Detecting…", async () => {
+            const window_sec = Math.max(60, Math.min(3600, Math.round(sourceDur || 600)));
+            const r = await API.beatDetectRun(jobId, { window_sec });
+            const top = (r.tempo_candidates || [])[0];
+            const beats = r.tempo_grid_secs || [];
+            if (!top || !beats.length) {
+              Toast.error("Beat detect returned no tempo — try a longer window or a different recording");
+              return;
+            }
+            beatGridState = { tempo_bpm: top.bpm, beats, window_sec };
+            paintBeatStrip();
+            Toast.success(`Tempo locked · ${top.bpm.toFixed(1)} BPM · ${beats.length} beats. Split at time… now snaps.`);
+          }).catch((err) => Toast.error(`Beat grid failed: ${err.message}`));
+        });
+
         host.querySelector(".rec-ed-add-split")?.addEventListener("click", async () => {
-          const s = prompt("Split at output time (HH:MM:SS or seconds):");
+          const snapHint = beatGridState ? "\n(Beat grid loaded — input will snap to the nearest beat within ±60ms.)" : "";
+          const s = prompt(`Split at output time (HH:MM:SS or seconds):${snapHint}`);
           if (!s) return;
-          const t = parseTimeInput(s, sourceDur);
+          let t = parseTimeInput(s, sourceDur);
           if (!isFinite(t)) {
             Toast.error("Could not parse time");
             return;
+          }
+          // Beat-grid snap. No-op when the grid hasn't been detected.
+          const snapped = snapToBeat(t);
+          if (Math.abs(snapped - t) > 1e-6) {
+            Toast.success(`Snapped to beat at ${fmtClock(snapped)}`);
+            t = snapped;
           }
           // Local split — same algorithm as server. Walk and split.
           let elapsed = 0;

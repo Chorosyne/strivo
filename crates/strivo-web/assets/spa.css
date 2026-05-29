@@ -3108,6 +3108,14 @@ body.modal-open { overflow: hidden; }
   max-height: 6.5em; overflow-y: auto;
 }
 .rec-ed-actions { display: flex; gap: 0.5rem; margin: 0.4rem 0 0.7rem; flex-wrap: wrap; }
+/* Beat-grid strip — single horizontal track sized to source duration,
+   ticks positioned at percent offsets. Math lives in paintBeatStrip(). */
+.rec-beatgrid { margin: 0.4rem 0 0.7rem; padding: 0.4rem 0.5rem; border-radius: 6px; background: var(--bg-elev, rgba(255,255,255,0.04)); }
+.rec-bg-head { display: flex; gap: 0.7rem; align-items: center; margin-bottom: 0.3rem; }
+.rec-bg-head > span:first-child { font-weight: 600; }
+.rec-bg-clear { margin-left: auto; }
+.rec-bg-strip { position: relative; height: 18px; border-radius: 3px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08)); overflow: hidden; }
+.rec-bg-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent, #b07cff); opacity: 0.55; }
 .rec-ed-list { display: flex; flex-direction: column; gap: 0.3rem; }
 .rec-ed-row {
   display: grid;
