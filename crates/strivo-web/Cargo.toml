@@ -55,6 +55,7 @@ strivo-vad = { path = "../vad" }
 strivo-sidechain = { path = "../sidechain" }
 strivo-insert-fx = { path = "../insert-fx" }
 strivo-pitch = { path = "../pitch" }
+strivo-dataviz = { path = "../dataviz" }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

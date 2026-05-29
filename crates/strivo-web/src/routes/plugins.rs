@@ -1871,6 +1871,16 @@ async fn chat_rooms(
                 strivo_core::platform::PlatformKind::YouTube => ("youtube", false),
                 strivo_core::platform::PlatformKind::Patreon => return None,
             };
+            // Twitch user ID surfaces so the SPA can hit the
+            // legacy badges + per-channel BTTV/FFZ/7TV emote
+            // endpoints without re-resolving the login server-side.
+            // ChannelEntry.id is the platform's stable numeric id
+            // for Twitch.
+            let user_id = if matches!(c.platform, strivo_core::platform::PlatformKind::Twitch) {
+                Some(c.id.clone())
+            } else {
+                None
+            };
             Some(serde_json::json!({
                 "room": c.name,
                 "display_name": if c.display_name.is_empty() { c.name.clone() } else { c.display_name },
@@ -1878,6 +1888,7 @@ async fn chat_rooms(
                 "is_live": c.is_live,
                 "viewer_count": c.viewer_count,
                 "connectable": connectable,
+                "user_id": user_id,
             }))
         })
         .collect();
@@ -3864,6 +3875,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
         .route("/api/v1/plugins/chat/parse", axum::routing::post(chat_parse))
         .route("/api/v1/chat/send", axum::routing::post(chat_send_message))
+        .route("/api/v1/dataviz/run", axum::routing::post(dataviz_run))
         .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
         .route("/api/v1/plugins/structure/{id}", axum::routing::post(structure_classify))
         .route("/api/v1/plugins/automation/{id}", get(automation_load).post(automation_save))
@@ -3903,6 +3915,28 @@ pub fn router() -> Router<AppState> {
 /// Per-plugin storage directory under data_dir/plugins/<name>. Only
 /// the alphanumeric + hyphen subset that matches our shipping plugin
 /// names is allowed through — guard against path traversal.
+#[derive(Debug, Deserialize)]
+pub(super) struct DatavizBody {
+    pub corpus: strivo_dataviz::Corpus,
+    pub experiment: strivo_dataviz::Experiment,
+}
+
+/// `POST /api/v1/dataviz/run` — run a single experiment over an
+/// arbitrary corpus and return the chart-ready Series. The corpus
+/// is supplied by the client (assembled SPA-side from Crunchr
+/// transcripts) so this endpoint is a pure transform; no IO.
+async fn dataviz_run(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<DatavizBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    let series = strivo_dataviz::run(&body.corpus, &body.experiment);
+    Json(json!({ "series": series })).into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ChatSendBody {
     pub room: String,

@@ -1,0 +1,16 @@
+[package]
+name = "strivo-dataviz"
+version = "0.1.0"
+edition = "2021"
+description = "Research-grade analytics — aggregate transcribed/diarised data across playlists, run experiments, expose chartable series."
+authors = ["revelri <slrevoy@mailbox.org>"]
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

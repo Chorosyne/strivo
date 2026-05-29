@@ -4159,6 +4159,38 @@ body.modal-open { overflow: hidden; }
 .hist-hm-t3 { background: rgba(176,124,255,0.68); }
 .hist-hm-t4 { background: rgba(176,124,255,0.95); }
 .hist-hm-legend { display: flex; gap: 0.3rem; align-items: center; margin-top: 0.4rem; font-size: 0.8em; opacity: 0.7; }
+/* Chat text — Unicode emoji often render small. Bump font-family
+   to one that has a real colour-emoji glyph set, otherwise FF/Chromium
+   fall back to a 12px monochrome version that looks broken. */
+.chat-text { font-family: inherit, "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", sans-serif; }
+.chat-emote { height: 22px; vertical-align: middle; margin: 0 1px; }
+.chat-badge-img { height: 18px; vertical-align: middle; margin-right: 2px; }
+/* Text-chip fallback — kept readable for the rare badge ids the
+   resolver can't map. Previously rendered as bare text inline. */
+.chat-badge { display: inline-block; padding: 0 4px; margin-right: 3px; font-size: 0.7em; line-height: 1.4em; border-radius: 3px; background: rgba(255,255,255,0.08); color: var(--accent, #b07cff); vertical-align: middle; }
+/* Viewer route — single embed + collapsible chat sidepane. Grid
+   collapses to one column when the sidepane is hidden so the embed
+   fills. */
+.viewer-root { display: grid; grid-template-columns: 1fr 360px; grid-template-rows: auto 1fr; gap: 0.5rem; height: calc(100vh - 90px); }
+.viewer-root.side-collapsed { grid-template-columns: 1fr 0; }
+.viewer-toolbar { grid-column: 1 / -1; display: flex; gap: 0.6rem; align-items: center; padding: 0.3rem 0; }
+.viewer-stage { grid-column: 1; grid-row: 2; background: #000; border-radius: 6px; overflow: hidden; min-height: 360px; }
+.viewer-iframe { width: 100%; height: 100%; border: 0; display: block; }
+.viewer-chat { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-height: 0; background: rgba(0,0,0,0.25); border-radius: 6px; overflow: hidden; transition: opacity 0.15s; }
+.viewer-root.side-collapsed .viewer-chat { opacity: 0; pointer-events: none; }
+/* Data viz route */
+.dz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+.dz-chart-card { grid-column: 1 / -1; }
+.dz-corpus-actions { display: flex; gap: 0.5rem; align-items: center; margin: 0.4rem 0 0.6rem; }
+.dz-rec-list { max-height: 360px; overflow: auto; display: flex; flex-direction: column; gap: 0.2rem; }
+.dz-rec-row { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0.4rem; border-radius: 3px; }
+.dz-rec-row:hover { background: rgba(255,255,255,0.04); }
+.dz-rec-title { flex: 1; }
+.dz-rec-meta { font-size: 0.8em; opacity: 0.7; }
+.dz-exp-buttons { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.dz-exp.active { box-shadow: inset 0 0 0 1px var(--accent, #b07cff); color: var(--accent, #b07cff); }
+.dz-chart { overflow-x: auto; min-height: 200px; }
+.dz-chart svg { display: block; }
 .sopt-controls label {
   display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85em;
 }

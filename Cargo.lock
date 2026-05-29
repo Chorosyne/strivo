@@ -4015,6 +4015,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-dataviz"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-deadair"
 version = "0.3.0"
 dependencies = [
@@ -4266,6 +4274,7 @@ dependencies = [
  "strivo-clipper",
  "strivo-core",
  "strivo-cuepoints",
+ "strivo-dataviz",
  "strivo-deadair",
  "strivo-editor",
  "strivo-heatmap",
