@@ -2067,6 +2067,131 @@ async fn sidechain_run(
     .into_response()
 }
 
+fn pitch_path(recording_id: &str) -> std::path::PathBuf {
+    strivo_core::config::AppConfig::data_dir()
+        .join("plugins")
+        .join("pitch")
+        .join(format!("{recording_id}.json"))
+}
+
+/// `GET /api/v1/plugins/pitch/<id>` — load saved tempo/pitch settings
+/// (defaults to identity) plus the composed `rubberband=` filter the
+/// render path will splice in and the projected output duration based
+/// on the recording's known length.
+async fn pitch_load(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("pitch") { return r; }
+    let pt: strivo_pitch::PitchTime = std::fs::read_to_string(pitch_path(&recording_id))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    Json(json!({
+        "recording_id": recording_id,
+        "pitch_time": pt,
+        "audio_filter": pt.to_filter(),
+        "semitones": pt.semitones(),
+        "is_identity": pt.is_identity(),
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/pitch/<id>` — persist a fresh tempo/pitch
+/// state. Echoes back the filter + projected output duration if the
+/// caller passes `source_duration_sec` so the UI can update without
+/// a second round trip.
+#[derive(Debug, Deserialize)]
+pub(super) struct PitchSaveBody {
+    pub pitch_time: strivo_pitch::PitchTime,
+    #[serde(default)]
+    pub source_duration_sec: Option<f64>,
+}
+
+async fn pitch_save(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<PitchSaveBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("pitch") { return r; }
+    let path = pitch_path(&recording_id);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Problem::internal(format!("mkdir: {e}")).into_response();
+        }
+    }
+    match serde_json::to_string_pretty(&body.pitch_time) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                return Problem::internal(format!("write: {e}")).into_response();
+            }
+        }
+        Err(e) => return Problem::internal(format!("serialise: {e}")).into_response(),
+    }
+    let projected = body
+        .source_duration_sec
+        .map(|d| body.pitch_time.output_duration_sec(d));
+    Json(json!({
+        "recording_id": recording_id,
+        "ok": true,
+        "audio_filter": body.pitch_time.to_filter(),
+        "semitones": body.pitch_time.semitones(),
+        "projected_output_duration_sec": projected,
+    }))
+    .into_response()
+}
+
+/// `POST /api/v1/plugins/pitch/<id>/fit` — one-shot helper that
+/// computes the tempo factor to land `source_duration_sec` on
+/// `target_duration_sec` and persists it. Pitch left at identity so
+/// voices keep the same pitch at the new tempo.
+#[derive(Debug, Deserialize)]
+pub(super) struct PitchFitBody {
+    pub source_duration_sec: f64,
+    pub target_duration_sec: f64,
+}
+
+async fn pitch_fit(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(recording_id): Path<String>,
+    Json(body): Json<PitchFitBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    if let Err(r) = gate_pro("pitch") { return r; }
+    if body.source_duration_sec <= 0.0 || body.target_duration_sec <= 0.0 {
+        return Problem::bad_request("source/target duration must be > 0").into_response();
+    }
+    let pt = strivo_pitch::PitchTime::fit_to_duration(
+        body.source_duration_sec,
+        body.target_duration_sec,
+    );
+    let path = pitch_path(&recording_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&pt) {
+        let _ = std::fs::write(&path, json);
+    }
+    Json(json!({
+        "recording_id": recording_id,
+        "pitch_time": pt,
+        "audio_filter": pt.to_filter(),
+        "projected_output_duration_sec": pt.output_duration_sec(body.source_duration_sec),
+    }))
+    .into_response()
+}
+
 fn insert_fx_path(recording_id: &str) -> std::path::PathBuf {
     strivo_core::config::AppConfig::data_dir()
         .join("plugins")
@@ -3755,5 +3880,13 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/plugins/insert-fx/{id}/preset/{bus}",
             axum::routing::post(insert_fx_preset),
+        )
+        .route(
+            "/api/v1/plugins/pitch/{id}",
+            get(pitch_load).post(pitch_save),
+        )
+        .route(
+            "/api/v1/plugins/pitch/{id}/fit",
+            axum::routing::post(pitch_fit),
         )
 }

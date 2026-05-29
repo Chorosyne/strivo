@@ -4094,6 +4094,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "strivo-pitch"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "strivo-plugins"
 version = "0.3.0"
 source = "git+https://github.com/Chorosyne/strivo-plugins?branch=main#8a061668ea1a8c4514b2559c34f06e5742ee7b1c"
@@ -4241,6 +4249,7 @@ dependencies = [
  "strivo-multistream",
  "strivo-multitrack",
  "strivo-pipelines-dag",
+ "strivo-pitch",
  "strivo-plugins",
  "strivo-reuse",
  "strivo-scenes",

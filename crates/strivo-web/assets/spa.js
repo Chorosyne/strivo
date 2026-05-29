@@ -254,6 +254,18 @@ const API = {
       `/plugins/insert-fx/${encodeURIComponent(recordingId)}/preset/${encodeURIComponent(bus)}`,
       { method: "POST" },
     ),
+  pitchLoad: (recordingId) =>
+    API._fetch(`/plugins/pitch/${encodeURIComponent(recordingId)}`),
+  pitchSave: (recordingId, body) =>
+    API._fetch(`/plugins/pitch/${encodeURIComponent(recordingId)}`, {
+      method: "POST",
+      body,
+    }),
+  pitchFit: (recordingId, sourceSec, targetSec) =>
+    API._fetch(`/plugins/pitch/${encodeURIComponent(recordingId)}/fit`, {
+      method: "POST",
+      body: { source_duration_sec: sourceSec, target_duration_sec: targetSec },
+    }),
   vadAnalyze: (recordingId, opts = {}) => {
     const p = new URLSearchParams();
     if (opts.window_sec != null) p.set("window_sec", opts.window_sec);
@@ -3591,6 +3603,7 @@ const PLUGIN_REGISTRY = [
   { name: "vad",                label: "Voice gate",         category: "Editor", proGated: true, description: "DAW-style noise gate — hysteresis VAD that surfaces auto-tighten ripple-deletes for podcast/commentary recordings." },
   { name: "sidechain",          label: "Sidechain compressor", category: "Editor", proGated: true, description: "DAW sidechain — VAD voice intervals → ducking automation curve baked via the existing volume-automation render path." },
   { name: "insert-fx",          label: "Insert FX chain",      category: "Editor", proGated: true, description: "DAW-style ordered insert chain per recording: HP, NR, de-esser, comp, limiter, reverb. Voice + game bus presets. Composes into one ffmpeg -af baked at render." },
+  { name: "pitch",              label: "Pitch / time-stretch", category: "Editor", proGated: true, description: "Independent tempo + pitch. Fit a 1h45 stream to a 1h slot without changing voices' pitch, or transpose a stinger without changing tempo. Wraps ffmpeg rubberband, formant-preserving by default." },
   // Asset / analytics / publishing.
   { name: "chapters",         label: "Chapters",         category: "Analytics", proGated: true, description: "Heuristic chapter markers extracted from pacing." },
   { name: "cuepoints",        label: "Cuepoints",        category: "Analytics", proGated: true, description: "Scene-change detection from ffmpeg's select filter." },
@@ -5397,6 +5410,7 @@ async function openRecordingInfo(jobId) {
             <button class="sm rec-ed-vad" type="button" title="DAW-style voice gate — hysteresis VAD finds speech runs and ripple-deletes the natural breath gaps">▢ Voice gate…</button>
             <button class="sm rec-ed-sidechain" type="button" title="DAW sidechain — VAD voice intervals → ducking automation curve baked at render. Composes VAD + sidechain + automation in one click.">🦆 Sidechain duck…</button>
             <button class="sm rec-ed-insertfx" type="button" title="DAW insert chain — ordered HP/NR/de-esser/comp/limiter etc. Voice + game bus presets, edits persist as a single ffmpeg -af baked at render.">🎛 Insert FX…</button>
+            <button class="sm rec-ed-pitch" type="button" title="Pitch / time-stretch — fit the recording to a target slot length without changing voices' pitch, or transpose a stinger without changing tempo. Wraps ffmpeg rubberband.">🎚 Pitch/time…</button>
             <button class="sm rec-ed-branding" type="button" title="Watermark + intro/outro banner overlay applied at render">★ Branding…</button>
             <button class="sm rec-ed-loudness" type="button" title="EBU R128 loudness check + per-platform normalisation target">♪ Loudness…</button>
             <button class="sm rec-ed-history" type="button" title="Revision history — revert across saves (DAW-style undo)">↺ History…</button>
@@ -5782,6 +5796,87 @@ async function openRecordingInfo(jobId) {
             }
             paintFx();
           }).catch((err) => Toast.error(`Insert FX failed: ${err.message}`));
+        });
+        host.querySelector(".rec-ed-pitch")?.addEventListener("click", async (e2) => {
+          // Pitch / time-stretch panel. Two independent sliders +
+          // one-click 'fit to duration' that computes the tempo factor
+          // to land the recording on a target publish-slot length. The
+          // result composes into a rubberband= filter baked at render.
+          const pbtn = e2.currentTarget;
+          await withBusy(pbtn, "Loading…", async () => {
+            const r = await API.pitchLoad(jobId);
+            const panel = host.querySelector(".rec-pitch") || (() => {
+              const d = document.createElement("div");
+              d.className = "rec-pitch";
+              host.appendChild(d);
+              return d;
+            })();
+            const sourceDur = total_duration || dur || 0;
+            let pt = r.pitch_time || { tempo: 1, pitch: 1, formant_preserve: true };
+            const paint = () => {
+              const semis = 12 * Math.log2(Math.max(pt.pitch, 1e-9));
+              const projDur = pt.tempo > 0 ? sourceDur / pt.tempo : sourceDur;
+              const filter = pt.tempo === 1 && pt.pitch === 1
+                ? "(identity — no filter)"
+                : `rubberband=tempo=${pt.tempo.toFixed(3)}:pitch=${pt.pitch.toFixed(3)}:formants=${pt.formant_preserve ? "preserved" : "shifted"}`;
+              panel.hidden = false;
+              panel.innerHTML = `
+                <h5>Pitch / time-stretch</h5>
+                <div class="rec-pt-row">
+                  <label>Tempo <input class="rec-pt-tempo" type="number" step="0.01" min="0.25" max="4" value="${pt.tempo.toFixed(3)}"/>×</label>
+                  <span class="pg-cap-hint">Output: ${fmtClock(projDur)} (source ${fmtClock(sourceDur)})</span>
+                </div>
+                <div class="rec-pt-row">
+                  <label>Pitch <input class="rec-pt-semis" type="number" step="0.5" min="-24" max="24" value="${semis.toFixed(2)}"/> semitones</label>
+                  <label><input type="checkbox" class="rec-pt-formants" ${pt.formant_preserve ? "checked" : ""}/> Preserve formants (voice)</label>
+                </div>
+                <div class="rec-pt-row">
+                  <button class="sm rec-pt-fit" type="button" title="Compute the tempo factor that lands the source duration on the target. Pitch stays unchanged.">⇥ Fit to duration…</button>
+                  <button class="sm rec-pt-reset" type="button" title="Reset to identity">Reset</button>
+                  <button class="btn-primary rec-pt-save" type="button">Save</button>
+                </div>
+                <pre class="rec-pt-filter" title="ffmpeg -af value this setting bakes at render">${filter}</pre>
+              `;
+              const collect = () => {
+                const tempo = parseFloat(panel.querySelector(".rec-pt-tempo").value) || 1;
+                const semisVal = parseFloat(panel.querySelector(".rec-pt-semis").value) || 0;
+                const formants = panel.querySelector(".rec-pt-formants").checked;
+                return { tempo, pitch: Math.pow(2, semisVal / 12), formant_preserve: formants };
+              };
+              panel.querySelectorAll("input").forEach((inp) => inp.addEventListener("change", () => {
+                pt = collect();
+                paint();
+              }));
+              panel.querySelector(".rec-pt-fit").addEventListener("click", async (ev) => {
+                const targetStr = prompt(
+                  `Fit to duration — target output length, in seconds.\nSource: ${fmtClock(sourceDur)} (${Math.round(sourceDur)}s).\nExample: 3600 for 1h00.`,
+                  String(Math.round(sourceDur / 1.1) || 3600),
+                );
+                if (targetStr == null) return;
+                const target = parseFloat(targetStr);
+                if (!isFinite(target) || target <= 0) { Toast.error("Target must be > 0"); return; }
+                await withBusy(ev.currentTarget, "Computing…", async () => {
+                  const res = await API.pitchFit(jobId, sourceDur, target);
+                  pt = res.pitch_time;
+                  paint();
+                  Toast.success(`Fit · tempo ×${pt.tempo.toFixed(3)} → output ${fmtClock(res.projected_output_duration_sec)}`);
+                });
+              });
+              panel.querySelector(".rec-pt-reset").addEventListener("click", () => {
+                pt = { tempo: 1, pitch: 1, formant_preserve: true };
+                paint();
+              });
+              panel.querySelector(".rec-pt-save").addEventListener("click", async (ev) => {
+                await withBusy(ev.currentTarget, "Saving…", async () => {
+                  const res = await API.pitchSave(jobId, { pitch_time: pt, source_duration_sec: sourceDur });
+                  Toast.success(res.audio_filter
+                    ? `Pitch/time saved · output ≈ ${fmtClock(res.projected_output_duration_sec || projDur)}`
+                    : "Pitch/time reset to identity (filter skipped at render)");
+                });
+              });
+            };
+            paint();
+          }).catch((err) => Toast.error(`Pitch failed: ${err.message}`));
         });
         host.querySelector(".rec-ed-branding")?.addEventListener("click", async (e2) => {
           const bbtn = e2.currentTarget;
