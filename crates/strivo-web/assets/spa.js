@@ -1308,17 +1308,17 @@ function recordingPillHtml(j) {
 }
 
 function wireDashboard() {
-  // Click-to-play on finished recording pills. Tile-level click opens
-  // the player at t=0; keyboard Enter/Space mirrors the click for
-  // tabbed users (W4 accessibility).
+  // Click-to-play on finished recording pills. Routes to the Player
+  // tab with this recording loaded as the single tile — no inline
+  // modal. fresh=1 forces a single-slot reset so a stale multi-tile
+  // layout doesn't eat the click.
   document.querySelectorAll('.media-pill[data-action="play"]').forEach((pill) => {
     const open = () => {
       const id = pill.dataset.jobId;
-      if (id) openRecordingPlayer(id);
+      if (!id) return;
+      window.location.hash = `#/watch?recording=${encodeURIComponent(id)}&fresh=1`;
     };
     pill.addEventListener("click", (e) => {
-      // Only fire when the click landed on the tile chrome, not a
-      // nested control (Stop button, future Play button, etc.).
       if (e.target.closest("button, a, input")) return;
       open();
     });
@@ -2570,7 +2570,8 @@ function paintRecordings() {
   body.querySelectorAll("[data-action=rec-play]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      openRecordingPlayer(btn.dataset.jobId);
+      const id = btn.dataset.jobId;
+      if (id) window.location.hash = `#/watch?recording=${encodeURIComponent(id)}&fresh=1`;
     });
   });
   body.querySelectorAll("[data-action=rec-info]").forEach((btn) => {
@@ -2620,7 +2621,7 @@ function paintRecordings() {
         const playable = tr.querySelector('button[data-action="play-rec"]') ||
                          tr.querySelector('.rec-action-play');
         if (playable) playable.click();
-        else if (typeof openRecordingPlayer === "function") openRecordingPlayer(id);
+        else if (id) window.location.hash = `#/watch?recording=${encodeURIComponent(id)}&fresh=1`;
       } else if (e.key === "i" || e.key === "I") {
         e.preventDefault();
         const info = tr.querySelector('[data-action="info"], .rec-action-info');
@@ -4229,7 +4230,11 @@ const PLAYER_LEAF_CAP = 9;
 const PLAYER_LAYOUT_KEY = "strivo-player-layout";
 const PLAYER_PRESET_KEY = "strivo-player-preset";
 
-function _slot(streamId = null) { return { kind: "slot", streamId }; }
+// A slot can hold ONE of (or neither):
+//   streamId      — live channel (rendered as a platform embed iframe)
+//   recordingId   — finished recording (rendered as a <video> sourced
+//                   from /api/v1/recordings/<id>/file)
+function _slot(streamId = null, recordingId = null) { return { kind: "slot", streamId, recordingId }; }
 function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
 
 const PLAYER_PRESETS = {
@@ -4327,33 +4332,52 @@ async function renderWatch() {
   if (_watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
   if (!playerState.layout) loadPlayerLayout();
 
-  // Honour a focus param from the home Live Now carousel: if it's
-  // present and the single-slot layout is empty, pre-fill it.
+  // Honour URL params from rail / dashboard clicks:
+  //   ?focus=<streamId>      → load that LIVE stream into the (empty) single slot
+  //   ?recording=<recId>     → load that RECORDING into the (empty) single slot
+  // 'fresh=1' forces a single-slot reset before loading so the user
+  // doesn't end up dropping a click target into a stale multi-tile layout.
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
   const focusId = params.get("focus") || "";
-  if (focusId && playerState.layout.kind === "slot" && !playerState.layout.streamId) {
-    playerState.layout = _slot(focusId);
+  const recordingId = params.get("recording") || "";
+  const fresh = params.get("fresh") === "1";
+  if ((focusId || recordingId) && (fresh || (playerState.layout.kind === "slot" && !playerState.layout.streamId && !playerState.layout.recordingId))) {
+    playerState.preset = "single";
+    if (recordingId) playerState.layout = _slot(null, recordingId);
+    else playerState.layout = _slot(focusId);
+    savePlayerLayout();
   }
 
-  root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading live streams…</div></div>`);
+  // Make sure the rail has channels to render. /watch is reachable
+  // directly via deep-link (the home page never ran first), so
+  // hydrate channelCache before painting chrome.
+  if (!channelCache.length) {
+    try {
+      const chRes = await API.channels();
+      channelCache = chRes.channels || [];
+    } catch (_) { /* rail stays empty but page still loads */ }
+  }
+  // Ditto recordings — needed to resolve a ?recording=<id>.
+  if (!recCache.length) {
+    try {
+      const r = await API.recordings();
+      recCache = r.recordings || [];
+    } catch (_) {}
+  }
+
+  root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading…</div></div>`);
+  setupChromeHandlers();
   const watch = document.getElementById("watch");
   let resp;
   try {
-    // Backend still drives 'which streams are live + their embed URLs';
-    // we ignore the tile geometry it returns and lay things out via the
-    // local layout tree.
+    // Backend still drives 'which live streams are present + embed URLs';
+    // we ignore its tile geometry and lay things out via the layout tree.
     resp = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
   } catch (e) {
     watch.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
   }
   const streams = resp.streams || [];
-  if (!streams.length) {
-    watch.innerHTML = `<div class="empty watch-empty"><div class="glyph">▶</div>
-      <p>No followed channels are live right now.</p>
-      <p class="pg-cap-hint">Follow Twitch / YouTube channels in Settings — they'll auto-appear here, ready to drop into the stage.</p></div>`;
-    return;
-  }
   paintPlayerStage(watch, streams);
 
   // Background refresh: poll the tiles endpoint every 30s and patch the
@@ -4488,9 +4512,15 @@ function paintPlayerStage(watch, streams) {
   stage.querySelectorAll("select.ms-slot-pick").forEach((sel) => {
     sel.addEventListener("change", () => {
       const path = sel.dataset.path || "";
-      const id = sel.value;
-      if (!id) return;
-      playerState.layout = setNodeAt(playerState.layout, path, _slot(id));
+      const val = sel.value;
+      if (!val) return;
+      // Values are prefixed (live:<id> or rec:<id>) to disambiguate
+      // the two source types.
+      let next;
+      if (val.startsWith("rec:")) next = _slot(null, val.slice(4));
+      else if (val.startsWith("live:")) next = _slot(val.slice(5), null);
+      else next = _slot(val); // legacy bare stream id
+      playerState.layout = setNodeAt(playerState.layout, path, next);
       savePlayerLayout();
       paintPlayerStage(watch, streams);
     });
@@ -4647,6 +4677,31 @@ function renderLayoutNode(node, path, streams) {
 
 function renderSlot(slot, path, streams) {
   const muted = playerState.soloPath ? playerState.soloPath !== path : true;
+  // ─ Recording playback path ─
+  if (slot.recordingId) {
+    const rec = recCache.find((r) => r.id === slot.recordingId);
+    const title = rec ? (niceTitle(rec.stream_title) || rec.channel_name || rec.id.slice(0, 8)) : slot.recordingId.slice(0, 8);
+    const channel = rec ? rec.channel_name || "" : "";
+    const soloBtn = muted
+      ? `<button class="watch-tile-btn ms-solo" title="Unmute this clip" data-path="${htmlEscape(path)}">🔇</button>`
+      : `<button class="watch-tile-btn ms-unsolo" title="Mute" data-path="${htmlEscape(path)}">🔊</button>`;
+    return `
+      <div class="ms-leaf ms-leaf-rec" data-path="${htmlEscape(path)}" data-recording-id="${htmlEscape(slot.recordingId)}">
+        <div class="watch-tile-head">
+          <span class="watch-tile-name">${htmlEscape(title)}</span>
+          <span class="watch-tile-meta">
+            <span class="watch-tile-plat pg-cap-hint">${htmlEscape(channel)} · recording</span>
+            ${soloBtn}
+            <button class="watch-tile-btn ms-fs" title="Fullscreen this tile">⛶</button>
+            <button class="watch-tile-btn ms-remove" title="Remove from layout" data-path="${htmlEscape(path)}">✕</button>
+          </span>
+        </div>
+        <video class="watch-tile-iframe ms-video" controls playsinline ${muted ? "muted" : ""}
+               preload="metadata"
+               src="/api/v1/recordings/${encodeURIComponent(slot.recordingId)}/file"></video>
+      </div>`;
+  }
+  // ─ Live stream path ─
   if (slot.streamId) {
     const s = streams.find((x) => x.stream_id === slot.streamId);
     if (!s) {
@@ -4673,17 +4728,23 @@ function renderSlot(slot, path, streams) {
                 src="${htmlEscape(withMuted(s.embed_url, muted))}" allowfullscreen frameborder="0"></iframe>
       </div>`;
   }
-  // Empty slot — translucent box + Select stream pill + dropdown.
-  const opts = (streams || []).map((s) =>
-    `<option value="${htmlEscape(s.stream_id)}">${htmlEscape(s.channel_name)} · ${htmlEscape(s.platform)}</option>`
+  // ─ Empty slot — pickable from live channels + recent recordings ─
+  const liveOpts = (streams || []).map((s) =>
+    `<option value="live:${htmlEscape(s.stream_id)}">▶ LIVE · ${htmlEscape(s.channel_name)} · ${htmlEscape(s.platform)}</option>`
   ).join("");
+  const recOpts = (recCache || [])
+    .filter((r) => r.state === "Finished" && r.file_exists !== false)
+    .slice(0, 24)
+    .map((r) => `<option value="rec:${htmlEscape(r.id)}">📁 REC · ${htmlEscape(niceTitle(r.stream_title) || r.channel_name || r.id.slice(0, 8))}</option>`)
+    .join("");
   return `
     <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}">
       <div class="ms-empty-pill">
         <span>Select stream</span>
-        <select class="ms-slot-pick" data-path="${htmlEscape(path)}" aria-label="Pick a stream for this tile">
-          <option value="">— pick a live channel —</option>
-          ${opts}
+        <select class="ms-slot-pick" data-path="${htmlEscape(path)}" aria-label="Pick a stream or recording for this tile">
+          <option value="">— pick a live channel or recording —</option>
+          ${liveOpts ? `<optgroup label="Live channels">${liveOpts}</optgroup>` : ""}
+          ${recOpts ? `<optgroup label="Recent recordings">${recOpts}</optgroup>` : ""}
         </select>
       </div>
       <div class="ms-empty-hint pg-cap-hint">…or drag a channel from the rail.</div>
@@ -4824,22 +4885,12 @@ function wireProUpsell(host, plugin) {
 const PRO_PANES = {
   studio: {
     title: "Studio",
-    subtitle: "The editor stack — every Pro tool that shapes the recording into a publishable cut.",
+    subtitle: "The editor canvas. Volume automation, branding, captions, loudness, insert-fx, sidechain, pitch, beat-grid, voice gate, and dead-air all live INSIDE the EDL editor and aren't separate tabs anywhere else.",
     tabs: [
-      { slug: "editor",     label: "EDL editor",     route: "#/plugins/crunchr",   description: "Non-destructive splits, ripple-delete, dead-air trim, undo history. Open Crunchr → a recording to access." },
-      { slug: "automation", label: "Automation",    route: null,                  description: "DAW-style volume curves baked via asendcmd at render. Set per-recording from the EDL editor." },
-      { slug: "branding",   label: "Branding",      route: null,                  description: "Watermark + intro/outro banner overlay applied via ffmpeg filter_complex." },
-      { slug: "captions",   label: "Captions",       route: null,                  description: "SRT / VTT / TXT + styled ASS with per-speaker colour + karaoke highlight." },
-      { slug: "loudness",   label: "Loudness",       route: null,                  description: "EBU R128 measurement + per-platform normalisation (YouTube / Spotify / Apple / EBU / Twitch)." },
-      { slug: "insert-fx",  label: "Insert FX",      route: null,                  description: "Ordered HP / NR / de-esser / comp / limiter chain with voice + game bus presets." },
-      { slug: "sidechain",  label: "Sidechain",      route: null,                  description: "VAD voice intervals → ducking automation curve. Composes with Automation." },
-      { slug: "pitch",      label: "Pitch / time",   route: null,                  description: "Independent tempo + semitone shift via rubberband; fit-to-duration helper." },
-      { slug: "scenes",     label: "Scenes",         route: null,                  description: "Save / recall every plugin's per-recording state as a single scene snapshot." },
-      { slug: "beat-detect", label: "Beat grid",     route: null,                  description: "Tempo + onset detection. Drives the EDL editor's snap-to-beat." },
-      { slug: "vad",        label: "Voice gate",     route: null,                  description: "Hysteresis noise gate + auto-tighten ripple-delete recs." },
-      { slug: "deadair",    label: "Dead-air trim",  route: null,                  description: "Silence detection + one-click EDL trim." },
-      { slug: "ab-render",  label: "A/B compare",   route: null,                  description: "Snapshot the render-relevant settings into A and B variants. Diff before committing." },
-      { slug: "submix",     label: "Sub-mix bus",   route: null,                  description: "Per-track InsertChain + master InsertChain via filter_complex." },
+      { slug: "editor", label: "EDL editor", route: "#/recordings", description: "The canvas. Open any finished recording → ⓘ Info → ✄ EDL editor. The 14-button toolbar inside (Split · Ripple-delete · Trim dead air · Voice gate · 🦆 Sidechain duck · 🎛 Insert FX · 🎚 Pitch/time · ★ Branding · ♪ Loudness · 🎼 Beat grid · ↺ History · 🎬 Scenes · ♪ I/TP/LRA gauge · ⚡ Render) is where the work happens." },
+      { slug: "scenes", label: "Scenes", route: null, description: "Ableton-style session save/recall. Bundles every plugin's per-recording state (EDL + branding + automation + loudness + captions style) into a named snapshot. Open from inside the EDL editor's 🎬 Scenes panel." },
+      { slug: "ab", label: "A/B render compare", route: null, description: "Snapshot the render-relevant settings (insert-fx, pitch/time, loudness target, sidechain duck) into two variants and diff before committing. Pure data model — invoked per recording." },
+      { slug: "submix", label: "Sub-mix bus", route: null, description: "Per-track InsertChain + master InsertChain routed via ffmpeg filter_complex. Composes multiple audio sources into the master at render." },
     ],
   },
   analytics: {
@@ -4907,9 +4958,38 @@ async function renderProApp(paneKey) {
   setupChromeHandlers();
 }
 
+// Map deprecated plugin sub-routes to their new home in the Pro app
+// panes. The discrete /plugins/<slug> pages for tools that live
+// inside the EDL editor or under a Pro pane are redirected so old
+// deep-links keep working.
+const PLUGIN_ROUTE_REDIRECTS = {
+  // Studio plugins (live inside the EDL editor / Studio pane).
+  automation: "#/studio/editor", branding: "#/studio/editor", captions: "#/studio/editor",
+  loudness: "#/studio/editor", "insert-fx": "#/studio/editor", sidechain: "#/studio/editor",
+  pitch: "#/studio/editor", "beat-detect": "#/studio/editor", vad: "#/studio/editor",
+  deadair: "#/studio/editor", scenes: "#/studio/scenes",
+  "ab-render": "#/studio/ab", submix: "#/studio/submix",
+  // Analytics plugins (Analytics pane).
+  "chat-density": "#/analytics/chat-density", heatmap: "#/analytics/heatmap",
+  structure: "#/analytics/structure", "viewguard-trend": "#/analytics/viewguard",
+  "insights-compare": "#/analytics/insights",
+  // Publish plugins (Publish pane).
+  clipper: "#/publish/clipper", thumbnails: "#/publish/thumbnails",
+  chapters: "#/publish/chapters", casebook: "#/publish/casebook",
+  reuse: "#/publish/reuse", broll: "#/publish/broll",
+  brandsafe: "#/publish/brandsafe", multitrack: "#/publish/multitrack",
+  cuepoints: "#/publish/cuepoints",
+};
+
 async function renderPlugins() {
   const parts = routeParts(); // ["plugins", <slug?>, …]
   const slug = parts[1];
+  // Redirect deprecated discrete-plugin routes to the unified Pro pane
+  // they now contribute to. The five real standalone pages stay.
+  if (slug && PLUGIN_ROUTE_REDIRECTS[slug]) {
+    window.location.hash = PLUGIN_ROUTE_REDIRECTS[slug];
+    return;
+  }
   try {
     switch (slug) {
       case "crunchr":
@@ -10083,7 +10163,8 @@ function paintHistory() {
   host.querySelectorAll("[data-action=rec-play]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      openRecordingPlayer(btn.dataset.jobId);
+      const id = btn.dataset.jobId;
+      if (id) window.location.hash = `#/watch?recording=${encodeURIComponent(id)}&fresh=1`;
     });
   });
   host.querySelectorAll("[data-action=rec-info]").forEach((btn) => {
