@@ -215,6 +215,11 @@ const API = {
     API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}/revisions/${encodeURIComponent(revId)}/restore`, { method: "POST" }),
   editorRender: (recordingId) =>
     API._fetch(`/plugins/editor/${encodeURIComponent(recordingId)}/render`, { method: "POST" }),
+  chatSend: (room, text) =>
+    API._fetch(`/chat/send`, {
+      method: "POST",
+      body: { room, text },
+    }),
   chatDensityCompute: (recordingId, body) =>
     API._fetch(`/plugins/chat-density/${encodeURIComponent(recordingId)}`, {
       method: "POST",
@@ -3197,6 +3202,72 @@ async function ensureBttvGlobal() {
   return bttvCache.map;
 }
 
+// FFZ global emotes — same shape as BTTV. Endpoint:
+// https://api.frankerfacez.com/v1/set/global
+const ffzCache = { ready: false, map: new Map() };
+async function ensureFfzGlobal() {
+  if (ffzCache.ready) return ffzCache.map;
+  try {
+    const r = await fetch("https://api.frankerfacez.com/v1/set/global");
+    if (!r.ok) throw new Error("ffz fetch failed");
+    const j = await r.json();
+    for (const setId of j.default_sets || []) {
+      const set = (j.sets || {})[setId];
+      if (!set) continue;
+      for (const e of set.emoticons || []) {
+        const url = (e.urls && (e.urls["1"] || e.urls["2"])) || "";
+        if (url) {
+          // FFZ urls are scheme-relative — coerce to https.
+          const full = url.startsWith("//") ? `https:${url}` : url;
+          ffzCache.map.set(e.name, full);
+        }
+      }
+    }
+  } catch (_) { /* graceful */ }
+  ffzCache.ready = true;
+  return ffzCache.map;
+}
+
+// 7TV global emotes. Endpoint: https://7tv.io/v3/emote-sets/global
+const seventvCache = { ready: false, map: new Map() };
+async function ensureSeventvGlobal() {
+  if (seventvCache.ready) return seventvCache.map;
+  try {
+    const r = await fetch("https://7tv.io/v3/emote-sets/global");
+    if (!r.ok) throw new Error("7tv fetch failed");
+    const j = await r.json();
+    for (const e of j.emotes || []) {
+      const host = e.data?.host;
+      if (!host) continue;
+      // Prefer the smallest WebP for chat density. host.url is
+      // scheme-relative.
+      const file = (host.files || []).find((f) => f.name === "1x.webp")
+        || (host.files || [])[0];
+      if (!file) continue;
+      const base = host.url.startsWith("//") ? `https:${host.url}` : host.url;
+      seventvCache.map.set(e.name, `${base}/${file.name}`);
+    }
+  } catch (_) { /* graceful */ }
+  seventvCache.ready = true;
+  return seventvCache.map;
+}
+
+// Merge global third-party emote maps into one EmoteMap-shape Map.
+// Precedence: Twitch native (in-message ranges) > BTTV > FFZ > 7TV.
+async function ensureThirdPartyEmotes() {
+  const [bttv, ffz, stv] = await Promise.all([
+    ensureBttvGlobal(),
+    ensureFfzGlobal(),
+    ensureSeventvGlobal(),
+  ]);
+  const merged = new Map();
+  // Lowest precedence first — later sets overwrite earlier ones.
+  for (const [k, v] of stv.entries()) merged.set(k, v);
+  for (const [k, v] of ffz.entries()) merged.set(k, v);
+  for (const [k, v] of bttv.entries()) merged.set(k, v);
+  return merged;
+}
+
 function connectChatRoom(room) {
   if (chatState.sockets[room]) return;
   const ws = new WebSocket(CHAT_TWITCH_WS);
@@ -3287,22 +3358,35 @@ function paintChatBody() {
   paintChatTabs();
 }
 
-// Render badges as small images served from twitch's CDN. Falls back to
-// the text chip for non-standard ids the SPA doesn't know URLs for.
-const BADGE_CDN = (id, version) =>
-  `https://static-cdn.jtvnw.net/badges/v1/${BADGE_UUIDS[id] || id}/${version}`;
-// Mapping from semantic badge id → twitch CDN uuid. The handful of
-// global badges have stable uuids; channel-scoped sub badges resolve
-// at fetch time (a future iter — they need the broadcaster's id).
-const BADGE_UUIDS = {
-  // Empty by default — CDN URL pattern works for global badges by id
-  // (subscriber/12, moderator/1, vip/1 etc.) so the fallback is fine
-  // for the live firehose. Channel-scoped uuids land in a future iter.
-};
+// Twitch badge resolution. The unauthenticated badges.twitch.tv
+// endpoint returns a full set/version → image_url map for the
+// platform's global badges (broadcaster/moderator/vip/subscriber etc.).
+// Channel-scoped sub badges still need an authenticated /helix/chat/
+// badges call against the broadcaster's id — left for a follow-up iter.
+const badgeCache = { ready: false, map: new Map() }; // key "<id>/<ver>" → image url
+async function ensureGlobalBadges() {
+  if (badgeCache.ready) return badgeCache.map;
+  try {
+    const r = await fetch("https://badges.twitch.tv/v1/badges/global/display?language=en");
+    if (!r.ok) throw new Error("badge fetch failed");
+    const j = await r.json();
+    for (const [id, set] of Object.entries(j.badge_sets || {})) {
+      for (const [ver, def] of Object.entries(set.versions || {})) {
+        const url = def.image_url_1x || def.image_url_2x || def.image_url_4x;
+        if (url) badgeCache.map.set(`${id}/${ver}`, url);
+      }
+    }
+  } catch (_) { /* graceful */ }
+  badgeCache.ready = true;
+  return badgeCache.map;
+}
 function renderChatBadges(badges) {
   return badges.map((b) => {
-    const url = BADGE_CDN(b.id, b.version);
-    return `<img class="chat-badge-img" alt="${htmlEscape(b.id)}" title="${htmlEscape(b.id)}/${htmlEscape(b.version)}" src="${htmlEscape(url)}" onerror="this.outerHTML='<span class=&quot;chat-badge&quot;>${htmlEscape(b.id)}</span>'">`;
+    const url = badgeCache.map.get(`${b.id}/${b.version}`);
+    if (url) {
+      return `<img class="chat-badge-img" alt="${htmlEscape(b.id)}" title="${htmlEscape(b.id)}/${htmlEscape(b.version)}" src="${htmlEscape(url)}">`;
+    }
+    return `<span class="chat-badge">${htmlEscape(b.id)}</span>`;
   }).join("");
 }
 
@@ -3322,9 +3406,12 @@ function renderChatTokens(text, ranges = []) {
     if (/^https?:\/\//.test(run)) {
       return `<a class="chat-link" href="${htmlEscape(run)}" target="_blank" rel="noopener noreferrer">${htmlEscape(run)}</a>`;
     }
-    const bttv = bttvCache.map.get(run);
-    if (bttv) {
-      return `<img class="chat-emote" loading="lazy" alt="${htmlEscape(run)}" title="${htmlEscape(run)}" src="${htmlEscape(bttv)}">`;
+    // Third-party emote precedence: BTTV → FFZ → 7TV. First hit wins.
+    const tpUrl = bttvCache.map.get(run)
+      || ffzCache.map.get(run)
+      || seventvCache.map.get(run);
+    if (tpUrl) {
+      return `<img class="chat-emote" loading="lazy" alt="${htmlEscape(run)}" title="${htmlEscape(run)}" src="${htmlEscape(tpUrl)}">`;
     }
     return htmlEscape(run);
   };
@@ -3399,14 +3486,21 @@ async function renderChat() {
           <label class="chat-filter-tog"><input type="checkbox" id="chat-no-actions"> no /me</label>
         </div>
         <div id="chat-body" class="chat-body" role="log" aria-live="polite"></div>
+        <form id="chat-compose" class="chat-compose" autocomplete="off">
+          <input id="chat-input" type="text" placeholder="Send message or /me, /timeout &lt;user&gt; &lt;secs&gt;, /vip &lt;user&gt;… (Enter)" maxlength="500" />
+          <button class="sm" type="submit" id="chat-send">▶ Send</button>
+          <span class="chat-compose-hint pg-cap-hint" id="chat-compose-hint"></span>
+        </form>
       </main>
     </div>
   `);
-  // Kick off the BTTV global emote fetch in the background; we don't
-  // await it because the chat firehose should never block on a third
-  // party. ensureBttvGlobal() populates a module-level cache the
-  // tokenizer consults on each repaint.
-  ensureBttvGlobal().then(() => schedulePaintChat());
+  // Kick off the third-party emote fetches (BTTV + FFZ + 7TV) in the
+  // background; we don't await because the chat firehose should never
+  // block on a third party. Caches are merged on demand in the
+  // tokenizer via mergedEmoteMap().
+  ensureThirdPartyEmotes().then(() => schedulePaintChat());
+  // Twitch global badge images — same pattern. No auth required.
+  ensureGlobalBadges().then(() => schedulePaintChat());
   let rooms;
   try {
     rooms = (await API.chatRooms()).rooms || [];
@@ -3451,6 +3545,28 @@ async function renderChat() {
   document.getElementById("chat-filter-out").addEventListener("input", applyFilters);
   document.getElementById("chat-no-links").addEventListener("change", applyFilters);
   document.getElementById("chat-no-actions").addEventListener("change", applyFilters);
+
+  // Compose box. Wires the visible UI so the OAuth backend can light
+  // it up later without UI churn. Until then the send call probes
+  // /api/v1/chat/send, which returns a Problem describing what's
+  // missing (OAuth token, active room, etc.).
+  const composeForm = document.getElementById("chat-compose");
+  const composeInput = document.getElementById("chat-input");
+  const composeHint = document.getElementById("chat-compose-hint");
+  composeForm?.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const text = (composeInput?.value || "").trim();
+    if (!text) return;
+    const room = chatState?.activeRoom || (chatState?.rooms || [])[0] || null;
+    if (!room) { composeHint.textContent = "No room selected"; return; }
+    try {
+      await API.chatSend(room, text);
+      composeInput.value = "";
+      composeHint.textContent = "";
+    } catch (err) {
+      composeHint.textContent = err.message || "Send failed";
+    }
+  });
 }
 
 // Multi-stream viewer route. Server returns tiles already laid out for

@@ -229,11 +229,7 @@ Concrete future iters to keep the cron loop fed.
 Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shipped in iters 50 / 52 / 53 respectively.
 
 ### Backend integrations that would unblock today's roadmap catalog entries
-- **Demucs source separation** — vendor demucs as an optional binary; expose `demucs-split` Cdylib so the catalog entry flips from roadmap to installed.
-- **YouTube OAuth + Helix publish** — drives the `yt-publish` catalog entry. Needs the device-code flow + scope `youtube.upload`.
-- **Real Twitch badge UUID fetch** — current `chat` plugin badge code falls back to text chips because Twitch CDN requires UUIDs (channel-scoped subscriber badges especially). Wire `/helix/chat/badges/global` + per-channel fetch behind the existing chat plugin.
-- **FFZ + 7TV emote integration** — extend the chat tokenizer's emote map. Same pattern as BTTV; just three more endpoints + cache.
-- **Chat compose + slash-commands** — OAuth login scoped to `chat:edit`; lets users send messages + `/me` / `/timeout` / `/vip` from inside the SPA.
+- **YouTube OAuth + Helix publish** — drives the `yt-publish` catalog entry. Needs the device-code flow + scope `youtube.upload`. Requires Google Cloud creds the user must register; tracked but deferred from the cron.
 
 ### Collaboration / multi-user features
 - **Per-segment comments** — SQLite-backed comments tied to a recording's timecode. Plus optional WS for live updates so a team can review a stream together.
@@ -247,7 +243,7 @@ Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shi
 (all shipped — last cleared at iter 70 with the history date heatmap)
 
 ### Operational
-- **Self-hosted CI** — `Chorosyne/strivo` repo has runners for Arch Linux (this host), macOS Sonoma (QEMU VM), Tiny11 (Windows VM). All three currently idle; future iter ships a `release.yml` that bundles per-platform binaries.
+(all shipped — last cleared at iter 75 with the release.yml fan-out)
 
 ### Doc + ops
 - **Per-plugin README** — every `crates/<name>` has `lib.rs` doc-comments but no top-level README. A future iter generates per-plugin READMEs from the crate metadata + a structured marketplace manifest.

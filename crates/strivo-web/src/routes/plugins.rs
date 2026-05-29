@@ -3863,6 +3863,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/plugins/multistream/tiles", get(multistream_tiles))
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
         .route("/api/v1/plugins/chat/parse", axum::routing::post(chat_parse))
+        .route("/api/v1/chat/send", axum::routing::post(chat_send_message))
         .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
         .route("/api/v1/plugins/structure/{id}", axum::routing::post(structure_classify))
         .route("/api/v1/plugins/automation/{id}", get(automation_load).post(automation_save))
@@ -3902,6 +3903,66 @@ pub fn router() -> Router<AppState> {
 /// Per-plugin storage directory under data_dir/plugins/<name>. Only
 /// the alphanumeric + hyphen subset that matches our shipping plugin
 /// names is allowed through — guard against path traversal.
+#[derive(Debug, Deserialize)]
+pub(super) struct ChatSendBody {
+    pub room: String,
+    pub text: String,
+}
+
+/// `POST /api/v1/chat/send` — outbound message to a Twitch IRC room.
+/// Requires a `STRIVO_TWITCH_CHAT_OAUTH` env var (`oauth:<token>`
+/// scoped `chat:edit`) and `STRIVO_TWITCH_CHAT_LOGIN`. When unset,
+/// returns a 503 Problem describing the missing config so the SPA
+/// can surface a useful hint without guessing.
+async fn chat_send_message(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(body): Json<ChatSendBody>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    let token = std::env::var("STRIVO_TWITCH_CHAT_OAUTH").unwrap_or_default();
+    let login = std::env::var("STRIVO_TWITCH_CHAT_LOGIN").unwrap_or_default();
+    if token.is_empty() || login.is_empty() {
+        return Problem::unavailable(
+            "chat compose needs STRIVO_TWITCH_CHAT_OAUTH (oauth:<token> with chat:edit scope) and STRIVO_TWITCH_CHAT_LOGIN set on the daemon environment",
+        )
+        .into_response();
+    }
+    let room = body.room.trim_start_matches('#').to_ascii_lowercase();
+    if room.is_empty() {
+        return Problem::bad_request("room required").into_response();
+    }
+    let text = body.text.replace(['\r', '\n'], " ");
+    // Open a short-lived IRC connection — keeps the implementation
+    // simple (one connect per message). The per-session join + listen
+    // happens entirely client-side over WS today; outbound messages
+    // are infrequent enough that connection overhead is fine.
+    let irc = match tokio::net::TcpStream::connect("irc.chat.twitch.tv:6667").await {
+        Ok(s) => s,
+        Err(e) => return Problem::internal(format!("irc connect: {e}")).into_response(),
+    };
+    use tokio::io::AsyncWriteExt;
+    let (rx, mut tx) = tokio::io::split(irc);
+    drop(rx); // read half unused — we don't ack
+    // PASS / NICK auth then PRIVMSG.
+    let pass = if token.starts_with("oauth:") { token.clone() } else { format!("oauth:{token}") };
+    let lines = [
+        format!("PASS {pass}\r\n"),
+        format!("NICK {}\r\n", login.to_ascii_lowercase()),
+        format!("PRIVMSG #{room} :{text}\r\n"),
+        "QUIT :strivo\r\n".to_string(),
+    ];
+    for line in lines {
+        if let Err(e) = tx.write_all(line.as_bytes()).await {
+            return Problem::internal(format!("irc write: {e}")).into_response();
+        }
+    }
+    let _ = tx.shutdown().await;
+    Json(json!({ "ok": true, "room": room })).into_response()
+}
+
 fn plugin_storage_dir(name: &str) -> Option<std::path::PathBuf> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return None;
