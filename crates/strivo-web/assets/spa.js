@@ -540,11 +540,17 @@ function confirmDialog(message, opts = {}) {
       </div></div>`;
     modal.querySelector(".confirm-msg").textContent = message;
     document.body.appendChild(modal);
+    // B1: track modal-open via reference count so confirms stacked
+    // alongside other modals don't yank the body lock prematurely.
+    bumpModalOpen(+1);
     const ok = modal.querySelector(".confirm-ok");
     const cancel = modal.querySelector(".confirm-cancel");
     const done = (v) => {
       modal.remove();
-      if (prev && prev.focus) prev.focus();
+      bumpModalOpen(-1);
+      // C5: only restore focus if prev still exists in the document.
+      if (prev && prev.isConnected && prev.focus) prev.focus();
+      else document.getElementById("brand-home")?.focus?.();
       resolve(v);
     };
     ok.addEventListener("click", () => done(true));
@@ -553,7 +559,7 @@ function confirmDialog(message, opts = {}) {
       if (e.target === modal) done(false);
     });
     modal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") done(false);
+      if (e.key === "Escape") { e.preventDefault(); done(false); }
       if (e.key === "Tab") {
         e.preventDefault();
         (document.activeElement === ok ? cancel : ok).focus();
@@ -561,6 +567,16 @@ function confirmDialog(message, opts = {}) {
     });
     ok.focus();
   });
+}
+
+// B3/B17/B20: reference-counted body.modal-open so stacked modals
+// (confirm-over-info, info-over-palette, etc.) don't fight over the
+// single class. Every modal-open writer bumps +1 on open and -1 on
+// close. The class flips off only when the count hits 0.
+let _modalOpenCount = 0;
+function bumpModalOpen(delta) {
+  _modalOpenCount = Math.max(0, _modalOpenCount + delta);
+  document.body.classList.toggle("modal-open", _modalOpenCount > 0);
 }
 
 // Run an async action with a busy/debounced button: aria-busy + label
@@ -642,6 +658,22 @@ function route(name) {
 
 window.addEventListener("hashchange", render);
 
+// C1/C15: defensive preventDefault for anchors styled as buttons —
+// any <a href="#" data-action / data-seek / data-trace> would otherwise
+// navigate to '#' if clicked BEFORE its specific handler wires. The
+// per-element click listener still does the actual work; this just
+// stops the default navigation flicker from racing it. Document-level
+// capture so it runs before per-element handlers.
+document.addEventListener("click", (e) => {
+  const a = e.target.closest('a[href="#"], a[href="#/"]');
+  if (!a) return;
+  // Only suppress for the styled-as-button cases — any anchor with
+  // one of these data attrs is acting as a click target.
+  if (a.matches("[data-action], [data-seek], [data-trace]")) {
+    e.preventDefault();
+  }
+}, true);
+
 // ── Render ───────────────────────────────────────────────────────────
 const root = document.getElementById("app");
 
@@ -669,19 +701,45 @@ const ROUTE_HYDRATION = {
 async function ensureRouteHydration(route) {
   const wants = ROUTE_HYDRATION[route] || ["channels"];
   const jobs = [];
+  // A2/A3: track failed hydrations so the UI can surface a toast
+  // instead of silently rendering an empty rail / 0-active-count.
+  const failures = [];
   if (wants.includes("channels") && !channelCache.length) {
-    jobs.push(API.channels().then((r) => { channelCache = r.channels || []; }).catch(() => {}));
+    jobs.push(API.channels()
+      .then((r) => { channelCache = r.channels || []; })
+      .catch((e) => { failures.push(`channels: ${e.message || e}`); }));
   }
   if (wants.includes("recordings") && !recCache.length) {
-    jobs.push(API.recordings().then((r) => { recCache = r.recordings || []; dashRecordings = recCache; }).catch(() => {}));
+    jobs.push(API.recordings()
+      .then((r) => { recCache = r.recordings || []; dashRecordings = recCache; })
+      .catch((e) => { failures.push(`recordings: ${e.message || e}`); }));
   }
   if (wants.includes("schedule") && !dashSchedule.length) {
-    jobs.push(API.schedule().then((r) => { dashSchedule = r.schedule || []; }).catch(() => {}));
+    jobs.push(API.schedule()
+      .then((r) => { dashSchedule = r.schedule || []; })
+      .catch((e) => { failures.push(`schedule: ${e.message || e}`); }));
   }
   if (wants.includes("patreon") && !(patreonState.creators || []).length) {
     jobs.push(typeof seedPatreon === "function" ? seedPatreon().catch(() => {}) : Promise.resolve());
   }
   if (jobs.length) await Promise.allSettled(jobs);
+  // Suppress 401 noise (handled by the auth probe a few lines later).
+  const real = failures.filter((s) => !/unauthorized/i.test(s));
+  if (real.length && typeof Toast !== "undefined") {
+    Toast.error?.(`Couldn't load: ${real.join(" · ")}`);
+  }
+}
+
+// A15: unified lookup across both channel sources. Patreon channels live
+// in patreonState.creators, regular channels in channelCache; anywhere
+// the code needs to resolve a channel by id OR (platform, id) tuple
+// should call this so nothing is missing for Patreon.
+function findChannelById(id, platform) {
+  if (!id) return null;
+  const inMain = channelCache.find((c) => c.id === id && (!platform || c.platform === platform));
+  if (inMain) return inMain;
+  const inPatreon = (patreonState.creators || []).find((c) => c.id === id && (!platform || c.platform === platform));
+  return inPatreon || null;
 }
 
 // Centralised per-route teardown — all per-route timers + transient
@@ -689,6 +747,10 @@ async function ensureRouteHydration(route) {
 function teardownAcrossRoutes() {
   // Modals: kbd-help + body class + every app-modal still in the DOM.
   document.getElementById("kbd-help")?.classList.remove("open");
+  // B3: route change always zeroes the modal-open ref count + the
+  // class. Any modal that didn't pair its open/close cleanly is
+  // forcibly cleaned up at the boundary.
+  _modalOpenCount = 0;
   document.body.classList.remove("modal-open");
   try { closeAllAppModals?.(); } catch (_) {}
   try { closeRecordingModals?.(); } catch (_) {}
@@ -1227,6 +1289,15 @@ async function renderHome() {
   } catch (_) {
     dashSchedule = [];
   }
+  // A14: prune bulkStatus entries whose channel is no longer in the
+  // current channelCache. Without this the bulkStatus map grew across
+  // weeks of uptime as channels were added + removed.
+  if (Object.keys(bulkStatus).length) {
+    const liveIds = new Set(channelCache.map((c) => c.id));
+    for (const id of Object.keys(bulkStatus)) {
+      if (!liveIds.has(id)) delete bulkStatus[id];
+    }
+  }
   root.removeAttribute("aria-busy");
 
   const selected = selectedChannelKey
@@ -1675,8 +1746,12 @@ function paintChannelVods(channelId, platform) {
   const streamsEl = document.getElementById("cd-streams");
   const uploadsEl = document.getElementById("cd-uploads");
   // Look up channel context once so each VOD pill can carry the
-  // channel_name + platform the download route needs.
-  const channel = channelCache.find((c) => c.id === channelId);
+  // channel_name + platform the download route needs. A9: also
+  // search patreonState.creators so Patreon channels' VOD pills
+  // resolve their display name + platform tag instead of falling
+  // back to "".
+  const channel = channelCache.find((c) => c.id === channelId)
+    || (patreonState.creators || []).find((c) => c.id === channelId);
   const ctx = {
     channelName: (channel && (channel.display_name || channel.name)) || "",
     platform: platform || (channel && channel.platform) || "",
@@ -2027,8 +2102,11 @@ function openAddChannelWizard() {
 function closeAppModal(modal) {
   if (!modal) return;
   modal.classList.remove("open");
-  // Clear body lock only when no other modal is still open.
-  if (!document.querySelector(".app-modal.open")) {
+  // B3: decrement the modal-open counter, which auto-clears the body
+  // class only when no other open modal remains. The DOM-query check
+  // is kept as a defensive belt for callers that bypass bumpModalOpen.
+  bumpModalOpen(-1);
+  if (_modalOpenCount === 0 && !document.querySelector(".app-modal.open")) {
     document.body.classList.remove("modal-open");
   }
 }
@@ -2065,13 +2143,26 @@ async function openCommandPalette() {
       <p class="cmd-hint">↑↓ to navigate · Enter to open · Esc to close</p>
     </form>`;
   document.body.appendChild(dlg);
-  document.body.classList.add("modal-open");
+  bumpModalOpen(+1);
   dlg.addEventListener("click", (e) => { if (e.target === dlg) closeAppModal(dlg); });
+  // B6: capture-phase ESC so a recording-info modal opened from the
+  // palette doesn't swallow the dismiss.
+  const escHandler = (e) => {
+    if (e.key === "Escape" && dlg.isConnected) {
+      e.preventDefault();
+      closeAppModal(dlg);
+      document.removeEventListener("keydown", escHandler, true);
+    }
+  };
+  document.addEventListener("keydown", escHandler, true);
 
   const [recs, chans] = await Promise.all([
     API.recordings().then((r) => r.recordings || []).catch(() => []),
     API.channels().then((r) => r.channels || []).catch(() => []),
   ]);
+  // B32: between awaiting the API and painting results, the user may
+  // have closed the dialog. Bail without touching dead DOM.
+  if (!dlg.isConnected) return;
   const items = [
     ...recs.map((r) => ({
       label: niceTitle(r.stream_title) || "(no title)",
@@ -2736,8 +2827,18 @@ function paintRecordings() {
   //   Ctrl/Cmd+click row body   → toggle this row (without opening Info)
   //   Plain click row body      → open Info modal (handled below)
   body.querySelectorAll(".rec-row-check").forEach((cb) => {
-    // Suppress the native `change` (it fires on Space too); a `click`
-    // handler with `preventDefault` lets us implement range semantics.
+    // C4/C11/C18: native checkbox toggles on Space BEFORE our click
+    // listener can preventDefault, so we'd see the native flip then
+    // our handler ran a second toggle. Intercept Space in keydown
+    // (with preventDefault) so only the click-path semantics decide.
+    cb.addEventListener("keydown", (e) => {
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        cb.click();
+      }
+    });
+    // Suppress the native `change`; a `click` handler with
+    // `preventDefault` implements range semantics.
     cb.addEventListener("click", (e) => {
       e.preventDefault();
       const id = cb.dataset.jobId;
@@ -3258,11 +3359,19 @@ function openRecordingPickerForPipeline(pipe, recs) {
           </button>`).join("")}
       </div>
     </div>`;
-  document.body.classList.add("modal-open");
+  bumpModalOpen(+1);
+  let closed = false;
+  const escHandler = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
   const close = () => {
+    if (closed) return;
+    closed = true;
     overlay.remove();
-    document.body.classList.remove("modal-open");
+    bumpModalOpen(-1);
+    document.removeEventListener("keydown", escHandler, true);
   };
+  // B2: capture-phase ESC so a nested modal opening inside this picker
+  // can't eat the keystroke before we get to dismiss.
+  document.addEventListener("keydown", escHandler, true);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   overlay.querySelector("[data-action=modal-close]").addEventListener("click", close);
   overlay.querySelectorAll(".pl-picker-row").forEach((row) => {
@@ -4272,6 +4381,10 @@ async function renderViewer() {
 // view.
 // Background poll handle so route switches can cancel the previous
 // timer before mounting a new one.
+// A12: deprecated. playerState.refreshTimer is the canonical handle;
+// this dual reference is retained so teardownAcrossRoutes() can keep
+// clearing both during a transitional release. New code MUST use
+// playerState.refreshTimer.
 let _watchRefreshTimer = null;
 
 // Append the muted-state parameter Twitch / YouTube embeds use.
@@ -4448,8 +4561,9 @@ function loadPlayerLayout() {
 }
 
 async function renderWatch() {
-  // Stop any prior refresh poll before we mount a new stage.
-  if (_watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
+  // teardownAcrossRoutes() in render() already cleared any prior refresh
+  // poll (playerState.refreshTimer + the legacy _watchRefreshTimer
+  // alias). A12 consolidation — don't duplicate the clear here.
   if (!playerState.layout) loadPlayerLayout();
 
   // Honour URL params from rail / dashboard clicks:
@@ -4462,7 +4576,12 @@ async function renderWatch() {
   const recordingId = params.get("recording") || "";
   const fresh = params.get("fresh") === "1";
   const seekTo = parseFloat(params.get("t") || "0") || 0;
-  if ((focusId || recordingId) && (fresh || (playerState.layout.kind === "slot" && !playerState.layout.streamId && !playerState.layout.recordingId))) {
+  // B12: explicit null/undefined check — a serialised slot with
+  // streamId: "" should still be treated as empty here.
+  const slotIsEmpty = playerState.layout.kind === "slot"
+    && (playerState.layout.streamId == null || playerState.layout.streamId === "")
+    && (playerState.layout.recordingId == null || playerState.layout.recordingId === "");
+  if ((focusId || recordingId) && (fresh || slotIsEmpty)) {
     playerState.preset = "single";
     if (recordingId) playerState.layout = _slot(null, recordingId);
     else playerState.layout = _slot(focusId);
@@ -4523,6 +4642,9 @@ async function renderWatch() {
       });
     } catch (_) {}
   }, 30000);
+  // A12: keep the legacy _watchRefreshTimer in sync so any external
+  // teardown (test harness, browser extension) that knew about the
+  // old name still works during the deprecation window.
   _watchRefreshTimer = playerState.refreshTimer;
 }
 
@@ -6010,9 +6132,9 @@ async function renderCrunchrRecording(id) {
       <button id="cr-brandsafe" class="pg-linkbtn" type="button" title="Pre-publish brand-safety scan (slurs / profanity / restricted games / music mentions)">⚠ Brand-safety scan</button>
       <div class="cr-caption-export">
         <span class="cr-caption-label">Captions:</span>
-        <a class="pg-linkbtn" download href="${htmlEscape(API.captionsExportUrl(d.recording_id, "srt", "en"))}">.srt</a>
-        <a class="pg-linkbtn" download href="${htmlEscape(API.captionsExportUrl(d.recording_id, "vtt", "en"))}">.vtt</a>
-        <a class="pg-linkbtn" download href="${htmlEscape(API.captionsExportUrl(d.recording_id, "txt", "en"))}">.txt</a>
+        <a class="pg-linkbtn" download="${htmlEscape((d.recording_id || "recording") + ".srt")}" href="${htmlEscape(API.captionsExportUrl(d.recording_id, "srt", "en"))}">.srt</a>
+        <a class="pg-linkbtn" download="${htmlEscape((d.recording_id || "recording") + ".vtt")}" href="${htmlEscape(API.captionsExportUrl(d.recording_id, "vtt", "en"))}">.vtt</a>
+        <a class="pg-linkbtn" download="${htmlEscape((d.recording_id || "recording") + ".txt")}" href="${htmlEscape(API.captionsExportUrl(d.recording_id, "txt", "en"))}">.txt</a>
         <select id="cr-caption-lang" title="Target language (translation backend ships in a follow-up; today returns identity)">
           <option value="en">en (identity)</option>
           <option value="es">es</option>
@@ -6825,8 +6947,31 @@ function probeSectionHtml(p) {
     </section>`;
 }
 
+// B7/B9: canonical recording-action dispatcher. Every recording
+// click-target should funnel through openRecording(id, action) rather
+// than calling openRecordingInfo / openRecordingPlayer / showRecordingPath
+// directly. Adding a new action (or changing how an existing one
+// behaves) means editing one registry entry, not chasing 6+ call sites.
+const RECORDING_ACTIONS = {
+  info:    (id) => openRecordingInfo(id),
+  player:  (id, opts) => openRecordingPlayer(id, opts),
+  locate:  (id) => {
+    const rec = recCache.find((r) => r.id === id);
+    if (rec && rec.output_path) showRecordingPath(rec.output_path);
+  },
+};
+function openRecording(id, action = "info", opts) {
+  if (!id) return;
+  const fn = RECORDING_ACTIONS[action];
+  if (!fn) { console.warn("openRecording: unknown action", action); return; }
+  try { fn(id, opts || {}); } catch (e) { console.error(e); }
+}
+
 async function openRecordingInfo(jobId) {
-  closeRecordingModals();
+  // B13: defensive close — a stray event listener that throws inside
+  // closeRecordingModals shouldn't strand the next modal in a half-
+  // built state.
+  try { closeRecordingModals(); } catch (_) {}
   const overlay = ensureModalContainer("rec-info-modal");
   overlay.innerHTML = `<div class="modal-card rec-info-card"><div class="empty sm">Loading…</div></div>`;
   document.body.classList.add("modal-open");
@@ -10871,33 +11016,45 @@ function schedulePaint(fn) {
   });
 }
 
+// A19: debounce paintChannelList — multiple SSE events in the same
+// tick should coalesce to one repaint. Without this, ChannelsUpdated
+// followed instantly by ChannelWentLive caused two rail repaints +
+// brief flicker. rAF-coalesced like schedulePaint.
+let _railPaintQueued = false;
+function paintChannelListSoon() {
+  if (_railPaintQueued) return;
+  _railPaintQueued = true;
+  requestAnimationFrame(() => {
+    _railPaintQueued = false;
+    try { paintChannelList(); } catch (_) {}
+  });
+}
+
 events.on((event) => {
+  // A18: every cache read in this handler is now guarded so an event
+  // arriving before renderHome hydrates the caches can't crash the
+  // page. Each branch checks the relevant array exists + is populated
+  // before mutating; ChannelsUpdated is special-cased because it
+  // SOURCES the cache.
   const onHome = currentRoute() === "library";
 
-  // Surgical updates only — NEVER full renderHome on background events.
-  // renderHome rebuilds the whole page (chrome + rail + channel-detail
-  // iframe), so doing it on the ~2s RecordingProgress stream reloaded the
-  // live preview and reset the rail scroll. Each handler now touches the
-  // smallest subtree: paintChannelList (rail, scroll-preserved) or
-  // paintDashboard (#dash only), leaving the detail iframe untouched.
-
   if (event.ChannelsUpdated) {
-    channelCache = event.ChannelsUpdated;
-    paintChannelList();
+    channelCache = event.ChannelsUpdated || [];
+    paintChannelListSoon();
   }
   if (event.ChannelWentLive || event.ChannelWentOffline) {
     // Refetch so the new live state (and ordering) is reflected.
     API.channels()
       .then((d) => {
         channelCache = d.channels || [];
-        paintChannelList();
+        paintChannelListSoon();
       })
       .catch(() => {});
   }
 
   // High-frequency progress: update the in-memory job + the dashboard
   // subtree in place. No rail/detail rebuild.
-  if (event.RecordingProgress) {
+  if (event.RecordingProgress && recCache.length) {
     const p = event.RecordingProgress;
     const j = recCache.find((r) => r.id === p.job_id);
     if (j) {

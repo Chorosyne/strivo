@@ -686,6 +686,11 @@ th[data-sort]:hover {
   transition: transform 0.12s ease, border-color 0.12s ease;
 }
 .live-card:hover { transform: translateY(-2px); border-color: var(--accent, #b07cff); }
+/* C20: when a tile inside a transformed ancestor enters fullscreen, the
+ * transform creates a stacking context that clips the top-layer escape.
+ * Drop the transform while ANY descendant is fullscreen so the iframe
+ * can lift cleanly to the viewport. */
+.live-card:has(:fullscreen) { transform: none; }
 .live-card-thumb {
   position: relative;
   aspect-ratio: 16 / 9;
