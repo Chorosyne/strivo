@@ -288,8 +288,14 @@ fn constrained_area(w: u32, h: u32) -> u64 {
 /// Twitch's `parent=` accepts a HOSTNAME ONLY — port and scheme break it
 /// with "embed misconfigured" / "player.twitch.tv refused to connect" — so
 /// we strip the port and any leading scheme before formatting.
+///
+/// Twitch also rejects bare IPv4 addresses (LAN dogfooding via
+/// `http://192.168.x.x:8181/` fails). We detect that case and rewrite
+/// the parent to the matching `<ip-dashed>.nip.io` hostname which
+/// resolves to the same IP via wildcard DNS — the SPA's viewer route
+/// rebuilds the page URL to match so the iframe referer lines up.
 pub fn embed_url(stream: &Stream, host: &str) -> String {
-    let parent_host = host
+    let bare = host
         .trim_start_matches("https://")
         .trim_start_matches("http://")
         .split('/')
@@ -298,17 +304,27 @@ pub fn embed_url(stream: &Stream, host: &str) -> String {
         .split(':')
         .next()
         .unwrap_or(host);
+    let parent_host: String = if is_bare_ipv4(bare) {
+        format!("{}.nip.io", bare.replace('.', "-"))
+    } else {
+        bare.to_string()
+    };
     match stream.platform {
         Platform::Twitch => format!(
             "https://player.twitch.tv/?channel={}&parent={}",
             url_encode(&stream.embed_key),
-            url_encode(parent_host),
+            url_encode(&parent_host),
         ),
         Platform::YouTube => format!(
             "https://www.youtube.com/embed/live_stream?channel={}",
             url_encode(&stream.embed_key),
         ),
     }
+}
+
+fn is_bare_ipv4(host: &str) -> bool {
+    let parts: Vec<&str> = host.split('.').collect();
+    parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Tiny ASCII-safe URL encoder for the handful of chars that appear in
@@ -483,6 +499,21 @@ mod tests {
             url,
             "https://player.twitch.tv/?channel=cohh&parent=localhost"
         );
+    }
+
+    #[test]
+    fn twitch_embed_url_rewrites_bare_ip_to_nip_io() {
+        let url = embed_url(&s("Cohh"), "192.168.8.203:8181");
+        assert!(
+            url.ends_with("parent=192-168-8-203.nip.io"),
+            "got {url}"
+        );
+    }
+
+    #[test]
+    fn twitch_embed_url_keeps_real_hostnames_unchanged() {
+        let url = embed_url(&s("Cohh"), "strivo.local:8181");
+        assert!(url.ends_with("parent=strivo.local"));
     }
 
     #[test]

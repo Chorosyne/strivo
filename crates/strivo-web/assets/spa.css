@@ -4178,6 +4178,12 @@ body.modal-open { overflow: hidden; }
 .viewer-iframe { width: 100%; height: 100%; border: 0; display: block; }
 .viewer-chat { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-height: 0; background: rgba(0,0,0,0.25); border-radius: 6px; overflow: hidden; transition: opacity 0.15s; }
 .viewer-root.side-collapsed .viewer-chat { opacity: 0; pointer-events: none; }
+.viewer-embed-banner { position: absolute; inset: 0; z-index: 2; padding: 1.5rem; background: rgba(0,0,0,0.78); color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 0.8rem; }
+.viewer-embed-banner code { background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 3px; font-family: monospace; }
+.viewer-embed-banner a { color: var(--accent, #b07cff); text-decoration: underline; }
+.viewer-embed-options { text-align: left; max-width: 720px; line-height: 1.5; }
+.viewer-embed-options li { margin-bottom: 0.6rem; }
+.viewer-stage { position: relative; }
 /* Data viz route */
 .dz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
 .dz-chart-card { grid-column: 1 / -1; }

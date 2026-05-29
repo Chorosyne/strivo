@@ -726,7 +726,7 @@ const TOPNAV = [
   // Pipelines now ships the DAW-vision cross-plugin DAG; restored to
   // the topnav (was hidden in the audit when the page was empty).
   ["pipelines", "🔁", "Pipelines", "d", "/assets/icons/candy/pipelines.svg"],
-  ["watch", "▦", "Watch", "w", "/assets/icons/candy/watch.svg"],
+  ["watch", "▦", "Multi-stream", "w", "/assets/icons/candy/watch.svg"],
   ["viewer", "📺", "Viewer", "v", "/assets/icons/candy/watch.svg"],
   ["dataviz", "📊", "Data viz", "z", "/assets/icons/sweet-folders/folder-documents.svg"],
   ["chat", "💬", "Chat", "t", "/assets/icons/candy/chat.svg"],
@@ -3946,7 +3946,52 @@ async function renderViewer() {
   ensureThirdPartyEmotes().then(() => schedulePaintChat());
   ensureGlobalBadges().then(() => schedulePaintChat());
   // Mount the embed iframe — Twitch needs parent= hostname.
-  const parent = location.host.split(":")[0];
+  // Twitch's embed validator REJECTS bare IP addresses (and 'localhost'
+  // works only when accessed via 'localhost'). LAN dogfooding via
+  // http://<ip>:8181 fails with 'embed misconfigured'. We detect the
+  // bare-IP case, rewrite parent= to a nip.io equivalent
+  // (<ip-dashed>.nip.io), and offer the user a one-click banner that
+  // navigates the WHOLE page to the matching nip.io URL so the
+  // iframe's referer lines up with parent=. nip.io resolves
+  // <ip-dashed>.nip.io → that IP via wildcard DNS — no setup needed.
+  const rawHost = location.host;
+  const hostNoPort = rawHost.split(":")[0];
+  const port = rawHost.includes(":") ? rawHost.split(":")[1] : "";
+  const isBareIp = /^\d+\.\d+\.\d+\.\d+$/.test(hostNoPort);
+  const isLocalhost = hostNoPort === "localhost" || hostNoPort === "127.0.0.1";
+  const isHttps = location.protocol === "https:";
+  // Twitch's parent= validator + its embed CSP together require:
+  //   * a hostname (no bare IPs)
+  //   * either https:// access, OR access via 'localhost' over http
+  // Anything else gets the 'embed misconfigured' / CSP-violation
+  // error. We rewrite bare IP → nip.io so the parent= validator
+  // passes, but the CSP rule still needs https for nip.io.
+  const parent = isBareIp
+    ? `${hostNoPort.replace(/\./g, "-")}.nip.io`
+    : hostNoPort;
+  const embedBlocked = !isLocalhost && !isHttps;
+  const stage = document.querySelector(".viewer-stage");
+  if (embedBlocked) {
+    const nipUrl = `http://${parent}${port ? ":" + port : ""}${location.pathname}${location.hash}`;
+    // Render a fix overlay above the iframe with three working
+    // paths so the user can pick whichever is easiest.
+    const banner = document.createElement("div");
+    banner.className = "viewer-embed-banner";
+    banner.innerHTML = `
+      <p><strong>Twitch can't embed over plain HTTP on a remote host.</strong>
+      Their player CSP requires <code>https://</code> for any parent that isn't <code>localhost</code>. Pick one of these:</p>
+      <ol class="viewer-embed-options">
+        <li><strong>SSH tunnel (easiest)</strong> — on your laptop run
+          <code>ssh -L 8181:localhost:8181 ${htmlEscape(hostNoPort)}</code>
+          then open <a href="http://localhost:8181${location.pathname}${location.hash}">http://localhost:8181${htmlEscape(location.pathname + location.hash)}</a> — Twitch whitelists localhost over HTTP.</li>
+        <li><strong>HTTPS via nip.io + a cert</strong> — front the serve with Caddy / nginx terminating TLS for
+          <code>${htmlEscape(parent)}${port ? ":" + port : ""}</code>, then access via
+          <a href="${htmlEscape(nipUrl.replace(/^http:/, "https:"))}">https://${htmlEscape(parent)}${port ? ":" + htmlEscape(port) : ""}</a>.</li>
+        <li><strong>SOCKS over the LAN</strong> — proxy the laptop browser through the strivo host (any SOCKS proxy will do) and treat it as localhost.</li>
+      </ol>
+      <p class="pg-cap-hint">The chat sidepane on the right works regardless — Twitch chat connects via WebSocket without the embed CSP. Use it while you sort out the player path.</p>`;
+    stage.prepend(banner);
+  }
   document.getElementById("viewer-iframe").src =
     `https://player.twitch.tv/?channel=${encodeURIComponent(room)}&parent=${encodeURIComponent(parent)}`;
   // Sidepane toggle persists.
@@ -5612,7 +5657,7 @@ function renderViewguardTrend(resp) {
   const bandSpec = [
     ["critical", "Critical", "hsl(0, 80%, 60%)"],
     ["warning", "Warning", "hsl(20, 80%, 60%)"],
-    ["watch", "Watch", "hsl(40, 80%, 60%)"],
+    ["watch", "Multi-stream", "hsl(40, 80%, 60%)"],
   ];
   const actionLabel = {
     no_action: "No action",
@@ -9941,7 +9986,7 @@ const TOUR_STEPS = [
   { route: "library",    title: "Library",    body: "Your home. Live channel rail on the left; current captures + recent recordings in the centre." },
   { route: "recordings", title: "Recordings", body: "Every past + active recording in a sortable / filterable / groupable table. Bulk actions on selection." },
   { route: "schedule",   title: "Monitor",    body: "Tell StriVo which channels to auto-record + auto-download. Capture limits + disk-budget circuit breaker live here." },
-  { route: "watch",      title: "Watch",      body: "Multi-stream viewer with auto-tile, focus, and PiP modes. One tile unmuted at a time." },
+  { route: "watch",      title: "Multi-stream", body: "Multi-stream viewer with auto-tile, focus, PiP, Quadrant, Highlight, and Theatre modes. One tile unmuted at a time." },
   { route: "chat",       title: "Chat",       body: "Twitch IRC client with filter chips, mention highlighting, BTTV global emotes." },
   { route: "pipelines",  title: "Pipelines",  body: "Cross-plugin DAGs. Click a node to open it; 'Run on…' picks a recording + opens the right plugin." },
   { route: "plugins",    title: "Plugins",    body: "The shipped plugin set + marketplace catalog. Click any card to open; gear icon → per-plugin Settings." },
