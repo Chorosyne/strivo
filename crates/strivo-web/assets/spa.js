@@ -271,6 +271,10 @@ const API = {
       method: "POST",
       body: { source_duration_sec: sourceSec, target_duration_sec: targetSec },
     }),
+  pluginStorageSize: (name) =>
+    API._fetch(`/plugin-storage/${encodeURIComponent(name)}`),
+  pluginStorageClear: (name) =>
+    API._fetch(`/plugin-storage/${encodeURIComponent(name)}`, { method: "DELETE" }),
   beatDetectRun: (recordingId, opts = {}) => {
     const p = new URLSearchParams();
     if (opts.window_sec != null) p.set("window_sec", opts.window_sec);
@@ -5673,6 +5677,7 @@ async function openRecordingInfo(jobId) {
             <button class="sm rec-ed-beatgrid" type="button" title="Beat grid — onset-detect a tempo, paint vertical guides on the EDL strip. While the grid is loaded, Split at time… snaps to the nearest beat.">🎼 Beat grid…</button>
             <button class="sm rec-ed-history" type="button" title="Revision history — revert across saves (DAW-style undo)">↺ History…</button>
             <button class="sm rec-ed-scenes" type="button" title="Scenes — Ableton-style session save/recall bundling EDL + branding + automation + loudness + captions style">🎬 Scenes…</button>
+            <button class="sm rec-ed-autosnap" type="button" title="Auto-snapshot before every save — stashes a scene named 'auto-pre-save · <timestamp>' before each persist, giving you a one-click pre-edit recovery point. Setting persists across reloads.">📸 Auto-snap: <span class="rec-ed-as-state">off</span></button>
             <button class="sm rec-ed-loudgauge" type="button" title="Loudness gauge — measure EBU R128 I / TP / LRA against the YouTube target. Click to measure or refresh; reads from a per-session cache otherwise.">♪ <span class="rec-ed-lg-val">Measure</span></button>
             <button class="btn-primary rec-ed-render" type="button">⚡ Render to MKV</button>
           </div>
@@ -5698,8 +5703,21 @@ async function openRecordingInfo(jobId) {
           </div>
           <p class="pg-cap-hint">All edits are non-destructive — original recording stays intact. Render writes &lt;recording_parent&gt;/edl/&lt;id&gt;.mkv.</p>`;
 
+        // 'Capture before' — opt-in scene auto-snapshot on every save.
+        // When enabled, persist() stashes the *current* edl as a scene
+        // tagged "auto-pre-save · <ISO>" before applying the new edit,
+        // giving the user a one-click pre-edit recovery point.
+        // Preference lives in localStorage so it survives reloads.
+        const autoSnapKey = "strivo-editor-auto-snap";
+        const isAutoSnapOn = () => localStorage.getItem(autoSnapKey) === "1";
         const persist = async (label) => {
           try {
+            if (isAutoSnapOn()) {
+              // Fire-and-forget; scene capture failure shouldn't block
+              // the save the user actually asked for.
+              const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+              API.scenesCapture(jobId, `auto-pre-save · ${stamp}`, null).catch(() => {});
+            }
             await API.editorSave(jobId, edl, label);
           } catch (err) {
             Toast.error(`Save failed: ${err.message}`);
@@ -5775,6 +5793,26 @@ async function openRecordingInfo(jobId) {
           btn.title = `EBU R128 vs ${c.platform || "youtube"} target · I Δ ${d >= 0 ? "+" : ""}${d.toFixed(2)} LUFS. Click to re-measure.`;
         };
         paintLoudGauge();
+
+        // Wire the auto-snap toggle (declared above the persist hook).
+        const paintAutoSnap = () => {
+          const stateEl = host.querySelector(".rec-ed-as-state");
+          const btn = host.querySelector(".rec-ed-autosnap");
+          if (!stateEl || !btn) return;
+          const on = isAutoSnapOn();
+          stateEl.textContent = on ? "on" : "off";
+          btn.classList.toggle("active", on);
+        };
+        paintAutoSnap();
+        host.querySelector(".rec-ed-autosnap")?.addEventListener("click", () => {
+          const next = isAutoSnapOn() ? "0" : "1";
+          localStorage.setItem(autoSnapKey, next);
+          paintAutoSnap();
+          Toast.success(next === "1"
+            ? "Auto-snap on · next save will stash a pre-edit scene first"
+            : "Auto-snap off");
+        });
+
         host.querySelector(".rec-ed-loudgauge")?.addEventListener("click", async (e2) => {
           const gbtn = e2.currentTarget;
           await withBusy(gbtn, "Measuring…", async () => {
@@ -7106,6 +7144,33 @@ function wireSettingsControls() {
     Toast.success("Per-page hints reset · will reappear next visit");
     render().catch(() => {});
   });
+  // Per-plugin Size / Clear actions — wired here so all plugin rows
+  // pick up the handlers via a single querySelectorAll regardless of
+  // which section painted them.
+  pane.querySelectorAll(".stg-plugin-size").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.plugin;
+      try {
+        const r = await API.pluginStorageSize(name);
+        Toast.success(`${name}: ${formatBytes(r.bytes || 0)} across ${r.file_count || 0} file(s)${r.path ? ` (${r.path})` : ""}`);
+      } catch (err) {
+        Toast.error(`Size lookup failed: ${err.message}`);
+      }
+    });
+  });
+  pane.querySelectorAll(".stg-plugin-clear").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.plugin;
+      const ok = confirm(`Permanently delete all stored data for plugin '${name}'?\n\nThis removes per-recording SQLite databases, JSON spec files, and any cached output. Cannot be undone.`);
+      if (!ok) return;
+      try {
+        const r = await API.pluginStorageClear(name);
+        Toast.success(`${name}: deleted ${r.files_removed || 0} file(s), reclaimed ${formatBytes(r.bytes_removed || 0)}`);
+      } catch (err) {
+        Toast.error(`Clear failed: ${err.message}`);
+      }
+    });
+  });
   pane.querySelectorAll("[data-stg-path]").forEach((el) => {
     el.addEventListener("change", async () => {
       const path = el.getAttribute("data-stg-path");
@@ -7348,6 +7413,8 @@ function renderSettingsPane(slug, s) {
             </div>
             <div class="stg-row-value stg-plugin-actions">
               ${toggle(`plugins.${meta.name}.enabled`, enabledFor(meta.name))}
+              <button class="sm stg-plugin-size" type="button" data-plugin="${htmlEscape(meta.name)}" title="View disk usage of this plugin's stored data">📦 Size</button>
+              <button class="sm danger stg-plugin-clear" type="button" data-plugin="${htmlEscape(meta.name)}" title="Delete this plugin's stored data on disk. Cannot be undone.">🗑 Clear</button>
               ${open}
             </div>
           </div>`;
@@ -7841,6 +7908,11 @@ async function renderLogs() {
       <input id="logs-search" class="logs-search" type="search"
              placeholder="${logsRegex ? "Regex (case-insensitive)…" : "Search log text…"}"
              value="${htmlEscape(logsQuery)}" />
+      <label class="logs-daterange" title="Filter log lines by ISO-8601 timestamp prefix. Inclusive of the bounds.">
+        from <input id="logs-from" class="logs-date" type="datetime-local" step="1" value="${htmlEscape(logsFrom || "")}"/>
+        to <input id="logs-to" class="logs-date" type="datetime-local" step="1" value="${htmlEscape(logsTo || "")}"/>
+        <button id="logs-clear-range" class="sm" type="button" title="Clear date range">✕</button>
+      </label>
       <label class="logs-toggle" title="Search as case-insensitive regex">
         <input type="checkbox" id="logs-regex" ${logsRegex ? "checked" : ""}/> regex
       </label>
@@ -7898,21 +7970,42 @@ async function renderLogs() {
       const qLower = q.toLowerCase();
       const filtered = allEntries.filter((e) => {
         if (logsSourceFilter && !e.head.includes(logsSourceFilter)) return false;
+        if (!logInRange(e.head)) return false;
         if (!q || patternBad) return true;
         const hay = e.head + "\n" + e.tail.join("\n");
         if (pattern) return pattern.test(hay);
         return hay.toLowerCase().includes(qLower);
       });
+      // Linkify UUID-shaped trace ids in escaped head HTML so users can
+      // click one to filter the view. We do the escape first, then
+      // splice in <a> elements; safe because the UUID regex contains
+      // no HTML metachars.
+      const TRACE_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+      const linkifyTraces = (escapedHead) =>
+        escapedHead.replace(TRACE_RE, (id) =>
+          `<a class="logs-trace" href="#" data-trace="${id}" title="Filter by trace id ${id}">${id}</a>`,
+        );
       out.innerHTML = filtered.length
         ? filtered
             .map((e) => {
-              const head = htmlEscape(e.head);
+              const head = linkifyTraces(htmlEscape(e.head));
               if (!e.tail.length) return `<div class="log-line">${head}</div>`;
               const tail = htmlEscape(e.tail.join("\n"));
               return `<details class="log-line log-multi"><summary>${head} <span class="log-more">+${e.tail.length}</span></summary><pre>${tail}</pre></details>`;
             })
             .join("")
         : "<div class='empty sm'>No log lines match the current filters.</div>";
+      out.querySelectorAll(".logs-trace").forEach((a) => {
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          logsTraceId = a.dataset.trace || "";
+          logsQuery = logsTraceId;
+          const si = document.getElementById("logs-search");
+          if (si) si.value = logsTraceId;
+          load();
+          Toast.success(`Filtering by trace id ${logsTraceId.slice(0, 8)}…`);
+        });
+      });
       if (fileEl) fileEl.textContent = r.file ? `· ${r.file} · ${filtered.length}/${allEntries.length} entries` : "";
       // Pin scroll to bottom in follow mode UNLESS the user has
       // intentionally scrolled up (we treat "within 80px of bottom"
@@ -7935,6 +8028,20 @@ async function renderLogs() {
   });
   document.getElementById("logs-search")?.addEventListener("input", (e) => {
     logsQuery = e.target.value;
+    load();
+  });
+  document.getElementById("logs-from")?.addEventListener("change", (e) => {
+    logsFrom = e.target.value; load();
+  });
+  document.getElementById("logs-to")?.addEventListener("change", (e) => {
+    logsTo = e.target.value; load();
+  });
+  document.getElementById("logs-clear-range")?.addEventListener("click", () => {
+    logsFrom = ""; logsTo = "";
+    const f = document.getElementById("logs-from");
+    const t = document.getElementById("logs-to");
+    if (f) f.value = "";
+    if (t) t.value = "";
     load();
   });
   document.getElementById("logs-regex")?.addEventListener("change", (e) => {
@@ -7985,6 +8092,32 @@ async function renderLogs() {
 // Cache the last-rendered filtered text so Copy/Download don't have to
 // re-walk the DOM. Updated inside renderLogs.load().
 let logsLastFilteredText = "";
+// Date-range filter for /logs. Both are ISO-prefix strings the user
+// picked from the datetime-local inputs; empty string = unbounded.
+let logsFrom = "";
+let logsTo = "";
+// Trace-id click-to-filter: when a clickable token is clicked we
+// set logsQuery to the trace id and re-render. Stored separately so
+// the user can clear it independently.
+let logsTraceId = "";
+
+// Parse a log line head into an ISO timestamp prefix (e.g.
+// "2026-05-28T22:13:01"). Returns null when nothing recognisable.
+function logLineIsoStamp(head) {
+  const m = head.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : null;
+}
+
+// Match a single log line against the active date range (inclusive).
+// Empty bounds skip the check on that side.
+function logInRange(head) {
+  if (!logsFrom && !logsTo) return true;
+  const stamp = logLineIsoStamp(head);
+  if (!stamp) return false; // structureless lines drop when range is set
+  if (logsFrom && stamp < logsFrom) return false;
+  if (logsTo && stamp > logsTo) return false;
+  return true;
+}
 let logsLastFile = "strivo.log";
 
 // ── Upcoming agenda (item 18) — first-class calendar of known upcoming
@@ -9194,6 +9327,25 @@ function injectKeyboardHelp() {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────
+
+// rAF-coalesced paint scheduler — collapses N paint requests within one
+// animation frame into a single execution. Used by the SSE
+// RecordingProgress handler so a busy session with multiple downloads
+// in flight doesn't full-repaint the recordings grid 4×/tick.
+let _pendingPaint = null;
+function schedulePaint(fn) {
+  if (_pendingPaint) {
+    _pendingPaint = fn; // overwrite — latest paint wins, prior coalesced.
+    return;
+  }
+  _pendingPaint = fn;
+  requestAnimationFrame(() => {
+    const f = _pendingPaint;
+    _pendingPaint = null;
+    if (f) try { f(); } catch (_) {}
+  });
+}
+
 events.on((event) => {
   const onHome = currentRoute() === "library";
 
@@ -9236,8 +9388,15 @@ events.on((event) => {
       updateVodProgressDom(j);
     }
     updateLiveCount(recCache.filter((r) => isInProgress(r.state)).length);
-    if (currentRoute() === "recordings") paintRecordings();
-    else paintDashboard();
+    // Coalesce broader-subtree repaints to one per animation frame.
+    // The SSE stream fires RecordingProgress every ~2s per active job;
+    // without coalescing, an N-recording session would full-repaint N×
+    // per tick. updateVodProgressDom already did the surgical pill
+    // update, so this is purely for the wider grid/dashboard refresh.
+    schedulePaint(() => {
+      if (currentRoute() === "recordings") paintRecordings();
+      else paintDashboard();
+    });
   }
 
   // Lifecycle state changes (rare): refetch recordings, refresh the

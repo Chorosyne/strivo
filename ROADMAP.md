@@ -241,13 +241,9 @@ Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shi
 - **Review-request workflow** — share a scene + checkbox approval log.
 
 ### SPA-side polish
-- **Editor cut → scenes "Capture before" auto-snapshot** — optional "auto-snapshot every save" config so the user always has a pre-edit recovery point.
+(all shipped — last cleared at iter 60)
 
 ### Surface gaps from the v1 audit (lower-priority)
-- **VOD progress pill polling** — pill renders but the rendering rate could be tightened to match the daemon's SSE cadence
-- **Logs date-range picker** — currently the tail returns the last 500 lines; a date filter would let users jump to a specific incident
-- **Trace-id linking** — when the host emits structured trace ids, the logs view should make them clickable to filter
-- **Settings → Plugins manager actions** — beyond enable/disable, add "Clear stored data" + "View storage size" per plugin
 - **Recordings table date range filter** — filter by `started_at` lo/hi to scope the view
 - **History date heatmap** — small calendar grid above the History list, click a day to filter
 

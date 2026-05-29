@@ -3889,4 +3889,100 @@ pub fn router() -> Router<AppState> {
             "/api/v1/plugins/pitch/{id}/fit",
             axum::routing::post(pitch_fit),
         )
+        // Distinct namespace so we don't collide with existing
+        // /plugins/<name>/<id> routes (sidechain, automation, etc.)
+        // where 'storage' would otherwise be interpreted as a
+        // recording id.
+        .route(
+            "/api/v1/plugin-storage/{name}",
+            get(plugin_storage_size).delete(plugin_storage_clear),
+        )
+}
+
+/// Per-plugin storage directory under data_dir/plugins/<name>. Only
+/// the alphanumeric + hyphen subset that matches our shipping plugin
+/// names is allowed through — guard against path traversal.
+fn plugin_storage_dir(name: &str) -> Option<std::path::PathBuf> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return None;
+    }
+    Some(strivo_core::config::AppConfig::data_dir().join("plugins").join(name))
+}
+
+/// Walk a directory and return (total_bytes, file_count). Symlinks
+/// are not followed. Missing dir = (0, 0).
+fn plugin_storage_walk(dir: &std::path::Path) -> (u64, u64) {
+    fn inner(dir: &std::path::Path, bytes: &mut u64, files: &mut u64) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return; };
+        for entry in rd.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_file() {
+                *bytes += meta.len();
+                *files += 1;
+            } else if meta.is_dir() {
+                inner(&entry.path(), bytes, files);
+            }
+        }
+    }
+    let mut bytes = 0u64;
+    let mut files = 0u64;
+    inner(dir, &mut bytes, &mut files);
+    (bytes, files)
+}
+
+/// `GET /api/v1/plugins/<name>/storage` — disk usage of the plugin's
+/// data directory (path + total bytes + file count).
+async fn plugin_storage_size(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    let Some(dir) = plugin_storage_dir(&name) else {
+        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore").into_response();
+    };
+    let (bytes, file_count) = plugin_storage_walk(&dir);
+    Json(json!({
+        "plugin": name,
+        "path": dir.to_string_lossy(),
+        "bytes": bytes,
+        "file_count": file_count,
+        "exists": dir.exists(),
+    }))
+    .into_response()
+}
+
+/// `DELETE /api/v1/plugins/<name>/storage` — wipe the plugin's data
+/// directory. Returns the byte/file counts that were freed.
+async fn plugin_storage_clear(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if authed(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    let Some(dir) = plugin_storage_dir(&name) else {
+        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore").into_response();
+    };
+    if !dir.exists() {
+        return Json(json!({
+            "plugin": name,
+            "bytes_removed": 0,
+            "files_removed": 0,
+        }))
+        .into_response();
+    }
+    let (bytes, files) = plugin_storage_walk(&dir);
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => Json(json!({
+            "plugin": name,
+            "bytes_removed": bytes,
+            "files_removed": files,
+        }))
+        .into_response(),
+        Err(e) => Problem::internal(format!("remove_dir_all: {e}")).into_response(),
+    }
 }

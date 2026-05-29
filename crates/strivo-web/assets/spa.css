@@ -4126,6 +4126,13 @@ body.modal-open { overflow: hidden; }
 .cr-hm-actions { margin-top: 0.5rem; }
 .pg-cap-bridge { margin-left: 0.4rem; font-size: 0.8em; color: var(--accent, #b07cff); text-decoration: none; }
 .pg-cap-bridge:hover { text-decoration: underline; }
+/* Logs date-range picker + clickable trace ids */
+.logs-daterange { display: inline-flex; gap: 0.3rem; align-items: center; font-size: 0.85em; }
+.logs-date { padding: 0.3rem 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border-light); border-radius: 4px; color: inherit; font-family: inherit; }
+.logs-trace { color: var(--accent, #b07cff); text-decoration: none; border-bottom: 1px dotted currentColor; }
+.logs-trace:hover { background: rgba(176, 124, 255, 0.08); }
+/* Editor topbar 📸 Auto-snap toggle — active state mirrors the gauge classes. */
+.rec-ed-autosnap.active { box-shadow: inset 0 0 0 1px rgba(72, 200, 128, 0.55); }
 .sopt-controls label {
   display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85em;
 }
