@@ -42,7 +42,7 @@ image = "0.25"
 # Plugin-only
 rusqlite = { version = "0.33", features = ["bundled"] }
 rust-stemmers = "1.2"
-unicode-segmentation = "1.12"
+unicode-segmentation = "1.13"
 base64 = "0.22"
 which = "7"
 toml = "0.8"
