@@ -135,6 +135,12 @@ pub struct CrunchrConfig {
     #[serde(default)]
     pub diarize: bool,
 
+    /// Force a fixed number of speakers in re-diarization (voice-embedding
+    /// re-clustering). Set this to the known cast size for consistent content
+    /// (e.g. a podcast with a fixed panel); leave unset to auto-detect.
+    #[serde(default)]
+    pub diarize_speakers: Option<u32>,
+
     /// When true, mux the generated `.vtt` subtitles back into the recording's
     /// `.mkv` via `mkvmerge` after a transcription job finishes.
     #[serde(default = "default_embed_subs")]
@@ -178,6 +184,7 @@ impl Default for CrunchrConfig {
             whisper_model: None,
             whisper_timeout_secs: default_whisper_timeout(),
             diarize: false,
+            diarize_speakers: None,
             embed_subs: default_embed_subs(),
             analysis: CrunchrAnalysisConfig::default(),
             tandem_channels: Vec::new(),

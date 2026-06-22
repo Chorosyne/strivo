@@ -19,6 +19,7 @@ use strivo_core::recording::job::RecordingState;
 use uuid::Uuid;
 
 pub mod analysis;
+pub mod cluster;
 pub mod cost;
 pub mod db;
 pub mod embed;

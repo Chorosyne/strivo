@@ -114,8 +114,22 @@ async fn run_inner(
         .transcribe(&audio_path)
         .await
         .context("transcription backend failed")?;
-    let segments = transcription.segments;
+    let mut segments = transcription.segments;
     let full_text = transcription.full_text;
+
+    // Re-diarize: replace the backend's unreliable speaker labels with
+    // voice-embedding clusters. Best-effort — keep the original labels on
+    // failure so a transcript is never lost to a diarization hiccup.
+    if cfg.diarize {
+        match super::cluster::recluster_speakers(&audio_path, &mut segments, cfg.diarize_speakers)
+            .await
+        {
+            Ok(n) => tracing::info!(recording_id = %rid, speakers = n, "crunchr: re-diarized"),
+            Err(e) => {
+                tracing::warn!(recording_id = %rid, "crunchr: speaker re-clustering failed: {e:#}")
+            }
+        }
+    }
 
     let speakers = {
         let mut s: Vec<&str> = segments
