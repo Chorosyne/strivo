@@ -1,338 +1,234 @@
 # StriVo Roadmap
 
-StriVo is a self-hosted live-stream PVR for Twitch, YouTube, and Patreon.
-The web UI (an SPA over the daemon IPC socket) is the primary frontend;
-Pro-tier features ship as plugin crates accessible from the SPA.
+## North star
 
-> **TUI removed.** The legacy ratatui TUI and its source tree are gone.
-> `strivo` with no arguments launches the web UI. See
-> [CHANGELOG.md](./CHANGELOG.md) for the inventory.
+**StriVo is becoming a domain-agnostic stream→clip analytics & content-creation
+engine** — it ingests live streams and clips, extracts structured signals from them
+*as fast as they are recorded*, and turns those signals into something parsable,
+saveable, exportable, and beautiful to look at. The fused reference points are
+"creative cloud" creator tooling on one side and TotalSportsPro / Stats-Perform-class
+org data crunching (the kind done for leagues like the MLB) on the other.
 
-This document records every shipped milestone, the remaining vision gaps,
-and the concrete TODOs that future iters should pick up. **Status legend:**
-✅ shipped · 🟡 in progress · ⬜ planned · ⏸ deferred (with reason).
+The capture PVR and the DAW/plugin toolkit are **not the product** — they are the
+**substrate** that feeds the engine. Capture lands the media; the plugin swarm
+extracts and edits; the engine assembles those signals into analysis and visualisation.
 
----
+The core is **domain-agnostic**: one extract → parse → analyse → visualise → export
+pipeline. Sports analytics and creator content-creation are **templates/configs** on
+top of that core, not separate codebases. The shared engine is sequenced first; the
+domain templates land on it.
 
-## Shipping plugins (38 in-tree)
-
-Every plugin below ships in `crates/<name>/` as a pure-data Rust crate
-(no IO outside the host) with its own unit tests. The host
-(`crates/strivo-web/`) wires each one to a Pro-gated HTTP endpoint and
-surfaces it on the SPA.
-
-### Capture · transcribe · catalog
-| Plugin | Crate | What it does |
-|---|---|---|
-| **Crunchr** | `strivo-plugins/crunchr` | Whisper transcription, diarisation, topic segmentation, word timestamps, click-to-seek transcript, speaker filter, exports |
-| **Archiver** | `strivo-plugins/archiver` | Back-catalog VOD archiver; per-channel auto-pull; tandem with `monitor.auto_download` |
-| **Viewguard** | `strivo-plugins/viewguard` | Live fraud-signal scoring during captures |
-| **Insights** | `strivo-plugins/insights` | Cross-stream word frequency, topic shifts, retention proxy |
-
-### Cut-discovery
-| Plugin | Crate | What it does |
-|---|---|---|
-| Chapters | `crates/chapters` | Heuristic chapter generation from pacing |
-| Cuepoints | `crates/cuepoints` | Scene-change detection via `ffmpeg select` |
-| Clipper | `crates/clipper` | Highlight detection + clip extraction |
-| Thumbnails | `crates/thumbnails` | Frame ranking + facecam crop |
-| Insights-compare | `crates/insights-compare` | Stream-vs-stream side-by-side + retention proxy |
-| Heatmap | `crates/heatmap` | Multi-signal retention overlay |
-| Viewguard-trend | `crates/viewguard-trend` | Cross-stream fraud trend dashboard |
-| Chat-density | `crates/chat-density` | Audience-retention proxy from chat rate |
-| Broll | `crates/broll` | B-roll suggestion from transcript topics |
-
-### Editor stack (the DAW core)
-| Plugin | Crate | What it does |
-|---|---|---|
-| EDL editor | `crates/editor` | Non-destructive split / ripple-delete / fades + revision history with `save_with_label` for full undo across saves |
-| Dead-air | `crates/deadair` | ffmpeg silencedetect → recommend trim cuts |
-| Branding | `crates/branding` | Watermark + intro/outro banner overlay → ffmpeg `filter_complex` |
-| Automation | `crates/automation` | DAW volume automation with Step/Linear/Cosine curves, baked via `asendcmd` |
-| Loudness | `crates/loudness` | EBU R128 two-pass parser with platform presets (YouTube/Spotify/Apple/EBU/Twitch) |
-| Captions | `crates/captions` | SRT/VTT/TXT + **styled ASS** with per-speaker colour + karaoke `\k` tags |
-| Multitrack | `crates/multitrack` | Audio track enumeration + extraction |
-| Brandsafe | `crates/brandsafe` | Pre-publish content classifier |
-| Structure | `crates/structure` | DAW section labeler (intro/gameplay/break/outro) from chapters + chat + cues |
-| Beat-detect | `crates/beat-detect` | Onset picker + autocorrelation BPM from `astats` envelope |
-| VAD | `crates/vad` | Hysteresis noise gate + auto-tighten ripple-delete recs |
-| Scenes | `crates/scenes` | DAW session save/recall bundling every plugin's per-recording state into a SQLite-backed manifest |
-| Sidechain | `crates/sidechain` | DAW sidechain compressor — VAD voice intervals → ducking automation curve baked via the volume-automation render path |
-| Insert FX | `crates/insert-fx` | DAW-style ordered insert chain (HP / NR / de-esser / comp / limiter / reverb / EQ) per recording with voice + game bus presets, composes into one ffmpeg `-af` baked at render |
-| Pitch / time | `crates/pitch` | Independent pitch + tempo via ffmpeg `rubberband`; fit-to-duration helper for publish-slot mapping, formant-preserving by default for voice |
-
-### Publish · view · meta
-| Plugin | Crate | What it does |
-|---|---|---|
-| Reuse | `crates/reuse` | Cross-format publish-queue drafter |
-| Casebook | `crates/casebook` | Post-stream markdown briefing |
-| Multistream | `crates/multistream` | Auto-tile multi-stream viewer (Twitch + YouTube embeds) |
-| Chat | `crates/chat` | Chatterino-class Twitch IRC + filter pipeline + Twitch emote + BTTV global emote rendering |
-| Pipelines-DAG | `crates/pipelines-dag` | Cross-plugin pipeline graph |
-| Marketplace | `crates/marketplace` | Third-party plugin manifest spec + catalog stub (15 entries shipped) |
-| Schedule-optimizer | `crates/schedule-optimizer` | Publish-slot recommender → 7×24 grid → top weekly times with confidence + plateau coverage |
+> **Status legend:** ✅ shipped & wired end-to-end · 🟡 built but not wired / shallow ·
+> ⬜ not started · ⏸ deferred (with reason).
+>
+> **Definition of done (non-negotiable):** a milestone is ✅ only when it is wired
+> end-to-end — a pure-data crate with tests is necessary but **not sufficient**.
+> Stubs, inert modules, hardcoded paths, and "tested but disconnected" code are tracked
+> below as 🟡/⬜ blockers, never presented as shipped. Stubbing is not an acceptable
+> end-state; it is a tracked debt with an owner phase.
 
 ---
 
-## Shipped surfaces (UI + UX)
+## Where StriVo actually is today (v0.5.0)
 
-### Top-bar routes (11)
-| Route | What's there |
+This is the honest substrate inventory — what is genuinely built and wired, and what
+exists but is inert. The engine work below builds on this; it does not replace it.
+
+### Capture & dispatch — solid foundation ✅
+- Web-only frontend (the ratatui TUI was removed in `2ab4e6c`); `strivo` launches the SPA.
+- Recording pipeline: live + VOD capture, gap-resume segment merge, Twitch ad-trim,
+  MPEG-TS→Matroska remux, deterministic UUIDv5 recording ids, HTTP-Range video seeking.
+- **Recording dispatch is centralised** through `src/intents/` (`download_vod`,
+  `start_recording`, `cookies::resolve`). The old "recording intent rebuilt at every call
+  site" wound is **closed** — there is now one canonical translator. *(Closes adversarial
+  wound #3.)*
+- Daemon ↔ SPA over a Unix-socket IPC; SSE event stream to the browser.
+
+### Extraction & editing crates — built, mostly wired ✅ / 🟡
+~34 in-tree crates under `crates/<name>/`, each pure-data with unit tests, most wired to a
+Pro-gated HTTP endpoint and surfaced on the SPA. Grouped:
+
+| Group | Crates |
 |---|---|
-| `/library` | Live-channel rail + capture dashboard + first-run hint |
-| `/recordings` | Sortable + filterable table with state chips, group-by-channel, persistent bulk-action bar, file-error remediation (Re-scan + Show path), play/info/delete buttons in slot 1 |
-| `/schedule` | Monitor: record-when-live + auto-download + capture-limit safety knobs + disk-free gauge + status banner |
-| `/pipelines` | Clickable DAG nodes routing to each plugin + per-pipeline "Run on…" recording picker + readiness chip |
-| `/watch` | Multi-stream auto-tile / focus / PiP modes; per-tile solo-audio + fullscreen; 30s viewer-count refresh |
-| `/chat` | Twitch IRC over WSS with filter chips, mention highlighting, Twitch native emote rendering, BTTV global emote rendering |
-| `/plugins` | Capability-matrix + marketplace catalog + first-party cards + per-card ⚙ deep-link to Settings → Plugins |
-| `/settings` | 8 sections; per-plugin enable/disable manager; notifications panel; monitor limits; replay-tour + reset-hints |
-| `/system` | Health + Network + Storage + Platform Auth + Backup + Blocklist + Tasks |
-| `/logs` | Tail-follow + regex filter + level chips + copy + download |
-| `/history` | Per-row Play/Info/Delete + filter + state chips + group-by-channel/date |
+| Capture · transcribe · catalog | `strivo-plugins/{crunchr, archiver, viewguard, insights}` |
+| Cut-discovery | `chapters` · `cuepoints` · `clipper` · `thumbnails` · `insights-compare` · `heatmap` · `viewguard-trend` · `chat-density` · `broll` |
+| Editor / DAW core | `editor` · `deadair` · `branding` · `automation` · `loudness` · `captions` · `multitrack` · `brandsafe` · `structure` · `beat-detect` · `vad` · `scenes` · `sidechain` · `insert-fx` · `pitch` · `ab-render` · `submix` |
+| Publish · view · meta | `reuse` · `casebook` · `multistream` · `chat` · `schedule-optimizer` · `marketplace` |
+| Analytics / orchestration substrate | `dataviz` · `pipelines-dag` |
 
-### Editor topbar workflow (14 buttons)
-`Split at time… · Ripple-delete range… · ▢ Trim dead air… · ▢ Voice gate… · 🦆 Sidechain duck… · 🎛 Insert FX… · 🎚 Pitch/time… · ★ Branding… · ♪ Loudness… · 🎼 Beat grid… · ↺ History… · 🎬 Scenes… · ♪ I/TP/LRA gauge · ⚡ Render to MKV`
+Transcription (`crunchr`), scene/cue detection (`cuepoints`), chat density
+(`chat-density`), and cross-recording aggregation (`insights` — topics & frequency across
+*every* analysed recording) all work and are wired.
 
-### Plugin sub-routes
-- `#/plugins/crunchr` + `#/plugins/crunchr/rec/<id>` — Pro upsell when not entitled
-- `#/plugins/archiver` + `#/plugins/archiver/<channelId>`
-- `#/plugins/viewguard`
-- `#/plugins/insights`
-- `#/plugins/schedule-optimizer` — 7×24 heatmap + top-pick cards
-
-### Onboarding
-- 8-step welcome tour on first paint (spotlight pins to each topnav slot)
-- Per-page hint banner (one-line tip per route, dismissible, persisted)
-- Settings → Interface → Onboarding has Replay tour + Reset hints buttons
-
----
-
-## Audit catalogue — fully shipped ✅
-
-Every catalogue item from the comprehensive E2E audit has landed.
-
-- **iter 25** plugin hub capability-matrix status fixes + chip spacing
-- **iter 26** Pro-gate UX — upsell card replaces raw 402 JSON dump
-- **iter 27** candy icons for watch / chat / history topnav slots
-- **iter 28** Settings → Notifications + Monitor limits + General at-a-glance
-- **iter 29** Recordings table — persistent bulk bar + state chips + group-by-channel
-- **iter 30** History — per-row actions + filter + state chips + group-by-channel/date
-- **iter 31** file-error pill — hatched red + Re-scan + Show path actions
-- **iter 32** Schedule — capture-limits card + status banner + disk gauge
-- **iter 33** Pipelines — clickable nodes + readiness chip + Run-on-recording picker
-- **iter 34** Watch — solo-audio + per-tile fullscreen + 30s viewer-count refresh
-- **iter 35** Chat — Twitch native emote + BTTV global emote rendering + image-badge attempt
-- **iter 36** Logs — follow + regex + copy/download
-- **iter 37** Plugin enable/disable manager with 25-row grid by category
-- **iter 38** Onboarding tour + per-page hint banners
-
-## DAW-vision iters — shipped ✅
-
-- **iter 21** Branding — watermark + intro/outro banner → ffmpeg filter chain
-- **iter 22** EDL revision history — DAW-style undo across saves
-- **iter 23** Multistream viewer — auto-tile + Focus + PiP layout modes
-- **iter 24** Chat client — Chatterino-class IRC + tokenizer + filter pipeline + ring buffer
-- **iter 39** Loudness — EBU R128 normalisation with 5 platform presets
-- **iter 40** Structure — DAW section labeller (intro/gameplay/break/outro tiling)
-- **iter 41** Automation — DAW volume curves baked at render (`asendcmd` + Step/Linear/Cosine)
-- **iter 42** Styled ASS captions — per-speaker colour + karaoke `\k` highlight
-- **iter 43** Scenes — DAW session save/recall bundling every plugin state
-- **iter 44** Schedule-optimizer — DAW launch-quantize for publish slots
-- **iter 45** Beat detection — onset picker + BPM autocorrelation
-- **iter 46** VAD / noise gate — hysteresis gate + auto-tighten ripple-delete recs
-- **iter 47** SPA voice-gate one-click workflow in EDL editor topbar
-- **iter 48** SPA scene-snapshot panel (capture / restore / delete inline in editor)
-- **iter 49** SPA schedule-optimizer page — 7×24 heatmap + top-pick cards
-- **iter 50** Sidechain compressor — VAD intervals → ducking automation via the existing `asendcmd` volume-automation render path (no new ffmpeg plumbing)
-- **iter 51** SPA `🦆 Sidechain duck…` one-click — VAD → sidechain → automation composed in a single editor-topbar gesture
-- **iter 52** Insert FX chain — 9-variant typed effect model + voice/game bus presets; ordered chain composes into one ffmpeg `-af` baked at render
-- **iter 53** Pitch / time-stretch — independent tempo + semitone shift via `rubberband`; `fit_to_duration` helper maps a raw stream to a publish slot without changing voices' pitch
+### Analytics & orchestration substrate — built but only partly connected 🟡
+This is the engine's spine, and it is the most over-claimed area. The truth:
+- **`dataviz`** runs experiments over a `Corpus` via `POST /api/v1/dataviz/run` and returns
+  chart-ready series. ✅ The runner works. 🟡 But **the corpus is assembled client-side** and
+  passed in — there is no server-side corpus-assembly service over arbitrary scope.
+- **`pipelines-dag` + `src/pipeline/`** is a *complete, tested* DAG model and executor:
+  `Pipeline`, `Stage`, `StageKind`, `StageState`, topo-sort (`topo_order` / `assert_acyclic`),
+  and a `PipelineRegistry` with `submit` / `mark_stage_done` / `retry_stage` (backoff) /
+  `skip_stage` / `cancel_pipeline` / `mark_stage_failed` + a `ResourceRegistry` for locks.
+  🟡 **But the daemon never drives it.** Nothing in `src/daemon.rs` or `src/recording/mod.rs`
+  handles `PluginAction::SubmitPipeline` or advances the registry. The `/pipelines` route
+  only renders `default_pipelines()` topo-ordered for *display*. The orchestration brain
+  exists and is inert. **This is the single highest-leverage gap.**
+- **Per-plugin SQLite is fragmented:** `crunchr.db`, `archiver.db`, `viewguard.db`, … each
+  isolated. `insights` reaches into `crunchr.db` by a **hardcoded nested path**
+  (`data_dir/plugins/crunchr/crunchr.db`). There is no unified, JOIN-able signal store, so
+  cross-signal analytics (transcript × events × chat) cannot be expressed.
 
 ---
 
-## Test inventory
+## The engine — phased milestones
 
-Total pure-data unit tests across in-tree plugin crates (excluding the
-`strivo-plugins` submodule which has its own suite):
+Sequenced so each phase unblocks the next. Every phase lists its concrete blockers; none
+is ✅ until wired end-to-end with tests.
 
-| Crate | Tests |
-|---|---|
-| `automation` | 14 |
-| `beat-detect` | 12 |
-| `brandsafe` | 10 |
-| `branding` | 16 |
-| `broll` | 11 |
-| `captions` | 18 (was 9; +9 ASS) |
-| `casebook` | 11 |
-| `chapters` | 5 |
-| `chat` | 24 |
-| `chat-density` | 14 |
-| `clipper` | 8 |
-| `cuepoints` | 5 |
-| `deadair` | 12 |
-| `editor` | 22 |
-| `heatmap` | 10 |
-| `insights-compare` | 10 |
-| `loudness` | 12 |
-| `marketplace` | 15 |
-| `multistream` | 18 |
-| `multitrack` | 8 |
-| `pipelines-dag` | 10 |
-| `reuse` | 12 |
-| `scenes` | 12 |
-| `schedule-optimizer` | 13 |
-| `structure` | 12 |
-| `thumbnails` | 8 |
-| `viewguard-trend` | 13 |
-| `vad` | 12 |
-| `sidechain` | 12 |
-| `insert-fx` | 14 |
-| `pitch` | 15 |
-| **Total** | **~386 unit tests** |
+### P1 · Unified signal spine ⬜ *(foundation — do first)*
+Replace fragmented per-plugin SQLite with one canonical, append-only **signal store**
+every extractor writes and every analytic reads:
+`(recording_id, t_start, t_end, kind, label, payload JSON, confidence, source_plugin)`.
+- **Blockers:** schema + migration; a write API for plugins; a query API for analytics;
+  retire `insights`' hardcoded `crunchr.db` reach-in; fix the `viewguard` `data_dir`
+  double-nest (web currently probes two paths as a workaround).
+- **Unblocks:** cross-signal joins, the sports event spine (P4), real corpus assembly (P2).
 
-All green at the time of merge. Both feature modes (`pro` + `--no-default-features`) build clean.
+### P2 · Corpus-assembly service ⬜
+Move corpus assembly server-side: hydrate a `dataviz::Corpus` by
+`recording | playlist | channel + date-range` from the P1 signal store, behind an endpoint.
+- **Blockers:** scope resolver; signal→Corpus projection; pagination/streaming for large scopes.
+- **Today:** `dataviz_run` exists but the SPA hand-assembles the corpus — caps scale and
+  forbids cross-corpus analysis.
 
----
+### P3 · Wire the DAG executor into the daemon 🟡→✅ *(highest leverage)*
+Connect the already-built executor to the running daemon so pipelines actually run:
+`PluginAction::SubmitPipeline` → `PipelineRegistry::submit` → dispatch ready stages to
+plugin verbs → `mark_stage_done`/`mark_stage_failed` → advance → emit live state over SSE.
+- **Blockers:** daemon-side registry ownership + tick; stage→verb dispatch bridge;
+  surface live `StageState` on `/pipelines` (replace the static display); honour
+  `ResourceLock` and `max_attempts`/backoff that the model already encodes.
+- **Payoff:** turns the inert model into the real "record → extract → analyse → export"
+  chain — the literal mechanism behind "as fast as it is recorded."
 
-## Marketplace catalog
+### P4 · Extraction adapters — domain-agnostic 🟡→✅
+A common `Extractor` contract writing into the P1 signal store. Have today: transcription,
+scene/cue, chat density. **Missing and required for the vision:**
+- **Entity / event extraction** — timecoded structured events (the sports spine: plays,
+  scores, players; for creators: segments, callouts). This is what makes "data crunching
+  for orgs like the MLB" possible.
+- **Visual / OCR** — scoreboards, lower-thirds, on-screen text → signals.
+- **Blockers:** extractor trait + registry; per-extractor confidence + provenance;
+  back-pressure so extraction keeps up with capture (feeds P8).
 
-17 entries shipped (`crates/marketplace/src/lib.rs::default_catalog()`):
+### P5 · Analytics over real corpora ⬜
+- Experiment registry over `dataviz`; **cross-signal experiments** (join transcript ×
+  events × chat from the P1 store).
+- Incremental / streaming aggregation pushed over SSE so views update live.
+- **Blockers:** experiment registration API; incremental aggregation engine; result cache.
 
-✅ Installed Cdylib (16): branding · multistream · chat · deadair · twitch-chat-density · broll-finder · loudness · structure · automation · scenes · schedule-optimizer · beat-detect · vad · sidechain · insert-fx · pitch
+### P6 · Visualisation & composer UI ⬜
+The "beautiful, intuitive" surface: pick a corpus → pick an experiment → render via the
+series' `chart_hint` → **export CSV / JSON / PNG**.
+- **Have:** `dataviz_run` + the per-plugin insights pages.
+- **Blockers:** a general composer (not per-plugin pages); chart-type auto-selection;
+  export pipeline; saved views.
 
-🗺 Roadmap (1): `yt-publish` (needs YouTube OAuth + API creds)
+### P7 · Clip & export pipeline 🟡→✅
+Make extraction land as artifacts: wire `clipper` + `captions` into `finalize_completion`
+and the P3 DAG so *extract → select highlights → cut → caption → export* is one chain.
+- **Blockers:** clip-selection from signals; export targets (clips, EDL, signal CSV/JSON);
+  hook into the finish flow rather than manual invocation.
 
----
+### P8 · Real-time — "as fast as it is recorded" ⬜ *(the headline promise)*
+Streaming incremental extraction *during* capture, not post-hoc: extractors consume the
+live segment as it lands, write signals to the P1 store, and analytics/visualisation update
+live over SSE.
+- **Blockers:** segment-tailing extractor harness; partial/streaming transcription &
+  event detection; live signal writes + SSE fan-out; bounded latency targets.
 
-## Capability matrix
-
-Per `GET /api/v1/plugins/capabilities`:
-
-- Every shipped plugin marked `available` (was: most marked `roadmap` despite being live)
-- Multi-provider rows list every contributor:
-  - `audience_retention` → heatmap + chat-density
-  - `stream_comparison` → insights + viewguard-trend
-  - `captions` → captions + captions-ass
-  - `edl_editor` → editor + deadair + branding + broll
-  - `source_track_split` → multitrack
-  - `publish_queue` → reuse + yt-publish (roadmap)
-- New `x.`-prefixed capabilities from iters 23+: `x.multistream`, `x.chat`, `x.pipelines_dag`, `x.marketplace`, `x.loudness`, `x.structure`, `x.audio_automation`, `x.scenes`, `x.publish_slots`, `x.tempo`, `x.voice_gate`, `x.sidechain`, `x.insert_fx`, `x.pitch_time`
-
----
-
-## Open vision gaps ⬜
-
-Concrete future iters to keep the cron loop fed.
-
-### Remaining DAW analogues
-- **A/B render compare** — render the EDL twice with different filter chains; parse VMAF / SSIM output; produce a diff report. Pure-data parser is fully testable; backend orchestration is heavier (needs two ffmpeg passes). Composes naturally with iter-50 sidechain, iter-52 insert-fx, iter-53 pitch since all three are already typed model+filter slots that can be snapshotted into A and B variants.
-- **Sub-mix / bus routing** — route multitrack outputs through a shared sub-mix with shared gain + insert chain. Now that iter-52 ships an InsertChain crate, a SubMix can hold one InsertChain per child track plus a master InsertChain — the filter composer is trivial; the heavy lift is wiring `filter_complex` per-track input mapping in the render path.
-
-Three previously-listed gaps (sidechain, insert effects, pitch/time-stretch) shipped in iters 50 / 52 / 53 respectively.
-
-### Backend integrations that would unblock today's roadmap catalog entries
-- **YouTube OAuth + Helix publish** — drives the `yt-publish` catalog entry. Needs the device-code flow + scope `youtube.upload`. Requires Google Cloud creds the user must register; tracked but deferred from the cron.
-
-### Doc + ops
-(all shipped — last cleared at iter 80–82 with the gen-plugin-readmes.sh, WRITING-A-PLUGIN guide, and product/index.md)
-
-### Remaining DAW analogues
-(all shipped — last cleared at iter 83/84 with strivo-ab-render + strivo-submix)
-
-### Collaboration / multi-user features
-- **Per-segment comments** — SQLite-backed comments tied to a recording's timecode. Plus optional WS for live updates so a team can review a stream together.
-- **Real-time multi-cursor** — Yjs / Automerge CRDT over EDL state for synchronous editing sessions.
-- **Review-request workflow** — share a scene + checkbox approval log.
-
-### SPA-side polish
-(all shipped — last cleared at iter 60)
-
-### Surface gaps from the v1 audit (lower-priority)
-(all shipped — last cleared at iter 70 with the history date heatmap)
-
-### Operational
-(all shipped — last cleared at iter 75 with the release.yml fan-out)
-
-### Doc + ops
-- **Per-plugin README** — every `crates/<name>` has `lib.rs` doc-comments but no top-level README. A future iter generates per-plugin READMEs from the crate metadata + a structured marketplace manifest.
-- **Plugin author guide** — `docs/PLUGIN-MANIFEST.md` covers the manifest spec; needs a companion "writing a plugin" tutorial that walks the directory layout + capability tags.
-- **End-user docs** — chorosyne.com still 404s the strivo product page. Future iter ships product copy + screenshots.
+### Capstone · Domain templates ⬜
+On top of the domain-agnostic core, ship two configs (not codebases):
+- **Sports template** — event taxonomy + stat rollups (MLB-style box-score from signals).
+- **Creator template** — highlight/retention rollups + publish-ready clips.
+- **Blockers:** template/config layer; taxonomy definitions; per-template composer presets.
 
 ---
 
-## Earlier milestones (pre-iter-21 era)
+## Cross-cutting blockers & hardening (tracked, must-fix)
 
-The pre-DAW-vision shipping history covered the foundational TUI + daemon
-work. Summary, since it informs why the plugin architecture works the
-way it does:
+Each is mapped to a phase or stands alone. None may be hidden behind a green checkmark.
 
-- **0.1.0** (2026-03-14) — initial release. TUI dashboard, first-run wizard,
-  Twitch + YouTube + Patreon monitoring, ffmpeg recording, mpv playback,
-  desktop notifications, TOML config + OS keyring, daemon mode, systemd unit
-  generator, CLI surface.
-- **0.2.0 – 0.3.0** (2026-04-19) — Tier-1 UI/UX + P0/P1 quality work. Home/End
-  nav everywhere, F5 help overlay, Esc precedence (clear filter → back), live
-  search status, quit-during-recording confirmation modal, auto-reconnect
-  supervisor with exponential backoff, command palette + unified keymap.
+| Item | State | Disposition |
+|---|---|---|
+| Daemon doesn't drive the pipeline executor | 🟡 | **P3** — top priority |
+| Per-plugin SQLite fragmentation; `insights` hardcoded `crunchr.db` reach-in | 🟡 | **P1** |
+| `viewguard` `data_dir` double-nest (web probes two paths) | 🟡 | **P1** |
+| Corpus assembled client-side, not server-side | 🟡 | **P2** |
+| Licence JWT ES256 signature **not verified** (`TODO(licence-verify)`, `routes/licence.rs:239`) | 🟡 | Security hardening — verify before any paid launch |
+| `crunchr::queue_recording` is a headless stub; auto-transcribe now relies on the webui RPC verb path — confirm the verb actually enqueues end-to-end | 🟡 | **P3/P4** (verb→stage dispatch) |
+| ffprobe results uncached — re-analyses on every `/probe` (heavy for long VODs) | ⬜ | Perf; cache keyed by path+mtime |
+| Dynamic cdylib plugin loading coded but never triggered; no hot-reload | ⬜ | Deferred until third-party plugins are real |
+| `yt-publish` marketplace entry needs YouTube OAuth (device-code + `youtube.upload`) | ⏸ | Deferred — needs Google Cloud creds |
 
-That layer remains intact; the 0.3+ Pro phase added the SPA on top + the
-plugin swarm.
-
----
-
-## Working tree state at this snapshot
-
-- Workspace version bumped 0.3.0 → **0.4.0** to reflect the iter-50–53 DAW
-  closeout (sidechain · insert-fx · pitch · the one-click sidechain workflow).
-- Branch `feat/strivo-pro-phase1` is fully reachable from `main`; iter
-  50+ commits land directly on `main`. Stale `feat/webui` worktree +
-  branch pruned at iter 54.
-- `strivo-plugins` submodule pinned at `8a06166` (`heads/main`); private repo,
-  no pending changes.
-- All 35 in-tree Rust crates build clean in both Pro (`--features pro`) and
-  free (`--no-default-features`) modes.
-- Daemon + serve binary deployed at `~/.local/bin/strivo`; runs unprivileged
-  with `entitled:false` by default.
-- 16 marketplace entries map to in-tree plugins (Cdylib); 2 to roadmap
-  third-party slots.
+### Adversarial-review wounds (from `ADVERSARIAL-REVIEW.md`, 2026-05-29)
+That review's findings are folded in here as tracked status rather than a separate doc:
+1. **Identity collapse** — resolved by this roadmap's north star + the README reconcile.
+2. **Architectural straddle (TUI + web)** — resolved; the TUI is gone (`2ab4e6c`).
+3. **No recording service** — resolved by `src/intents/`.
+4. **Doctrine without enforcement** — partially open; the engine DoD above is the enforcement mechanism.
+5. **No customer / forcing function** — reframed: the engine pivot (sports/creator data
+   crunching) is the commercial thesis; a founder-level call, tracked, not a code task.
 
 ---
 
-## File map highlights
+## What ships today, in detail (substrate record)
 
-```
-strivo/
-├── src/                       # daemon (`strivo daemon`) — IPC, monitor, recording
-├── crates/strivo-bin/         # CLI shim
-├── crates/strivo-web/         # `strivo serve` SPA host
-│   ├── src/routes/
-│   │   ├── plugins.rs         # every Pro plugin endpoint
-│   │   ├── api.rs             # /settings, /channels, /recordings, capability matrix
-│   │   └── licence.rs         # /licence/status, /activate, /trial
-│   ├── assets/spa.js          # vanilla SPA (single-file)
-│   └── assets/spa.css         # all CSS (single-file)
-├── crates/<plugin>/           # 26 in-tree pure-data plugin crates
-├── strivo-plugins/            # Git submodule (Crunchr · Archiver · Viewguard · Insights)
-├── docs/CODEMAPS/             # per-file route + state codemaps
-└── ROADMAP.md                 # this file
-```
+Preserved so the foundation is auditable. These are the building blocks the engine assembles.
+
+### Shipped SPA surfaces
+Top-bar routes: `/library` · `/recordings` · `/schedule` · `/pipelines` · `/watch` ·
+`/chat` · `/plugins` · `/settings` · `/system` · `/logs` · `/history`.
+Editor topbar (non-destructive EDL): split · ripple-delete · dead-air · voice-gate ·
+sidechain duck · insert-FX · pitch/time · branding · loudness · beat-grid · history ·
+scenes · loudness gauge · render-to-MKV.
+
+### Capability matrix
+`GET /api/v1/plugins/capabilities` lists every shipped plugin as `available`, with
+multi-provider rows (e.g. `audience_retention` → heatmap + chat-density) and the
+`x.`-prefixed capabilities (`x.pipelines_dag`, `x.loudness`, `x.scenes`, …).
+
+### Marketplace
+`crates/marketplace/src/lib.rs::default_catalog()` — 16 installed Cdylib entries + 1
+roadmap entry (`yt-publish`).
+
+### Test inventory
+~386 pure-data unit tests across the in-tree crates (plus the daemon/web suites and the
+recording/range/remux tests added in the v0.5.0 feature). All green; both `pro` and
+`--no-default-features` modes build clean. The IPC handshake test was repointed from the
+removed `app` module to `events::DaemonEvent`.
+
+---
+
+## Appendix · shipped history (condensed)
+
+- **0.1.0** (2026-03-14) — initial release: monitoring (Twitch/YouTube/Patreon), ffmpeg
+  recording, playback, daemon mode, CLI, TOML config + keyring. *(Originally TUI; since removed.)*
+- **0.2.0 – 0.3.0** (2026-04-19) — Tier-1 UX + P0/P1 quality (nav, help overlay, Esc
+  precedence, auto-reconnect supervisor, command palette).
+- **0.3.0 → 0.4.0** — DAW phase-1 closeout, iters 21–53: branding, EDL revision history,
+  multistream viewer, chat client, loudness, structure, automation, styled ASS captions,
+  scenes, schedule-optimizer, beat-detect, VAD, sidechain, insert-FX, pitch/time. Plus the
+  E2E audit catalogue (iters 25–38) and SPA polish.
+- **0.4.0 → 0.5.0** — TUI removed (web-only), `strivo-plugins` folded into the workspace,
+  `ab-render` + `submix` landed, backend integration batches (iters 54–84).
 
 ---
 
 ## Conventions
 
-- **Commit prefixes**: `feat:`, `fix:`, `chore:`, `refactor:`, `ci:`, `docs:`, `test:`, `perf:`
-- **No AI attribution** in commits, PRs, or code comments (per project CLAUDE.md)
-- **Per-iter scope**: one cohesive vertical slice — pure-data crate + tests + backend route + SPA wiring + marketplace + capability matrix + plugin registry + chrome-devtools E2E verify + clean commit
-- **Both feature modes verified per iter**: `cargo build -p strivo-web` (Pro) AND `cargo build --no-default-features -p strivo-bin` (free)
-- **User state restored after every E2E**: daemon left running, serve restarted without `STRIVO_DEV_UNLOCK_ALL` so `/licence/status` returns `entitled:false`
-
----
-
-## When in doubt
-
-Pick the smallest cohesive slice that fills a real DAW gap; build the
-pure-data crate first with tests; let chrome-devtools E2E surface the
-parser / filter / state-machine bugs the unit tests missed; ship in one
-commit.
+- Commit prefixes: `feat:` `fix:` `chore:` `refactor:` `ci:` `docs:` `test:` `perf:`.
+- **No AI attribution** in commits, PRs, or code comments (per project CLAUDE.md).
+- A milestone slice is: signal-store/contract change (where relevant) + pure-data crate +
+  tests + **daemon/web wiring** + SPA surface + capability/marketplace registration + E2E
+  verify + clean commit. The wiring step is what separates 🟡 from ✅.

@@ -1,6 +1,8 @@
 # strivo
 
-Self-hosted live-stream PVR with a web UI. Monitor channels across Twitch, YouTube, and Patreon — automatically record when they go live, play back in the browser, and optionally transcribe recordings with Whisper.
+Self-hosted live-stream PVR with a web UI. Monitor channels across Twitch, YouTube, and Patreon — automatically record when they go live, play back in the browser, and transcribe, analyse, and clip recordings from the SPA.
+
+strivo is evolving from a recorder into a **stream→clip analytics & content-creation engine**: extract structured signals from streams and clips as fast as they record, then parse, save, export, and visualise them. See [ROADMAP.md](./ROADMAP.md) for the north star and the phased plan to get there.
 
 > **TUI removed.** The original ratatui-based TUI was retired; the web UI
 > is the only supported frontend. See [CHANGELOG.md](./CHANGELOG.md) for
@@ -14,8 +16,8 @@ Self-hosted live-stream PVR with a web UI. Monitor channels across Twitch, YouTu
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-1f6feb?logo=linux&logoColor=white)](#platform-support)
 [![Made with Rust](https://img.shields.io/badge/built%20with-Rust-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org)
 
-> **Status: alpha.** The configuration format, daemon IPC protocol, and plugin ABI are
-> all unstable and will keep changing until 0.5.0. Expect to re-edit `config.toml`
+> **Status: alpha (0.5.0).** The configuration format, daemon IPC protocol, and plugin ABI
+> are still unstable and will keep changing until 1.0. Expect to re-edit `config.toml`
 > across releases. See [ROADMAP.md](./ROADMAP.md) for the stability timeline and
 > [CHANGELOG.md](./CHANGELOG.md) for migration notes.
 
@@ -33,8 +35,7 @@ archiver), and search across your archive — all from the SPA.
 
 `strivo` with no arguments starts the daemon and the webui in one process.
 For systemd setups, `strivo daemon` runs the daemon alone and
-`strivo serve` runs the webui alone; both talk over the same Unix socket
-the daemon used to share with the legacy TUI.
+`strivo serve` runs the webui alone; both talk over the same daemon Unix socket.
 
 ### Platform support
 
@@ -63,22 +64,22 @@ the daemon used to share with the legacy TUI.
 - Configurable filename templates (`{channel}_{date}_{title}.mkv`)
 - Retry with exponential backoff on failed recordings
 
-**TUI**
-- Sidebar with channel list, auto-record toggles, platform indicators
-- Channel detail view with stream metadata and recent recordings
-- Recording browser — sortable, filterable, with size and duration
-- Settings panel — edit config without leaving the TUI
-- Live log viewer
-- First-run setup flow for platform credentials in the web UI
+**Web UI (SPA)**
+- Channel rail with auto-record toggles, live-status and platform indicators
+- Recordings browser — sortable, filterable, in-browser playback with seek
+- Schedule / monitor with capture-limit safety knobs and a disk-free gauge
+- Settings panel — edit config and manage plugins without leaving the browser
+- Live log viewer (tail-follow, regex filter)
+- First-run setup flow for platform credentials
 - Multiple color themes
 
 **Daemon mode**
 - Background service via Unix-socket IPC
-- One or more TUI clients can attach to a running daemon
+- One or more web clients can attach to a running daemon
 - `strivo daemon install` writes a systemd user unit
 
 **Plugins**
-- **Crunchr** — Voxtral via OpenRouter (default, $0.003/min) / Mistral direct (diarization) / WhisperX local (self-hosted GPU diarization) / self-hosted Voxtral / Whisper CLI transcription, Speaker Editor TUI modal, SRT/VTT export with `mkvmerge` soft-sub embedding, tandem-mode auto-trigger, SQLite storage
+- **Crunchr** — Voxtral via OpenRouter (default, $0.003/min) / Mistral direct (diarization) / WhisperX local (self-hosted GPU diarization) / self-hosted Voxtral / Whisper CLI transcription, in-browser speaker editor, SRT/VTT export with `mkvmerge` soft-sub embedding, tandem-mode auto-trigger, SQLite storage
 - **Archiver** — organizes recordings by channel, renders gallery views
 
 First-party plugins live in-tree under [`crates/strivo-plugins/`](./crates/strivo-plugins) —
@@ -170,14 +171,15 @@ Secret Service, Windows Credential Manager).
 
 ## Usage
 
-### TUI
+### Web UI
 
 ```bash
 strivo
 ```
 
-Arrow keys + Enter to navigate. The sidebar shows monitored channels with
-live-status indicators. `a` toggles auto-record on a channel; `/` opens search.
+Starts the daemon and serves the SPA on `http://127.0.0.1:8181`. The channel
+rail shows monitored channels with live-status indicators; toggle auto-record
+per channel, browse and play recordings, and run plugins — all from the browser.
 
 ### Daemon
 
@@ -302,15 +304,14 @@ awareness of concrete plugins; the binary pulls both together.
 | Decision | Reasoning |
 |----------|-----------|
 | Platform trait | Adding a new service means implementing one trait — auth, polling, and recording are decoupled from platform specifics |
-| Unix-socket IPC | Zero-overhead daemon / client split; the TUI is just another client and headless recording works standalone |
-| TUI-first | Terminal-native workflow stays fast, composable, and SSH-friendly. A complementary *arr-style web UI (`strivo serve`) is on the `feat/webui` branch — it talks to the same daemon over the existing socket |
+| Unix-socket IPC | Zero-overhead daemon / client split; the web UI is just another client and headless recording works standalone |
+| Web UI as the frontend | An *arr-style SPA (`strivo serve`) talks to the daemon over the socket; the daemon runs headless so recording and scheduled captures work without a browser attached |
 | Plugin event bus | Transcription and archival react to recording events without coupling to the recording pipeline |
 | OS keyring | Credentials never touch disk as plaintext — uses platform-native secret storage |
 
-## Known limitations (0.3.0 alpha)
+## Known limitations (0.5.0 alpha)
 
-- **Daemon mode is Unix-only.** Linux and macOS work; Windows users can run
-  the TUI against locally resolved streams but cannot attach to a daemon
+- **Daemon mode is Unix-only.** Linux and macOS work; Windows is unsupported
   until the named-pipe transport lands.
 - **In-flight recordings are not durable across daemon crashes.** A persisted
   journal exists for status replay but does not yet recover an in-flight

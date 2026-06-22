@@ -1,5 +1,11 @@
 # StriVo — Adversarial Design Review
 
+> **Status (2026-06-21):** Dated audit record, kept for provenance. Its findings are now
+> tracked as live status in [ROADMAP.md](./ROADMAP.md) — see "Adversarial-review wounds":
+> the identity, TUI-straddle, and recording-service wounds are resolved; doctrine
+> enforcement and the commercial-thesis question remain tracked there. Do not duplicate
+> remediation tracking here.
+
 **Date:** 2026-05-29
 **Reviewers:** five parallel adversarial agents (UX/UI, routing & business logic, project categorization, user journey, commercial viability)
 **Method:** independent investigations of the source tree, docs, roadmap, and licence backend. Each reviewer was instructed to be hostile, cite file:line, and rank findings. No praise sandwich.

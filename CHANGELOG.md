@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 ## [Unreleased]
 
 ### Changed
+- **ROADMAP regenerated around the engine north star.** `ROADMAP.md` is now the
+  single authority: it reframes StriVo as a domain-agnostic stream→clip analytics &
+  content-creation engine (capture PVR + DAW plugins as substrate), grounds the
+  honest build state (incl. the inert daemon-side pipeline executor and fragmented
+  per-plugin SQLite), and lays out phases P1–P8 with every blocker/stub tracked under
+  an explicit definition-of-done. README identity language reconciled (web-only;
+  engine framing); adversarial-review findings folded in as tracked status.
 - **`strivo-plugins` folded into the workspace.** The separate
   `Chorosyne/strivo-plugins` repo is retired. The five first-party
   plugins (`crunchr`, `archiver`, `insights`, `editor`, `viewguard`)
@@ -36,6 +43,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   `AppEvent`.
 
 ### Added
+- **Recording finalisation pipeline + browser playback.** `Recording::from_file`
+  now derives stable `UUIDv5` ids from the canonical output path (webui permalinks
+  survive daemon restarts); a new `src/recording/remux.rs` losslessly remuxes
+  MPEG-TS bytes (yt-dlp hls-native output) to Matroska so Chromium can play Twitch
+  HLS captures, keeping a `.orig` backup; `finalize_completion()` merges gap-resume
+  segments, runs Twitch ad-trim, then normalises the container. The web layer adds
+  RFC 9110 HTTP Range support (206 Partial Content) for `<video>` seeking, plus the
+  SPA recordings playback surface.
 - Community-health files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
   bug / feature issue templates, pull-request template, `CODEOWNERS`, weekly
   Dependabot configuration (cargo + github-actions + git-submodules).
@@ -49,8 +64,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   with [VHS](https://github.com/charmbracelet/vhs).
 
 ### Changed
-- README platform table now reflects reality: daemon mode is Unix-only in
-  0.3.0; Windows is TUI-only pending a named-pipe transport.
+- README platform table now reflects reality: daemon mode is Unix-only;
+  Windows is unsupported pending a named-pipe transport.
 - `.gitmodules` and Cargo `repository`/`homepage` fields repointed from
   `revelri/strivo*` to the canonical `Chorosyne/*` org URLs.
 - ROADMAP gains a "Quick roadmap" preamble for visitors; internal-only
