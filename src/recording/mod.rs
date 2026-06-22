@@ -5,6 +5,7 @@ pub mod chapters;
 pub mod ffmpeg;
 pub mod job;
 pub mod persist;
+pub mod remux;
 pub mod scan;
 pub mod schedule;
 pub mod segments;
@@ -137,6 +138,138 @@ struct ActiveRecording {
     /// orchestrator merges them back into the base path via mkvmerge
     /// (M5.5).
     segments: Vec<PathBuf>,
+}
+
+/// Run the post-completion pipeline for one recording: optional segment
+/// merge, ad-trim, and container-normalisation remux, then publish
+/// `RecordingFinished`. Spawned because all three steps shell out to
+/// ffmpeg/mkvmerge and must not block the manager loop.
+///
+/// Called from both the natural-exit path (the poll-interval `finished`
+/// list) and the explicit `Stop`/`StopAll` IPC handlers — so a
+/// user-stopped Twitch capture goes through the same merge/trim/remux
+/// pipeline as one that ended on its own.
+fn finalize_completion(
+    id: Uuid,
+    final_state: RecordingState,
+    error: Option<String>,
+    rec: Option<ActiveRecording>,
+    config: &AppConfig,
+    event_tx: mpsc::UnboundedSender<DaemonEvent>,
+) {
+    let needs_merge = matches!(
+        (final_state, rec.as_ref()),
+        (RecordingState::Finished, Some(r)) if r.segments.len() > 1
+    );
+    let trim_ads = config.recording.auto_trim_ads
+        && matches!(final_state, RecordingState::Finished)
+        && rec.as_ref().map(|r| r.job.platform == PlatformKind::Twitch).unwrap_or(false);
+    let ad_min_secs = config.recording.ad_min_secs;
+    // Every successful completion gets a container check — yt-dlp's
+    // hls-native downloader leaves MPEG-TS bytes inside a .mkv filename,
+    // which Chromium-based browsers refuse to play. `normalise_container`
+    // is a cheap noop for already-good EBML / MP4.
+    let needs_remux = matches!(final_state, RecordingState::Finished) && rec.is_some();
+
+    if !(needs_merge || trim_ads || needs_remux) {
+        let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
+        return;
+    }
+    let Some(r) = rec else {
+        let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
+        return;
+    };
+    let etx = event_tx;
+    let job_id = id;
+    let base = r.segments[0].clone();
+    let segs = r.segments.clone();
+    tokio::spawn(async move {
+        let mut warn: Option<String> = None;
+
+        if needs_merge {
+            // M5.5: merge gap-resume parts back into the base path via
+            // mkvmerge before any further processing.
+            let parent = base.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
+            let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("recording").to_string();
+            let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("mkv").to_string();
+            let temp = parent.join(format!(".{stem}.merging.{ext}"));
+            let segs_for_merge = segs.clone();
+            let temp_for_merge = temp.clone();
+            let merged = tokio::task::spawn_blocking(move || {
+                segments::merge_segments(&segs_for_merge, &temp_for_merge)
+            })
+            .await
+            .unwrap_or_else(|e| Err(anyhow::anyhow!("merge task join: {e}")));
+            match merged {
+                Ok(()) => {
+                    if let Err(e) = tokio::fs::rename(&temp, &base).await {
+                        tracing::warn!(error = %e, "rename merged file failed");
+                        let _ = tokio::fs::remove_file(&temp).await;
+                        let _ = etx.send(DaemonEvent::RecordingFinished {
+                            job_id,
+                            final_state: RecordingState::Finished,
+                            error: Some(format!("merged segments preserved as {}", temp.display())),
+                        });
+                        return;
+                    }
+                    for s in segs.iter().skip(1) {
+                        let _ = tokio::fs::remove_file(s).await;
+                    }
+                    tracing::info!(job_id = %job_id, "merged {} segments", segs.len());
+                }
+                Err(e) => {
+                    tracing::warn!(job_id = %job_id, error = %e, "merge failed; keeping segments");
+                    warn = Some(format!("merge failed: {e}"));
+                }
+            }
+        }
+
+        if trim_ads && warn.is_none() {
+            match adtrim::trim_in_place(&base, ad_min_secs).await {
+                Ok(adtrim::TrimOutcome::Trimmed { removed_secs, ranges }) => {
+                    tracing::info!(
+                        job_id = %job_id,
+                        ranges,
+                        removed_secs = format!("{removed_secs:.1}"),
+                        "ad-trim removed black segments"
+                    );
+                }
+                Ok(adtrim::TrimOutcome::NoBlackFound) => {
+                    tracing::debug!(job_id = %job_id, "ad-trim: no black segments");
+                }
+                Err(e) => {
+                    tracing::warn!(job_id = %job_id, error = %e, "ad-trim failed; file untouched");
+                }
+            }
+        }
+
+        // Browser-playable container check runs last so it sees the
+        // merged + ad-trimmed bytes. A remux failure is logged but
+        // doesn't poison the `RecordingFinished` event — the file is
+        // still usable in mpv/VLC, and the user can retry via the
+        // `/remux` endpoint.
+        if needs_remux && warn.is_none() {
+            match remux::normalise_container(&base).await {
+                Ok(remux::Outcome::Remuxed { kept_original }) => {
+                    tracing::info!(
+                        job_id = %job_id,
+                        kept = %kept_original.display(),
+                        "container remuxed to Matroska (was MPEG-TS)"
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(job_id = %job_id, error = %e, "post-record remux failed; file untouched");
+                }
+            }
+        }
+
+        let _ = etx.send(DaemonEvent::RecordingFinished {
+            job_id,
+            final_state: RecordingState::Finished,
+            error: warn,
+        });
+    });
 }
 
 pub async fn run_manager(
@@ -462,7 +595,17 @@ pub async fn run_manager(
                                 }
                             }
                             rec.job.state = RecordingState::Finished;
-                            let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id, final_state: RecordingState::Finished, error: None });
+                            // Same finalize path as a natural exit: any
+                            // gap-resume segments get merged, ad-trim runs
+                            // if configured, MPEG-TS is remuxed to MKV.
+                            finalize_completion(
+                                job_id,
+                                RecordingState::Finished,
+                                None,
+                                Some(rec),
+                                &config,
+                                event_tx.clone(),
+                            );
                         }
                     }
                     RecordingCommand::StopAll => {
@@ -475,7 +618,14 @@ pub async fn run_manager(
                                         proc.stop().await.ok();
                                     }
                                     rec.job.state = RecordingState::Finished;
-                                    let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state: RecordingState::Finished, error: None });
+                                    finalize_completion(
+                                        id,
+                                        RecordingState::Finished,
+                                        None,
+                                        Some(rec),
+                                        &config,
+                                        event_tx.clone(),
+                                    );
                                 }
                             }
                         }
@@ -676,89 +826,7 @@ pub async fn run_manager(
                 }
                 for (id, final_state, error) in finished {
                     let rec = active.remove(&id);
-                    let needs_merge = matches!(
-                        (final_state, rec.as_ref()),
-                        (RecordingState::Finished, Some(r)) if r.segments.len() > 1
-                    );
-                    let trim_ads = config.recording.auto_trim_ads
-                        && matches!(final_state, RecordingState::Finished)
-                        && rec.as_ref().map(|r| r.job.platform == PlatformKind::Twitch).unwrap_or(false);
-                    let ad_min_secs = config.recording.ad_min_secs;
-
-                    if needs_merge || trim_ads {
-                        let Some(r) = rec else {
-                            let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
-                            continue;
-                        };
-                        let etx = event_tx.clone();
-                        let job_id = id;
-                        let base = r.segments[0].clone();
-                        let segs = r.segments.clone();
-                        tokio::spawn(async move {
-                            let mut warn: Option<String> = None;
-
-                            if needs_merge {
-                                // M5.5: merge gap-resume parts back into the base
-                                // path via mkvmerge before any further processing.
-                                let parent = base.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-                                let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("recording").to_string();
-                                let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("mkv").to_string();
-                                let temp = parent.join(format!(".{stem}.merging.{ext}"));
-                                let segs_for_merge = segs.clone();
-                                let temp_for_merge = temp.clone();
-                                let merged = tokio::task::spawn_blocking(move || {
-                                    segments::merge_segments(&segs_for_merge, &temp_for_merge)
-                                })
-                                .await
-                                .unwrap_or_else(|e| Err(anyhow::anyhow!("merge task join: {e}")));
-                                match merged {
-                                    Ok(()) => {
-                                        if let Err(e) = tokio::fs::rename(&temp, &base).await {
-                                            tracing::warn!(error = %e, "rename merged file failed");
-                                            let _ = tokio::fs::remove_file(&temp).await;
-                                            let _ = etx.send(DaemonEvent::RecordingFinished {
-                                                job_id,
-                                                final_state: RecordingState::Finished,
-                                                error: Some(format!("merged segments preserved as {}", temp.display())),
-                                            });
-                                            return;
-                                        }
-                                        for s in segs.iter().skip(1) {
-                                            let _ = tokio::fs::remove_file(s).await;
-                                        }
-                                        tracing::info!(job_id = %job_id, "merged {} segments", segs.len());
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(job_id = %job_id, error = %e, "merge failed; keeping segments");
-                                        warn = Some(format!("merge failed: {e}"));
-                                    }
-                                }
-                            }
-
-                            if trim_ads && warn.is_none() {
-                                match adtrim::trim_in_place(&base, ad_min_secs).await {
-                                    Ok(adtrim::TrimOutcome::Trimmed { removed_secs, ranges }) => {
-                                        tracing::info!(
-                                            job_id = %job_id,
-                                            ranges,
-                                            removed_secs = format!("{removed_secs:.1}"),
-                                            "ad-trim removed black segments"
-                                        );
-                                    }
-                                    Ok(adtrim::TrimOutcome::NoBlackFound) => {
-                                        tracing::debug!(job_id = %job_id, "ad-trim: no black segments");
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(job_id = %job_id, error = %e, "ad-trim failed; file untouched");
-                                    }
-                                }
-                            }
-
-                            let _ = etx.send(DaemonEvent::RecordingFinished { job_id, final_state: RecordingState::Finished, error: warn });
-                        });
-                    } else {
-                        let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
-                    }
+                    finalize_completion(id, final_state, error, rec, &config, event_tx.clone());
                 }
             }
         }

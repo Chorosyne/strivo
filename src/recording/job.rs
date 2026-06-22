@@ -84,6 +84,13 @@ impl RecordingJob {
     }
 
     /// Create a RecordingJob from an existing file on disk (for scan results).
+    ///
+    /// The id is derived deterministically from the canonical file path via
+    /// UUIDv5 so a daemon restart that re-scans the recording directory
+    /// produces the *same* id for the same file — keeping permalinks in the
+    /// webui stable across restarts. Falls back to the non-canonical path
+    /// when canonicalisation fails (e.g. dangling symlink); the underlying
+    /// path is what changed, not the recording's identity.
     pub fn from_file(
         path: PathBuf,
         channel_name: String,
@@ -92,8 +99,15 @@ impl RecordingJob {
         started_at: DateTime<Utc>,
     ) -> Self {
         let bytes_written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let canonical = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.clone());
+        let id = Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            canonical.as_os_str().as_encoded_bytes(),
+        );
         Self {
-            id: Uuid::new_v4(),
+            id,
             channel_id: String::new(),
             channel_name,
             platform,
@@ -136,5 +150,50 @@ impl RecordingJob {
         } else {
             format!("{bytes} B")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::PlatformKind;
+
+    /// `from_file` must derive its id deterministically from the file
+    /// path — otherwise daemon restarts that re-scan the recording dir
+    /// invalidate every webui permalink to an orphaned recording.
+    #[test]
+    fn from_file_id_is_stable_per_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("falco_clip.mkv");
+        std::fs::write(&path, b"x").unwrap();
+        let now = Utc::now();
+
+        let a = RecordingJob::from_file(
+            path.clone(),
+            "falco".into(),
+            PlatformKind::Twitch,
+            None,
+            now,
+        );
+        let b = RecordingJob::from_file(
+            path.clone(),
+            "falco".into(),
+            PlatformKind::Twitch,
+            None,
+            now,
+        );
+        assert_eq!(a.id, b.id, "same file must produce same UUID across calls");
+
+        // Different file → different id.
+        let other = dir.path().join("other.mkv");
+        std::fs::write(&other, b"y").unwrap();
+        let c = RecordingJob::from_file(
+            other,
+            "falco".into(),
+            PlatformKind::Twitch,
+            None,
+            now,
+        );
+        assert_ne!(a.id, c.id, "different file must produce a different UUID");
     }
 }
