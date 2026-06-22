@@ -97,7 +97,12 @@ pub fn open_and_init(db_path: &Path) -> Result<Connection> {
         std::fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    // WAL + a generous busy timeout so concurrent transcription jobs (e.g.
+    // a whole playlist transcribing at once) wait for the write lock instead
+    // of failing with "database is locked".
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=30000;",
+    )?;
     conn.execute_batch(SCHEMA)?;
     // M5.6 — additive migration for cost tracking. ALTER TABLE ADD
     // COLUMN is idempotent only if we check first; rusqlite returns
@@ -239,6 +244,26 @@ pub fn insert_chunks(
     for (idx, text, start, end, tokens) in chunks {
         stmt.execute(rusqlite::params![video_id, idx, text, start, end, tokens])?;
     }
+    Ok(())
+}
+
+/// Chunk `(id, text)` rows for a video, in chunk order — the input to the
+/// local embedding pass (vectorization).
+pub fn chunks_for_embedding(conn: &Connection, video_id: i64) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn
+        .prepare("SELECT id, text FROM chunks WHERE video_id = ?1 ORDER BY chunk_index")?;
+    let rows = stmt
+        .query_map([video_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+    Ok(rows)
+}
+
+/// Persist one chunk's embedding as a little-endian `f32` BLOB.
+pub fn set_chunk_embedding(conn: &Connection, chunk_id: i64, blob: &[u8]) -> Result<()> {
+    conn.execute(
+        "UPDATE chunks SET embedding = ?1 WHERE id = ?2",
+        rusqlite::params![blob, chunk_id],
+    )?;
     Ok(())
 }
 
