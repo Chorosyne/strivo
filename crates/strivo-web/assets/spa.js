@@ -770,10 +770,15 @@ async function render() {
   // the next route. Chat WebSockets, chat buffers, and dataviz resize
   // listeners were accumulating across navigations.
   if (r !== "chat" && typeof chatState !== "undefined") {
+    // Only kill sockets that no painter still references — the
+    // player-view chat rail keeps its room alive across navigations
+    // when open.
     for (const room of Object.keys(chatState.sockets || {})) {
-      try { disconnectChatRoom(room); } catch (_) {}
+      if (!mountedChatRooms.has(room)) {
+        try { disconnectChatRoom(room); } catch (_) {}
+        delete chatState.buffers[room];
+      }
     }
-    chatState.buffers = {};
   }
   if (r !== "dataviz" && typeof teardownDataviz === "function") {
     teardownDataviz();
@@ -1435,7 +1440,7 @@ function recordingPillHtml(j) {
         <div class="mp-sub">${htmlEscape(j.channel_name || "")} · ${htmlEscape(when)}</div>
       </div>
       <div class="mp-meta">
-        ${(() => { const d = recordingDisplayState(j); return `<span class="state-pill ${d.className}">${htmlEscape(d.label)}</span>`; })()}
+        ${renderStatePill(recordingDisplayState(j))}
         <span class="mp-size">${formatBytes(j.bytes_written || 0)}</span>
         ${stop}
       </div>
@@ -3012,7 +3017,6 @@ function thumbHue(s) {
 
 function recordingRow(r) {
   const disp = recordingDisplayState(r);
-  const state = disp.label;
   const stateClass = disp.className;
   // Active includes both live captures (Recording) and VOD pulls (Downloading);
   // both are in-flight and offer Stop.
@@ -3042,7 +3046,7 @@ function recordingRow(r) {
   return `
     <tr class="${recSelected.has(r.id) ? "rec-sel" : ""}" data-rec-row="${htmlEscape(r.id)}">
       <td class="rec-check"><input type="checkbox" class="rec-row-check" data-job-id="${htmlEscape(r.id)}" ${recSelected.has(r.id) ? "checked" : ""} aria-label="Select recording"></td>
-      <td><span class="state-pill ${stateClass}">${state}</span></td>
+      <td>${renderStatePill(disp)}</td>
       <td>${htmlEscape(r.channel_name)}</td>
       <td><div class="rec-title-cell">${recThumb(r)}<span>${htmlEscape(niceTitle(r.stream_title) || "(no title)")}</span></div></td>
       <td>${new Date(r.started_at).toLocaleString()}</td>
@@ -3125,12 +3129,71 @@ function recordingDisplayState(j) {
   // says "Finished" but the recording has no file behind it, so reading
   // that as a green Finished pill misleads.
   if (j && j.file_exists === false) {
-    return { label: "File Error", className: "file-error" };
+    return { label: "File Error", className: "file-error", pct: null };
   }
   if (j && j.source_url && cls === "recording") {
-    return { label: "Downloading", className: "downloading" };
+    return { label: "Downloading", className: "downloading", pct: pctForDownload(j) };
   }
-  return { label: lbl, className: cls };
+  return { label: lbl, className: cls, pct: null };
+}
+
+// Project an in-flight VOD pull's percent complete. yt-dlp publishes an
+// authoritative `download_pct` whenever the server-side total size is
+// known; for HLS / segment-list captures it isn't, so we fall back to a
+// projection from the cached VOD's known duration × detected bitrate.
+//
+// The blend (avg-so-far weighted 0.7, instantaneous 0.3) keeps a brief
+// network stall from collapsing the bar mid-download.
+function pctForDownload(j) {
+  if (!j) return null;
+  if (j.download_pct != null && Number.isFinite(j.download_pct)) {
+    return Math.max(0, Math.min(100, Number(j.download_pct)));
+  }
+  const bw = Number(j.bytes_written) || 0;
+  const elapsed = Number(j.duration_secs) || 0;
+  if (bw < 1 || elapsed < 1) return null;
+  const expected = expectedDurationFromVodCache(j);
+  if (!expected || expected <= 0) return null;
+  const avgBps = bw / elapsed;
+  const instBps = Number(j.download_rate_bps) || 0;
+  const blendedBps = instBps > 0 ? avgBps * 0.7 + instBps * 0.3 : avgBps;
+  const projectedTotal = blendedBps * expected;
+  if (projectedTotal <= 0) return null;
+  // Cap at 99 — only the Finish event grants 100.
+  return Math.max(0, Math.min(99, (bw / projectedTotal) * 100));
+}
+
+// Cross-reference the channel-VOD cache to find the expected total
+// duration for a recording's source URL. Returns seconds, or null when
+// the SPA hasn't visited the source channel's detail page this session
+// (no cache entry to consult).
+function expectedDurationFromVodCache(j) {
+  if (!j || !j.source_url) return null;
+  if (typeof channelVods === "undefined" || !channelVods) return null;
+  for (const list of Object.values(channelVods)) {
+    if (!Array.isArray(list)) continue;
+    for (const v of list) {
+      if (v && v.url === j.source_url && v.duration_seconds) {
+        return Number(v.duration_seconds);
+      }
+    }
+  }
+  return null;
+}
+
+// Render the state pill, with a progress fill + percentage label when
+// `disp.pct` is known. The fill is driven by the `--state-fill` custom
+// property so the CSS doesn't need a class per percentage bucket.
+function renderStatePill(disp) {
+  if (disp.pct == null) {
+    return `<span class="state-pill ${disp.className}">${htmlEscape(disp.label)}</span>`;
+  }
+  const pct = disp.pct;
+  const rounded = Math.round(pct);
+  return `<span class="state-pill ${disp.className} has-fill" style="--state-fill:${pct.toFixed(1)}%">
+    <span class="state-pill-fill" aria-hidden="true"></span>
+    <span class="state-pill-label">${rounded}%</span>
+  </span>`;
 }
 
 function stateLabel(s) {
@@ -3410,6 +3473,32 @@ const CHAT_TWITCH_WS = "wss://irc-ws.chat.twitch.tv:443";
 const CHAT_ANON_NICK = () => `justinfan${Math.floor(10000 + Math.random() * 89999)}`;
 const CHAT_BUFFER_CAP = 500;
 
+// Chat-paint fan-out. Each visible chat surface (the /chat route's body,
+// the player view's right-rail) registers a painter so a single
+// schedulePaintChat() updates every surface that's currently mounted.
+// `mountedChatRooms` gates the route-leave socket teardown — a room
+// still referenced by a painter (e.g. the rail open over /library)
+// survives navigation.
+const chatPaintListeners = new Set();
+const mountedChatRooms = new Set();
+function registerChatPainter(fn) {
+  chatPaintListeners.add(fn);
+  return () => chatPaintListeners.delete(fn);
+}
+function trackMountedChatRoom(room) {
+  mountedChatRooms.add(room);
+  return () => mountedChatRooms.delete(room);
+}
+
+// Persisted UI state for the /chat tabs panel collapse.
+const CHAT_TABS_COLLAPSED_KEY = "strivo-chat-tabs-collapsed";
+function loadChatTabsCollapsed() {
+  try { return localStorage.getItem(CHAT_TABS_COLLAPSED_KEY) === "1"; } catch (_) { return false; }
+}
+function saveChatTabsCollapsed(v) {
+  try { localStorage.setItem(CHAT_TABS_COLLAPSED_KEY, v ? "1" : "0"); } catch (_) {}
+}
+
 function chatPushMsg(room, msg) {
   const buf = chatState.buffers[room] ||= { messages: [], unread: 0, mentions: 0 };
   if (buf.messages.length >= CHAT_BUFFER_CAP) buf.messages.shift();
@@ -3431,7 +3520,17 @@ function schedulePaintChat() {
   if (chatState.paint_timer) return;
   chatState.paint_timer = setTimeout(() => {
     chatState.paint_timer = null;
-    paintChatBody();
+    // Fan out to every registered chat surface. The /chat route + the
+    // player rail each install their own painter so the firehose
+    // updates both simultaneously.
+    for (const fn of chatPaintListeners) {
+      try { fn(); } catch (_) {}
+    }
+    // Backwards-compat: a /chat route mounted without registering a
+    // painter (legacy code path) still gets its body painted directly.
+    if (chatPaintListeners.size === 0 && document.getElementById("chat-body")) {
+      try { paintChatBody(); } catch (_) {}
+    }
   }, 50);
 }
 // Minimal client-side mirror of strivo-chat's parse_twitch_irc. We could
@@ -3696,6 +3795,432 @@ function chatMsgHtml(m) {
   </div>`;
 }
 
+// Mount a chat surface for `room` (Twitch login) into `parentBody`.
+// Owns one connection's worth of paint lifecycle for the player rail.
+// Reuses the global chatState buffers/sockets — multiple surfaces of
+// the same room share the same firehose. Returns { teardown }.
+function mountChatRail(parentBody, room) {
+  if (!parentBody || !room) return { teardown() {} };
+  parentBody.innerHTML = "";
+  parentBody.dataset.room = room;
+
+  // Warm caches in the background — chatMsgHtml's badge/emote
+  // resolvers will rehydrate once these land.
+  ensureGlobalBadges().then(() => schedulePaintChat());
+  ensureThirdPartyEmotes().then(() => schedulePaintChat());
+  const meta = (chatState.rooms || []).find((r) => r.room === room);
+  if (meta?.user_id) {
+    ensureChannelEmotes(meta.user_id).then(() => schedulePaintChat());
+    ensureChannelBadges(meta.user_id).then(() => schedulePaintChat());
+  }
+
+  connectChatRoom(room);
+  const unmountRoom = trackMountedChatRoom(room);
+
+  // Mark this room as read while it's actively painted on the rail —
+  // tab badges in /chat shouldn't count messages the user is already
+  // staring at.
+  if (chatState.buffers[room]) {
+    chatState.buffers[room].unread = 0;
+    chatState.buffers[room].mentions = 0;
+  }
+
+  const paint = () => {
+    if (!parentBody.isConnected) return;
+    const buf = chatState.buffers[room] || { messages: [] };
+    const wasAtBottom = parentBody.scrollHeight - parentBody.scrollTop - parentBody.clientHeight < 80;
+    const visible = buf.messages.filter(chatRoomMatchesFilters).slice(-200);
+    const seen = new Set();
+    for (const node of parentBody.children) {
+      const id = node.dataset.mid;
+      if (id) seen.add(id);
+    }
+    const fragments = [];
+    for (const m of visible) {
+      if (!seen.has(m.id)) fragments.push(chatMsgHtml(m));
+    }
+    if (fragments.length) {
+      parentBody.insertAdjacentHTML("beforeend", fragments.join(""));
+    }
+    while (parentBody.childElementCount > visible.length) {
+      parentBody.removeChild(parentBody.firstElementChild);
+    }
+    if (wasAtBottom) parentBody.scrollTop = parentBody.scrollHeight;
+  };
+  paint(); // initial
+  const unsubPaint = registerChatPainter(paint);
+  return {
+    teardown() {
+      unsubPaint();
+      unmountRoom();
+      // If no other surface still wants this room, drop the socket.
+      // The /chat route's active room is exempt — it owns its own
+      // reconnect loop and we don't want to fight it.
+      if (!mountedChatRooms.has(room) && chatState.active !== room) {
+        try { disconnectChatRoom(room); } catch (_) {}
+        delete chatState.buffers[room];
+      }
+    },
+  };
+}
+
+// Curated unicode emoji palette for the compose-bar's Emoji tab. Trimmed
+// to the most-used per category — full Unicode CLDR is 3000+ glyphs which
+// blows up the popup. Users typing Twitch chat reach for these the most.
+const UNICODE_EMOJI_CATEGORIES = [
+  { key: "smileys", label: "😀", title: "Smileys", emoji: ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","😟","🙁","☹","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠","💩","🤡","👹","👺","👻","👽","👾","🤖"] },
+  { key: "gestures", label: "👋", title: "People & Gestures", emoji: ["👋","🤚","🖐","✋","🖖","👌","🤌","🤏","✌","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","💪","🦾","🤳","💅","🤴","👸","🧑","👤","👥","👶","🧒","👦","👧","🧓","👴","👵"] },
+  { key: "animals", label: "🐶", title: "Animals & Nature", emoji: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐽","🐸","🐵","🙈","🙉","🙊","🐒","🐔","🐧","🐦","🐤","🐣","🐥","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞","🐜","🪳","🪰","🪲","🐢","🐍","🦎","🦂","🦀","🦑","🐙","🦐","🐠","🐟","🐡","🐬","🦈","🐳","🐋","🐊","🐅","🐆","🦓","🦍","🦧","🐘","🦛","🦏","🐪","🐫","🦒","🦘","🐃","🐂","🐄","🐎","🐖","🐏","🐑","🦙","🐐","🦌","🐕","🐩","🦮","🐈","🐓","🦃","🦚","🦜","🦢","🦩","🕊","🐇","🦝","🦨","🦡","🦦","🦥","🐁","🐀","🌲","🌳","🌴","🌱","🌵","🌾","🌿","☘","🍀","🍁","🍂","🍃","🌷","🌹","🥀","🌺","🌸","🌼","🌻","🌞","🌝","🌛","🌜","🌚","🌕","🌖","🌗","🌘","🌑","🌒","🌓","🌔","🌙","🌎","🌍","🌏","🪐","💫","⭐","🌟","✨","⚡","☄","💥","🔥","🌪","🌈","☀","🌤","⛅","🌥","🌦","🌧","⛈","🌩","🌨","❄","☃","⛄","🌬","💨","💧","💦","☔","☂","🌊","🌫"] },
+  { key: "food", label: "🍔", title: "Food & Drink", emoji: ["🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🍆","🥑","🥦","🥬","🥒","🌶","🫑","🌽","🥕","🧄","🧅","🥔","🍠","🥐","🥯","🍞","🥖","🥨","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🦴","🌭","🍔","🍟","🍕","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🥘","🫕","🥫","🍝","🍜","🍲","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚","🍘","🍥","🥠","🥮","🍢","🍡","🍧","🍨","🍦","🥧","🧁","🍰","🎂","🍮","🍭","🍬","🍫","🍿","🍩","🍪","🌰","🥜","🍯","🥛","🍼","☕","🫖","🍵","🍶","🍾","🍷","🍸","🍹","🍺","🍻","🥂","🥃","🥤","🧋","🧃","🧉","🧊"] },
+  { key: "activities", label: "⚽", title: "Activities", emoji: ["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🏒","🏑","🥍","🏏","🪃","🥅","⛳","🪁","🏹","🎣","🤿","🥊","🥋","🎽","🛹","🛼","🛷","⛸","🥌","🎿","⛷","🏂","🪂","🏋","🤼","🤸","⛹","🤺","🤾","🏌","🏇","🧘","🏄","🏊","🤽","🚣","🧗","🚵","🚴","🏆","🥇","🥈","🥉","🏅","🎖","🏵","🎗","🎫","🎟","🎪","🤹","🎭","🩰","🎨","🎬","🎤","🎧","🎼","🎹","🥁","🪘","🎷","🎺","🪗","🎸","🪕","🎻","🎲","♟","🎯","🎳","🎮","🎰","🧩"] },
+  { key: "objects", label: "💻", title: "Objects", emoji: ["⌚","📱","📲","💻","⌨","🖥","🖨","🖱","🖲","🕹","🗜","💽","💾","💿","📀","📼","📷","📸","📹","🎥","📽","🎞","📞","☎","📟","📠","📺","📻","🎙","🎚","🎛","🧭","⏱","⏲","⏰","🕰","⌛","⏳","📡","🔋","🔌","💡","🔦","🕯","🪔","🧯","🛢","💸","💵","💴","💶","💷","🪙","💰","💳","💎","⚖","🪜","🧰","🪛","🔧","🔨","⚒","🛠","⛏","🪚","🔩","⚙","🪤","🧱","⛓","🧲","🔫","💣","🧨","🪓","🔪","🗡","⚔","🛡","🚬","⚰","🪦","⚱","🏺","🔮","📿","🧿","💈","⚗","🔭","🔬","🕳","🩹","🩺","💊","💉","🩸","🧬","🦠","🧫","🧪","🌡","🧹","🪠","🧺","🧻","🚽","🚰","🚿","🛁","🛀","🧼","🪥","🪒","🧽","🪣","🧴","🛎","🔑","🗝","🚪","🪑","🛋","🛏","🛌","🧸","🪆","🖼","🪞","🪟","🛍","🛒","🎁","🎈","🎏","🎀","🪄","🪅","🎊","🎉","🎎","🏮","🎐","🧧","✉","📩","📨","📧","💌","📥","📤","📦","🏷","🪧","📪","📫","📬","📭","📮","📯","📜","📃","📄","📑","🧾","📊","📈","📉","🗒","🗓","📆","📅","🗑","📇","🗃","🗳","🗄","📋","📁","📂","🗂","🗞","📰","📓","📔","📒","📕","📗","📘","📙","📚","📖","🔖","🧷","🔗","📎","🖇","📐","📏","🧮","📌","📍","✂","🖊","🖋","✒","🖌","🖍","📝","✏","🔍","🔎","🔏","🔐","🔒","🔓"] },
+  { key: "symbols", label: "❤", title: "Symbols", emoji: ["❤","🧡","💛","💚","💙","💜","🤎","🖤","🤍","💔","❣","💕","💞","💓","💗","💖","💘","💝","💟","☮","✝","☪","🕉","☸","✡","🔯","🕎","☯","☦","🛐","⛎","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","🆔","⚛","🉑","☢","☣","📴","📳","🈶","🈚","🈸","🈺","🈷","✴","🆚","💮","🉐","㊙","㊗","🈴","🈵","🈹","🈲","🅰","🅱","🆎","🆑","🅾","🆘","❌","⭕","🛑","⛔","📛","🚫","💯","💢","♨","🚷","🚯","🚳","🚱","🔞","📵","🚭","❗","❕","❓","❔","‼","⁉","🔅","🔆","〽","⚠","🚸","🔱","⚜","🔰","♻","✅","🈯","💹","❇","✳","❎","🌐","💠","Ⓜ","🌀","💤","🏧","🚾","♿","🅿","🛗","🈳","🈂","🛂","🛃","🛄","🛅","🚹","🚺","🚼","⚧","🚻","🚮","🎦","📶","🈁","🔣","ℹ","🔤","🔡","🔠","🆖","🆗","🆙","🆒","🆕","🆓","0️⃣","1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","🔢","#️⃣","*️⃣","⏏","▶","⏸","⏯","⏹","⏺","⏭","⏮","⏩","⏪","⏫","⏬","◀","🔼","🔽","➡","⬅","⬆","⬇","↗","↘","↙","↖","↕","↔","↪","↩","⤴","⤵","🔀","🔁","🔂","🔄","🔃","🎵","🎶","➕","➖","➗","✖","♾","💲","💱","™","©","®","〰","➰","➿","🔚","🔙","🔛","🔝","🔜","✔","☑","🔘","🔴","🟠","🟡","🟢","🔵","🟣","⚫","⚪","🟤","🔺","🔻","🔸","🔹","🔶","🔷","🔳","🔲","▪","▫","◾","◽","◼","◻","⬛","⬜","🟥","🟧","🟨","🟩","🟦","🟪","🟫","🔈","🔇","🔉","🔊","🔔","🔕","📣","📢","💬","💭","🗯","♠","♣","♥","♦","🃏","🎴","🀄","🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚","🕛","🕜","🕝","🕞","🕟","🕠","🕡","🕢","🕣","🕤","🕥","🕦","🕧"] },
+];
+
+// Slash-command quick-pick for the compose bar. Twitch-flavoured today;
+// the YouTube path is moderator-only and goes through the Live Chat
+// Messages API (separate plumbing), so we surface the same labels and
+// let the backend route or reject based on platform.
+const CHAT_SLASH_COMMANDS = [
+  { cmd: "/me ", label: "/me", hint: "Italicized action message" },
+  { cmd: "/announce ", label: "/announce", hint: "Channel announcement (mods)" },
+  { cmd: "/timeout ", label: "/timeout", hint: "/timeout <user> <secs> [reason]" },
+  { cmd: "/ban ", label: "/ban", hint: "/ban <user> [reason]" },
+  { cmd: "/unban ", label: "/unban", hint: "/unban <user>" },
+  { cmd: "/mod ", label: "/mod", hint: "/mod <user>" },
+  { cmd: "/unmod ", label: "/unmod", hint: "/unmod <user>" },
+  { cmd: "/vip ", label: "/vip", hint: "/vip <user>" },
+  { cmd: "/unvip ", label: "/unvip", hint: "/unvip <user>" },
+  { cmd: "/clear", label: "/clear", hint: "Clear chat (mods)" },
+  { cmd: "/slow ", label: "/slow", hint: "/slow <secs>" },
+  { cmd: "/slowoff", label: "/slowoff", hint: "Disable slow mode" },
+  { cmd: "/subscribers", label: "/subscribers", hint: "Subs-only mode on" },
+  { cmd: "/subscribersoff", label: "/subscribersoff", hint: "Subs-only mode off" },
+  { cmd: "/emoteonly", label: "/emoteonly", hint: "Emote-only mode on" },
+  { cmd: "/emoteonlyoff", label: "/emoteonlyoff", hint: "Emote-only mode off" },
+  { cmd: "/followers ", label: "/followers", hint: "/followers <duration>" },
+  { cmd: "/followersoff", label: "/followersoff", hint: "Disable followers-only" },
+  { cmd: "/raid ", label: "/raid", hint: "/raid <channel>" },
+  { cmd: "/unraid", label: "/unraid", hint: "Cancel raid" },
+  { cmd: "/shoutout ", label: "/shoutout", hint: "/shoutout <user>" },
+  { cmd: "/color ", label: "/color", hint: "/color <hex|name>" },
+];
+
+// Chatterino-style compose bar. Owns its textarea, emote palette, slash-
+// command menu, char counter, send button. Per-platform accent driven by
+// the `data-platform` attribute on the root element — Twitch purple,
+// YouTube red, Patreon coral, all swap when setRoom() is called with a
+// new (room, platform) pair. Returns a controller object.
+function mountChatCompose(parent, opts = {}) {
+  if (!parent) return { setRoom() {}, teardown() {} };
+  const root = document.createElement("div");
+  root.className = "chat-compose-bar";
+  root.dataset.platform = opts.platform || "none";
+  root.dataset.compact = opts.compact ? "1" : "0";
+  root.innerHTML = `
+    <div class="cc-popup cc-emote-popup" hidden>
+      <div class="cc-popup-tabs" role="tablist">
+        <button class="cc-popup-tab active" data-tab="channel" type="button" title="Channel emotes (BTTV / FFZ / 7TV)">⭐</button>
+        <button class="cc-popup-tab" data-tab="global" type="button" title="Global emotes">🌐</button>
+        <button class="cc-popup-tab" data-tab="emoji" type="button" title="Unicode emoji">😀</button>
+      </div>
+      <div class="cc-popup-search">
+        <input type="text" class="cc-emote-search" placeholder="Search emotes…" autocomplete="off" />
+      </div>
+      <div class="cc-popup-body cc-emote-body" role="listbox"></div>
+    </div>
+    <div class="cc-popup cc-cmd-popup" hidden>
+      <div class="cc-popup-search">
+        <input type="text" class="cc-cmd-search" placeholder="Filter commands…" autocomplete="off" />
+      </div>
+      <div class="cc-popup-body cc-cmd-body" role="listbox"></div>
+    </div>
+    <div class="cc-row">
+      <button class="cc-tool cc-emote-btn" type="button" title="Emotes (Ctrl+E)" aria-label="Open emote palette" aria-haspopup="true">😀</button>
+      <button class="cc-tool cc-cmd-btn" type="button" title="Slash commands (Ctrl+/)" aria-label="Open commands" aria-haspopup="true">/</button>
+      <textarea class="cc-input" rows="1" maxlength="500"
+                placeholder="${opts.placeholderRoom ? `Send a message to #${opts.placeholderRoom}` : "Send a message…"}"
+                aria-label="Chat message"></textarea>
+      <div class="cc-meta">
+        <span class="cc-count" aria-live="polite">0</span>
+        <button class="cc-send" type="button" title="Send (Enter)" aria-label="Send message">▶</button>
+      </div>
+    </div>
+    <span class="cc-hint pg-cap-hint" aria-live="polite"></span>
+  `;
+  parent.appendChild(root);
+
+  const input = root.querySelector(".cc-input");
+  const sendBtn = root.querySelector(".cc-send");
+  const count = root.querySelector(".cc-count");
+  const hint = root.querySelector(".cc-hint");
+  const emoteBtn = root.querySelector(".cc-emote-btn");
+  const cmdBtn = root.querySelector(".cc-cmd-btn");
+  const emotePop = root.querySelector(".cc-emote-popup");
+  const cmdPop = root.querySelector(".cc-cmd-popup");
+  const emoteBody = root.querySelector(".cc-emote-body");
+  const emoteSearch = root.querySelector(".cc-emote-search");
+  const cmdBody = root.querySelector(".cc-cmd-body");
+  const cmdSearch = root.querySelector(".cc-cmd-search");
+  const emoteTabs = root.querySelectorAll(".cc-popup-tab");
+
+  let currentRoom = opts.room || null;
+  let currentPlatform = opts.platform || "none";
+  let activeEmoteTab = "channel";
+  const channelEmoteMap = new Map(); // populated on setRoom
+  const globalEmoteMap = new Map();  // populated lazily
+
+  // Char counter & textarea auto-grow.
+  const updateCount = () => {
+    const n = input.value.length;
+    count.textContent = String(n);
+    count.classList.toggle("near-cap", n > 400);
+    count.classList.toggle("at-cap", n >= 500);
+  };
+  const autogrow = () => {
+    input.style.height = "auto";
+    // Cap at ~6 lines so the rail compose doesn't crowd the messages.
+    const max = root.dataset.compact === "1" ? 100 : 160;
+    input.style.height = `${Math.min(max, input.scrollHeight)}px`;
+  };
+  const insertAtCursor = (text) => {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    const before = input.value.slice(0, start);
+    const after = input.value.slice(end);
+    // Pad with spaces if the surroundings aren't whitespace, so emote
+    // codes are sliced cleanly by Twitch's parser.
+    const padBefore = before && !/\s$/.test(before) ? " " : "";
+    const padAfter = after && !/^\s/.test(after) ? " " : "";
+    input.value = `${before}${padBefore}${text}${padAfter}${after}`;
+    const caret = before.length + padBefore.length + text.length + padAfter.length;
+    input.setSelectionRange(caret, caret);
+    input.focus();
+    updateCount();
+    autogrow();
+  };
+
+  // Send.
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text || !currentRoom) {
+      hint.textContent = currentRoom ? "Empty message" : "No room selected";
+      return;
+    }
+    sendBtn.disabled = true;
+    try {
+      await API.chatSend(currentRoom, text);
+      input.value = "";
+      updateCount();
+      autogrow();
+      hint.textContent = "";
+    } catch (err) {
+      hint.textContent = (err && err.message) || "Send failed";
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  };
+  sendBtn.addEventListener("click", submit);
+  input.addEventListener("input", () => { updateCount(); autogrow(); });
+  input.addEventListener("keydown", (e) => {
+    // Enter sends; Shift+Enter inserts newline. Familiar everywhere.
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      submit();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      togglePopup(emotePop, emoteBtn);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+      e.preventDefault();
+      togglePopup(cmdPop, cmdBtn);
+    } else if (e.key === "Escape") {
+      hidePopup(emotePop, emoteBtn);
+      hidePopup(cmdPop, cmdBtn);
+    }
+  });
+
+  // Popup helpers — one popup open at a time; outside-click closes both.
+  const showPopup = (pop, btn) => {
+    pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    // Hide the other popup if open.
+    const other = pop === emotePop ? cmdPop : emotePop;
+    const otherBtn = pop === emotePop ? cmdBtn : emoteBtn;
+    hidePopup(other, otherBtn);
+    if (pop === emotePop) {
+      renderEmoteBody();
+      setTimeout(() => emoteSearch.focus(), 0);
+    } else {
+      renderCmdBody();
+      setTimeout(() => cmdSearch.focus(), 0);
+    }
+  };
+  const hidePopup = (pop, btn) => {
+    pop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  };
+  const togglePopup = (pop, btn) => {
+    if (pop.hidden) showPopup(pop, btn);
+    else { hidePopup(pop, btn); input.focus(); }
+  };
+  emoteBtn.addEventListener("click", () => togglePopup(emotePop, emoteBtn));
+  cmdBtn.addEventListener("click", () => togglePopup(cmdPop, cmdBtn));
+  const onDocClick = (e) => {
+    if (!root.contains(e.target)) {
+      hidePopup(emotePop, emoteBtn);
+      hidePopup(cmdPop, cmdBtn);
+    }
+  };
+  document.addEventListener("click", onDocClick);
+
+  // Emote-popup tab switching.
+  emoteTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      emoteTabs.forEach((t) => t.classList.toggle("active", t === tab));
+      activeEmoteTab = tab.dataset.tab;
+      renderEmoteBody();
+    });
+  });
+  emoteSearch.addEventListener("input", renderEmoteBody);
+
+  function renderEmoteBody() {
+    const q = (emoteSearch.value || "").trim().toLowerCase();
+    const items = [];
+    if (activeEmoteTab === "channel") {
+      for (const [code, url] of channelEmoteMap.entries()) {
+        if (!q || code.toLowerCase().includes(q)) {
+          items.push({ code, url, label: code });
+        }
+      }
+      if (items.length === 0 && !q) {
+        emoteBody.innerHTML = `<div class="cc-popup-empty pg-cap-hint">
+          ${currentRoom ? "No channel emotes — BTTV / FFZ / 7TV haven't returned yet, or this channel has none." : "Pick a stream to load channel emotes."}
+        </div>`;
+        return;
+      }
+    } else if (activeEmoteTab === "global") {
+      for (const [code, url] of globalEmoteMap.entries()) {
+        if (!q || code.toLowerCase().includes(q)) {
+          items.push({ code, url, label: code });
+        }
+      }
+    } else {
+      // Unicode emoji tab.
+      const inSearch = q.length > 0;
+      for (const cat of UNICODE_EMOJI_CATEGORIES) {
+        for (const e of cat.emoji) {
+          if (!inSearch || cat.title.toLowerCase().includes(q)) {
+            items.push({ code: e, url: null, label: cat.title });
+          }
+        }
+      }
+    }
+    items.sort((a, b) => a.code.localeCompare(b.code));
+    if (items.length > 240) items.length = 240; // sane cap for popup grid
+    emoteBody.innerHTML = items.map((it) => {
+      if (it.url) {
+        return `<button class="cc-emote-cell" type="button" data-insert="${htmlEscape(it.code)}" title="${htmlEscape(it.code)}">
+          <img loading="lazy" src="${htmlEscape(it.url)}" alt="${htmlEscape(it.code)}"></button>`;
+      }
+      return `<button class="cc-emote-cell cc-emoji-cell" type="button" data-insert="${htmlEscape(it.code)}" title="${htmlEscape(it.label)}">${it.code}</button>`;
+    }).join("");
+    emoteBody.querySelectorAll(".cc-emote-cell").forEach((cell) => {
+      cell.addEventListener("click", () => {
+        insertAtCursor(cell.dataset.insert);
+      });
+    });
+  }
+
+  cmdSearch.addEventListener("input", renderCmdBody);
+  function renderCmdBody() {
+    const q = (cmdSearch.value || "").trim().toLowerCase();
+    const items = CHAT_SLASH_COMMANDS.filter((c) =>
+      !q || c.label.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q),
+    );
+    cmdBody.innerHTML = items.map((c) => `
+      <button class="cc-cmd-cell" type="button" data-cmd="${htmlEscape(c.cmd)}">
+        <span class="cc-cmd-label">${htmlEscape(c.label)}</span>
+        <span class="cc-cmd-hint pg-cap-hint">${htmlEscape(c.hint)}</span>
+      </button>`).join("");
+    cmdBody.querySelectorAll(".cc-cmd-cell").forEach((cell) => {
+      cell.addEventListener("click", () => {
+        // Replace any leading slash command on the line with this one,
+        // else insert at the start.
+        const cur = input.value;
+        const lineStart = cur.lastIndexOf("\n") + 1;
+        const head = cur.slice(0, lineStart);
+        const tail = cur.slice(lineStart);
+        const cleaned = tail.replace(/^\/\S*\s*/, "");
+        input.value = `${head}${cell.dataset.cmd}${cleaned}`;
+        input.focus();
+        const pos = head.length + cell.dataset.cmd.length;
+        input.setSelectionRange(pos, pos);
+        hidePopup(cmdPop, cmdBtn);
+        updateCount();
+        autogrow();
+      });
+    });
+  }
+
+  // setRoom — swap room / platform; refresh palette caches.
+  async function setRoom(room, platform) {
+    currentRoom = room || null;
+    currentPlatform = (platform || "none").toLowerCase();
+    root.dataset.platform = currentPlatform;
+    input.placeholder = room ? `Send a message to #${room}` : "Send a message…";
+    input.disabled = !room;
+    sendBtn.disabled = !room;
+    channelEmoteMap.clear();
+    if (!room) {
+      renderEmoteBody();
+      return;
+    }
+    // Prime the global emote map once; persist across room swaps.
+    if (globalEmoteMap.size === 0) {
+      try {
+        const m = await ensureThirdPartyEmotes();
+        for (const [k, v] of m.entries()) globalEmoteMap.set(k, v);
+      } catch (_) {}
+    }
+    // Per-channel BTTV/FFZ/7TV.
+    const meta = (chatState.rooms || []).find((r) => r.room === room);
+    if (meta?.user_id) {
+      try {
+        const m = await ensureChannelEmotes(meta.user_id);
+        for (const [k, v] of m.entries()) channelEmoteMap.set(k, v);
+      } catch (_) {}
+    }
+    renderEmoteBody();
+  }
+
+  // Initial state.
+  updateCount();
+  autogrow();
+  if (currentRoom) setRoom(currentRoom, currentPlatform);
+  else { input.disabled = true; sendBtn.disabled = true; }
+
+  return {
+    setRoom,
+    teardown() {
+      document.removeEventListener("click", onDocClick);
+      root.remove();
+    },
+    focus() { input.focus(); },
+  };
+}
+
+// Stable, deterministic hue for a channel name (Twitch login) so
+// letter-avatars on the rail keep the same colour every render.
+function chatAvatarHue(name) {
+  const s = String(name || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+}
+
 function paintChatBody(opts = {}) {
   const body = document.getElementById("chat-body");
   if (!body) return;
@@ -3931,13 +4456,31 @@ function switchChatRoom(room) {
   connectChatRoom(room);
   paintChatTabs();
   paintChatBody({ full: true });
+  const activeLabel = document.getElementById("chat-main-active");
+  if (activeLabel) activeLabel.textContent = `#${room}`;
+  // Swap the compose bar's emote palette + platform accent to follow
+  // the new tab.
+  if (chatState.compose) {
+    const platform = (chatState.rooms.find((r) => r.room === room)?.platform || "twitch").toLowerCase();
+    chatState.compose.setRoom(room, platform);
+  }
 }
 
 async function renderChat() {
+  const tabsCollapsed = loadChatTabsCollapsed();
+  chatState.tabsCollapsed = tabsCollapsed;
   root.innerHTML = chrome(`
-    <div id="chat-root" class="chat-root">
+    <div id="chat-root" class="chat-root${tabsCollapsed ? " tabs-collapsed" : ""}">
       <aside id="chat-tabs" class="chat-tabs" role="tablist"></aside>
       <main class="chat-main">
+        <div class="chat-main-head">
+          <button class="sm chat-tabs-toggle" id="chat-tabs-toggle"
+                  type="button" aria-pressed="${tabsCollapsed ? "true" : "false"}"
+                  title="${tabsCollapsed ? "Show channel list" : "Hide channel list"}">
+            ${tabsCollapsed ? "☰ Channels" : "◀ Hide channels"}
+          </button>
+          <span class="chat-main-active pg-cap-hint" id="chat-main-active"></span>
+        </div>
         <div class="chat-filters">
           <input id="chat-filter-kw" type="text" placeholder="filter: contains…" />
           <input id="chat-filter-out" type="text" placeholder="filter: hide…" />
@@ -3945,14 +4488,34 @@ async function renderChat() {
           <label class="chat-filter-tog"><input type="checkbox" id="chat-no-actions"> no /me</label>
         </div>
         <div id="chat-body" class="chat-body" role="log" aria-live="polite"></div>
-        <form id="chat-compose" class="chat-compose" autocomplete="off">
-          <input id="chat-input" type="text" placeholder="Send message or /me, /timeout &lt;user&gt; &lt;secs&gt;, /vip &lt;user&gt;… (Enter)" maxlength="500" />
-          <button class="sm" type="submit" id="chat-send">▶ Send</button>
-          <span class="chat-compose-hint pg-cap-hint" id="chat-compose-hint"></span>
-        </form>
+        <div id="chat-compose-host" class="chat-compose-host"></div>
       </main>
     </div>
   `);
+
+  // Tabs toggle — collapses the left channel list. Useful when the
+  // window is narrow or the user knows which channel they want and
+  // wants more room for messages.
+  document.getElementById("chat-tabs-toggle")?.addEventListener("click", () => {
+    chatState.tabsCollapsed = !chatState.tabsCollapsed;
+    saveChatTabsCollapsed(chatState.tabsCollapsed);
+    const rootEl = document.getElementById("chat-root");
+    if (rootEl) rootEl.classList.toggle("tabs-collapsed", chatState.tabsCollapsed);
+    const btn = document.getElementById("chat-tabs-toggle");
+    if (btn) {
+      btn.textContent = chatState.tabsCollapsed ? "☰ Channels" : "◀ Hide channels";
+      btn.title = chatState.tabsCollapsed ? "Show channel list" : "Hide channel list";
+      btn.setAttribute("aria-pressed", chatState.tabsCollapsed ? "true" : "false");
+    }
+  });
+
+  // Register this route's body as a chat paint surface. Persists for
+  // the lifetime of the route; the painter self-unregisters when the
+  // chat-body DOM is gone (route navigation removed it).
+  const routeUnsub = registerChatPainter(() => {
+    if (!document.getElementById("chat-body")) { routeUnsub(); return; }
+    paintChatBody();
+  });
   // Kick off the third-party emote fetches (BTTV + FFZ + 7TV) in the
   // background; we don't await because the chat firehose should never
   // block on a third party. Caches are merged on demand in the
@@ -3978,6 +4541,11 @@ async function renderChat() {
   const first = rooms.find((r) => r.connectable);
   if (first) chatState.active = first.room;
   paintChatTabs();
+  const activeLabel = document.getElementById("chat-main-active");
+  if (activeLabel) {
+    const r = rooms.find((x) => x.room === chatState.active);
+    activeLabel.textContent = r ? `#${r.room}` : "";
+  }
   if (chatState.active) {
     connectChatRoom(chatState.active);
     paintChatBody({ full: true });
@@ -4005,26 +4573,17 @@ async function renderChat() {
   document.getElementById("chat-no-links").addEventListener("change", applyFilters);
   document.getElementById("chat-no-actions").addEventListener("change", applyFilters);
 
-  // Compose box. Wires the visible UI so the OAuth backend can light
-  // it up later without UI churn. Until then the send call probes
-  // /api/v1/chat/send, which returns a Problem describing what's
-  // missing (OAuth token, active room, etc.).
-  const composeForm = document.getElementById("chat-compose");
-  const composeInput = document.getElementById("chat-input");
-  const composeHint = document.getElementById("chat-compose-hint");
-  composeForm?.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const text = (composeInput?.value || "").trim();
-    if (!text) return;
-    const room = chatState?.activeRoom || (chatState?.rooms || [])[0] || null;
-    if (!room) { composeHint.textContent = "No room selected"; return; }
-    try {
-      await API.chatSend(room, text);
-      composeInput.value = "";
-      composeHint.textContent = "";
-    } catch (err) {
-      composeHint.textContent = err.message || "Send failed";
-    }
+  // Chatterino-style compose bar. Mounted once; setRoom() swaps the
+  // platform accent + per-channel emote palette whenever the user
+  // clicks a different tab. The widget owns its own send call,
+  // emote/command popups, and char counter — no per-route plumbing
+  // beyond the room-change hook below.
+  const composeHost = document.getElementById("chat-compose-host");
+  const composePlatform = (chatState.rooms.find((r) => r.room === chatState.active)?.platform || "twitch").toLowerCase();
+  chatState.compose = mountChatCompose(composeHost, {
+    room: chatState.active,
+    platform: composePlatform,
+    compact: false,
   });
 }
 
@@ -4415,7 +4974,8 @@ const PLAYER_PRESET_KEY = "strivo-player-preset";
 // A slot can hold ONE of (or neither):
 //   streamId      — live channel (rendered as a platform embed iframe)
 //   recordingId   — finished recording (rendered as a <video> sourced
-//                   from /api/v1/recordings/<id>/file)
+//                   from /api/v1/recordings/<id>/download — the /file
+//                   route is DELETE-only)
 function _slot(streamId = null, recordingId = null) { return { kind: "slot", streamId, recordingId }; }
 function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; }
 
@@ -4470,12 +5030,26 @@ const PLAYER_PRESET_LABELS = {
   custom: "Custom",
 };
 
+const PLAYER_CHAT_RAIL_KEY = "strivo-player-chat-rail-open";
+function loadPlayerChatRailOpen() {
+  try { return localStorage.getItem(PLAYER_CHAT_RAIL_KEY) === "1"; } catch (_) { return false; }
+}
+function savePlayerChatRailOpen() {
+  try { localStorage.setItem(PLAYER_CHAT_RAIL_KEY, playerState.chatRailOpen ? "1" : "0"); } catch (_) {}
+}
+
 const playerState = {
   layout: null,        // root layout node
   preset: "single",    // last-applied preset name (for the toolbar label)
   soloPath: "",        // path to soloed (audible) slot — "" = mute-all
   refreshTimer: null,
   resizeFx: null,      // gutter drag state
+  chatRailOpen: loadPlayerChatRailOpen(),  // right-rail chat persistence
+  chatRailRoom: null,  // currently-rendered room (Twitch login) on the rail
+  chatRailMount: null, // teardown handle from mountChatRail
+  chatRailLastStreams: [], // last streams[] cache for toggle re-reconciliation
+  chatRailCompose: null,   // mountChatCompose controller for the rail
+  lastPaintedLayout: null, // snapshot used by tryPatchPlayerStage to diff
 };
 
 // Path strings are dot-joined sequences of "a"/"b" descending the tree.
@@ -4496,6 +5070,178 @@ function countLeaves(layout) {
   let n = 0;
   walkLayout(layout, (node) => { if (node.kind === "slot") n++; });
   return n;
+}
+
+// Collect every live-Twitch tile in layout order. The chat rail uses
+// this to render a PFP/letter-avatar strip the user can tap to swap
+// chat rooms. YouTube/Patreon are skipped — only Twitch chat is wired
+// end-to-end on the SPA today.
+function collectChatableStreams(streams) {
+  if (!streams || streams.length === 0 || !playerState.layout) return [];
+  const seen = new Set();
+  const out = [];
+  walkLayout(playerState.layout, (n, path) => {
+    if (n.kind !== "slot" || !n.streamId) return;
+    if (seen.has(n.streamId)) return;
+    const s = streams.find((x) => x.stream_id === n.streamId);
+    // Only Twitch chat is wired end-to-end on the SPA. The backend
+    // returns the platform tag in lowercase; the rest of the SPA uses
+    // the canonical capitalised form. Accept both.
+    if (!s) return;
+    const plat = (s.platform || "").toLowerCase();
+    if (plat !== "twitch") return;
+    seen.add(n.streamId);
+    out.push({ stream: s, path });
+  });
+  return out;
+}
+
+// Default stream for the rail when the user hasn't explicitly picked
+// one (or the previously-picked stream dropped off): solo wins, else
+// first chatable tile in layout order.
+function derivePlayerChatDefault(streams) {
+  const chatable = collectChatableStreams(streams);
+  if (chatable.length === 0) return null;
+  const soloPath = playerState.soloPath || "";
+  if (soloPath) {
+    const soloed = chatable.find((c) => c.path === soloPath);
+    if (soloed) return soloed.stream;
+  }
+  return chatable[0].stream;
+}
+
+// Reconcile the chat rail against the current layout + streams. Idempotent;
+// safe to call after every player paint. Honours the user's explicit room
+// pick when it's still in the layout, else falls back to the focus default.
+function reconcilePlayerChatRail(streams) {
+  const rail = document.getElementById("player-chat-rail");
+  if (!rail) return;
+  const body = rail.querySelector(".player-chat-rail-body");
+  const tabs = rail.querySelector(".player-chat-rail-tabs");
+  const roomLabel = rail.querySelector(".player-chat-rail-room");
+  if (!body || !tabs) return;
+
+  if (!playerState.chatRailOpen) {
+    if (playerState.chatRailMount) {
+      try { playerState.chatRailMount.teardown(); } catch (_) {}
+      playerState.chatRailMount = null;
+    }
+    if (playerState.chatRailCompose) {
+      try { playerState.chatRailCompose.teardown(); } catch (_) {}
+      playerState.chatRailCompose = null;
+    }
+    playerState.chatRailRoom = null;
+    tabs.innerHTML = "";
+    body.innerHTML = "";
+    if (roomLabel) roomLabel.textContent = "";
+    return;
+  }
+
+  const chatable = collectChatableStreams(streams);
+  // PFP/letter-avatar strip. Click to override follow-focus and switch
+  // the rail to that channel's chat.
+  tabs.innerHTML = chatable.map(({ stream: s }) => {
+    const room = (s.channel_name || "").toLowerCase();
+    const display = s.channel_name || room;
+    const hue = chatAvatarHue(display);
+    const active = room === playerState.chatRailRoom ? " active" : "";
+    return `
+      <button class="player-chat-rail-tab${active}" type="button"
+              data-room="${htmlEscape(room)}"
+              data-stream-id="${htmlEscape(s.stream_id)}"
+              title="Chat: ${htmlEscape(display)}">
+        <span class="player-chat-rail-avatar"
+              style="background:hsl(${hue} 55% 32%);">${htmlEscape(display.slice(0, 1).toUpperCase())}</span>
+      </button>`;
+  }).join("");
+  tabs.querySelectorAll(".player-chat-rail-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const room = btn.dataset.room || "";
+      if (!room || room === playerState.chatRailRoom) return;
+      playerState.chatRailRoom = room;
+      reconcilePlayerChatRail(playerState.chatRailLastStreams);
+    });
+  });
+
+  // Resolve target room: respect explicit pick if still valid; else
+  // fall back to the default (solo / first leaf).
+  const validRooms = new Set(chatable.map((c) => (c.stream.channel_name || "").toLowerCase()));
+  let targetRoom = playerState.chatRailRoom;
+  if (!targetRoom || !validRooms.has(targetRoom)) {
+    const def = derivePlayerChatDefault(streams);
+    targetRoom = def ? (def.channel_name || "").toLowerCase() : null;
+  }
+
+  // Resolve the platform of the target room — drives the compose-bar
+  // per-platform accent. chat-rooms metadata may report `youtube`
+  // (rejected for chat today, connectable:false), so we coerce here.
+  const targetMeta = (chatState.rooms || []).find((r) => r.room === targetRoom);
+  const targetPlatform = (targetMeta?.platform || "twitch").toLowerCase();
+
+  if (targetRoom === (playerState.chatRailMount ? playerState.chatRailRoom : null) && targetRoom) {
+    // Already mounted to the right room — just sync UI bits.
+    playerState.chatRailRoom = targetRoom;
+    if (roomLabel) roomLabel.textContent = `#${targetRoom}`;
+    tabs.querySelectorAll(".player-chat-rail-tab").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.room === targetRoom);
+    });
+    if (playerState.chatRailCompose) {
+      playerState.chatRailCompose.setRoom(targetRoom, targetPlatform);
+    }
+    return;
+  }
+
+  // Different room (or first mount, or no room): drop old, mount new.
+  if (playerState.chatRailMount) {
+    try { playerState.chatRailMount.teardown(); } catch (_) {}
+    playerState.chatRailMount = null;
+  }
+  playerState.chatRailRoom = targetRoom;
+  if (!targetRoom) {
+    body.innerHTML = `<div class="player-chat-rail-empty pg-cap-hint">No Twitch stream in the layout.</div>`;
+    if (roomLabel) roomLabel.textContent = "—";
+    // Tear down compose too — nothing to send to.
+    if (playerState.chatRailCompose) {
+      try { playerState.chatRailCompose.teardown(); } catch (_) {}
+      playerState.chatRailCompose = null;
+    }
+    return;
+  }
+  if (roomLabel) roomLabel.textContent = `#${targetRoom}`;
+  tabs.querySelectorAll(".player-chat-rail-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.room === targetRoom);
+  });
+
+  // Ensure the compose bar exists — mount once per rail-open session,
+  // then call setRoom on each subsequent target change.
+  const composeHost = rail.querySelector("#player-chat-rail-compose");
+  if (composeHost && !playerState.chatRailCompose) {
+    composeHost.innerHTML = "";
+    playerState.chatRailCompose = mountChatCompose(composeHost, {
+      room: targetRoom,
+      platform: targetPlatform,
+      compact: true,
+    });
+  }
+
+  // Mount the message body for the target room.
+  const proceed = () => {
+    if (playerState.chatRailRoom !== targetRoom) return; // race: another switch landed
+    playerState.chatRailMount = mountChatRail(body, targetRoom);
+    if (playerState.chatRailCompose) {
+      playerState.chatRailCompose.setRoom(targetRoom, targetPlatform);
+    }
+  };
+  // Pre-populate the rooms cache if the rail came up before /chat
+  // ever ran (otherwise per-channel emote/badge prefetch can't find
+  // user_id).
+  if (!chatState.rooms || chatState.rooms.length === 0) {
+    API.chatRooms()
+      .then((r) => { chatState.rooms = r.rooms || []; proceed(); })
+      .catch(() => proceed());
+  } else {
+    proceed();
+  }
 }
 
 function getNodeAt(layout, path) {
@@ -4590,25 +5336,71 @@ async function renderWatch() {
 
   // Channel + recording caches are guaranteed hydrated by render()'s
   // ensureRouteHydration() before this runs.
-  root.innerHTML = chrome(`<div id="watch" class="watch-root" role="main"><div class="empty">Loading…</div></div>`);
+  // The watch root holds a `.watch-content` (toolbar + stage) and an
+  // `<aside class="player-chat-rail">` that follows the focused tile.
+  // The rail can be collapsed via the toggle; its open/closed state
+  // persists in localStorage.
+  const railOpen = playerState.chatRailOpen ? "true" : "false";
+  const railToggleGlyph = playerState.chatRailOpen ? "▶" : "◀";
+  const railTitle = playerState.chatRailOpen ? "Collapse chat rail" : "Open chat rail";
+  root.innerHTML = chrome(`
+    <div id="watch" class="watch-root ${playerState.chatRailOpen ? "has-chat-rail" : ""}" role="main">
+      <div class="watch-content"><div class="empty">Loading…</div></div>
+      <aside class="player-chat-rail" id="player-chat-rail" data-open="${railOpen}">
+        <div class="player-chat-rail-head">
+          <button class="player-chat-rail-toggle sm" id="player-chat-rail-toggle"
+                  type="button" title="${railTitle}" aria-pressed="${railOpen}">${railToggleGlyph}</button>
+          <span class="player-chat-rail-title">Chat</span>
+          <span class="player-chat-rail-room"></span>
+        </div>
+        <div class="player-chat-rail-tabs" role="tablist"
+             title="Tap a stream to switch chats"></div>
+        <div class="player-chat-rail-body" role="log" aria-live="polite"></div>
+        <div class="player-chat-rail-compose" id="player-chat-rail-compose"></div>
+      </aside>
+    </div>
+  `);
   setupChromeHandlers();
   const watch = document.getElementById("watch");
+  const watchContent = watch.querySelector(".watch-content");
+
+  // Rail toggle — flip persisted state, sync class + glyph, reconcile.
+  document.getElementById("player-chat-rail-toggle")?.addEventListener("click", () => {
+    playerState.chatRailOpen = !playerState.chatRailOpen;
+    savePlayerChatRailOpen();
+    watch.classList.toggle("has-chat-rail", playerState.chatRailOpen);
+    const rail = document.getElementById("player-chat-rail");
+    if (rail) rail.dataset.open = playerState.chatRailOpen ? "true" : "false";
+    const btn = document.getElementById("player-chat-rail-toggle");
+    if (btn) {
+      btn.textContent = playerState.chatRailOpen ? "▶" : "◀";
+      btn.title = playerState.chatRailOpen ? "Collapse chat rail" : "Open chat rail";
+      btn.setAttribute("aria-pressed", playerState.chatRailOpen ? "true" : "false");
+    }
+    reconcilePlayerChatRail(playerState.chatRailLastStreams);
+  });
+
   let resp;
   try {
     // Backend still drives 'which live streams are present + embed URLs';
     // we ignore its tile geometry and lay things out via the layout tree.
     resp = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
   } catch (e) {
-    watch.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
+    watchContent.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
   }
-  const streams = resp.streams || [];
-  paintPlayerStage(watch, streams);
+  // `let`, not `const`: the background refresh below updates this baseline
+  // in place when the live-set changes, so a one-off go-live/offline doesn't
+  // make every subsequent tick compare against a stale set.
+  let streams = resp.streams || [];
+  playerState.chatRailLastStreams = streams;
+  paintPlayerStage(watchContent, streams);
+  reconcilePlayerChatRail(streams);
   // Apply ?t=<sec> from in-context tools (Crunchr transcript jump,
   // cuepoints tick, EDL jumps) once the video element has rendered.
   if (seekTo > 0) {
     setTimeout(() => {
-      const v = watch.querySelector("video.ms-video");
+      const v = watchContent.querySelector("video.ms-video");
       if (v) {
         const apply = () => { try { v.currentTime = seekTo; v.play?.(); } catch (_) {} };
         if (v.readyState >= 1) apply();
@@ -4628,13 +5420,28 @@ async function renderWatch() {
       const got = new Set([...byId.keys()]);
       const sameSet = have.size === got.size && [...have].every((x) => got.has(x));
       if (!sameSet) {
-        // Live-set changed: re-render so the rail's stream-picker
-        // dropdown reflects reality. Existing iframes survive.
-        renderWatch().catch(() => {});
+        // Live-set changed (a followed channel went live/offline — routine
+        // with a dozen follows). Repaint via paintPlayerStage, NOT
+        // renderWatch: paintPlayerStage's fast path patches only the slots
+        // whose contents actually changed and re-attaches the still-playing
+        // iframes, so the rail's stream-picker refreshes without reloading
+        // the open stream. It also rebuilds the rail itself.
+        //
+        // Calling renderWatch here was the reload bug: it did a full
+        // root.innerHTML reset (remounting every iframe) AND armed a fresh
+        // 30s interval without clearing this one. Because each interval's
+        // `streams` baseline was frozen, a single set change made it mismatch
+        // forever — so it pumped a renderWatch every tick, the intervals
+        // multiplied, and the player reloaded on a ~30-90s beat.
+        //
+        // Update the baseline so the next tick compares against reality.
+        streams = r.streams || [];
+        playerState.chatRailLastStreams = streams;
+        paintPlayerStage(watchContent, streams);
         return;
       }
       // Same set — patch viewer counts in place.
-      watch.querySelectorAll(".ms-leaf").forEach((tile) => {
+      watchContent.querySelectorAll(".ms-leaf").forEach((tile) => {
         const s = byId.get(tile.dataset.streamId);
         if (!s) return;
         const meta = tile.querySelector('[data-watch-meta="viewers"]');
@@ -4654,8 +5461,261 @@ async function renderWatch() {
 // interaction (preset menu, split buttons, gutter drag, slot stream
 // picker, click-to-swap drag-drop, fullscreen, solo).
 
+// True iff two layouts have an identical tree shape (kind + split dir at
+// every node). Slot contents (streamId / recordingId) may differ; that
+// is the patchable subset. Anything else (split→slot, dir flip, etc.)
+// triggers a full repaint.
+function sameLayoutShape(a, b) {
+  if (!a || !b) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "split") {
+    return a.dir === b.dir && sameLayoutShape(a.a, b.a) && sameLayoutShape(a.b, b.b);
+  }
+  return true; // both slots — shape matches regardless of content
+}
+
+// Re-bind interactive handlers on a single freshly-replaced .ms-leaf
+// tile. Mirrors the per-tile loops at the bottom of paintPlayerStage so
+// surgical patches don't need a full repaint just to wire up drag /
+// drop / solo / fs / remove / slot-picker on one tile.
+function wireTileHandlers(tile, stage, watch, streams) {
+  // Tile-source drag (populated tiles only).
+  if (tile.dataset.streamId || tile.dataset.recordingId) {
+    tile.draggable = true;
+    tile.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", `strivo-tile:${tile.dataset.path || ""}`);
+      e.dataTransfer.effectAllowed = "move";
+      tile.classList.add("is-dragging");
+    });
+    tile.addEventListener("dragend", () => tile.classList.remove("is-dragging"));
+  }
+  // Drop targets — every tile, populated or empty.
+  tile.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    tile.classList.add("is-drop-target");
+  });
+  tile.addEventListener("dragleave", () => tile.classList.remove("is-drop-target"));
+  tile.addEventListener("drop", (e) => {
+    e.preventDefault();
+    tile.classList.remove("is-drop-target");
+    const parsed = parsePlayerDragPayload(e.dataTransfer.getData("text/plain"));
+    const toPath = tile.dataset.path || "";
+    if (!parsed) return;
+    if (parsed.type === "tile") {
+      const fromPath = parsed.path;
+      if (fromPath === toPath) return;
+      const fromNode = getNodeAt(playerState.layout, fromPath);
+      const toNode = getNodeAt(playerState.layout, toPath);
+      let next = setNodeAt(
+        playerState.layout,
+        fromPath,
+        _slot(toNode.streamId || null, toNode.recordingId || null),
+      );
+      next = setNodeAt(
+        next,
+        toPath,
+        _slot(fromNode.streamId || null, fromNode.recordingId || null),
+      );
+      playerState.layout = next;
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+      return;
+    }
+    if (parsed.type === "stream") {
+      playerState.layout = setNodeAt(playerState.layout, toPath, _slot(parsed.id, null));
+      savePlayerLayout();
+      // If the dropped stream isn't in our current cache (rail showed
+      // it as live but the multistream snapshot is stale — race between
+      // the channels poll and the tiles poll), refresh before
+      // repainting so renderSlot can resolve the embed URL. Without
+      // this the dropped tile renders the "Stream offline" pill even
+      // though the channel is fine — the bug the user kept hitting.
+      if (!streams.find((x) => x.stream_id === parsed.id)) {
+        API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host)
+          .then((resp) => {
+            const fresh = resp.streams || [];
+            playerState.chatRailLastStreams = fresh;
+            paintPlayerStage(watch, fresh);
+          })
+          .catch((err) => {
+            Toast.error(`Couldn't load dropped stream: ${err && err.message || err}`);
+            paintPlayerStage(watch, streams);
+          });
+        return;
+      }
+      paintPlayerStage(watch, streams);
+      return;
+    }
+    if (parsed.type === "recording") {
+      playerState.layout = setNodeAt(playerState.layout, toPath, _slot(null, parsed.id));
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    }
+  });
+
+  // Focus on background click (not on buttons / iframe / picker).
+  tile.addEventListener("mousedown", (e) => {
+    if (e.target.closest("button, select, iframe")) return;
+    stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
+    tile.classList.add("is-focused");
+  });
+
+  // Empty-slot stream picker.
+  const sel = tile.querySelector("select.ms-slot-pick");
+  if (sel) {
+    sel.addEventListener("change", () => {
+      const path = sel.dataset.path || "";
+      const val = sel.value;
+      if (!val) return;
+      let next;
+      if (val.startsWith("rec:")) next = _slot(null, val.slice(4));
+      else if (val.startsWith("live:")) next = _slot(val.slice(5), null);
+      else next = _slot(val);
+      playerState.layout = setNodeAt(playerState.layout, path, next);
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  }
+
+  // Solo / unsolo / fs / remove buttons.
+  tile.querySelector(".ms-solo")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playerState.soloPath = tile.dataset.path || "";
+    paintPlayerStage(watch, streams);
+  });
+  tile.querySelector(".ms-unsolo")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playerState.soloPath = "";
+    paintPlayerStage(watch, streams);
+  });
+  tile.querySelector(".ms-fs")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    try {
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      else tile.requestFullscreen?.();
+    } catch (err) {
+      Toast.error(`Fullscreen denied: ${err && err.message || err}`);
+    }
+  });
+  tile.querySelector(".ms-remove")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    playerState.layout = setNodeAt(playerState.layout, tile.dataset.path || "", _slot());
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
+  });
+}
+
+// Try to apply a slot-content diff between `prev` and `curr` without
+// rebuilding the whole stage. Returns true if the patch succeeded
+// (caller can skip the full repaint).
+//
+// Preserves existing iframes for any slot whose streamId/recordingId is
+// unchanged — Twitch embeds pause/reload on DOM detach, so the only
+// safe way to "add a stream" without nuking the others is to leave
+// their tile DOM entirely alone. Falls back to a full repaint when the
+// tree shape changes (split / collapse / preset switch).
+function tryPatchPlayerStage(watch, prev, curr, streams) {
+  const stage = watch.querySelector(".ms-stage");
+  if (!stage || !prev || !sameLayoutShape(prev, curr)) return false;
+
+  // Walk both trees in lockstep, patching only slots whose content
+  // changed. The mute state for unchanged tiles is also reapplied
+  // (mute is a function of soloPath, not slot content).
+  const work = [];
+  (function walkParallel(p, c, path) {
+    if (p.kind === "split") {
+      walkParallel(p.a, c.a, path ? `${path}.a` : "a");
+      walkParallel(p.b, c.b, path ? `${path}.b` : "b");
+      return;
+    }
+    work.push({ path, prevNode: p, currNode: c });
+  })(prev, curr, "");
+
+  for (const { path, prevNode, currNode } of work) {
+    const tile = stage.querySelector(`.ms-leaf[data-path="${cssEscape(path)}"]`);
+    if (!tile) return false; // shape thought it was the same but DOM disagrees → bail
+    const sameContent =
+      (prevNode.streamId || null) === (currNode.streamId || null) &&
+      (prevNode.recordingId || null) === (currNode.recordingId || null);
+    if (sameContent) {
+      // Same content. Mute state may have flipped — sync iframe/video.
+      const muted = playerState.soloPath ? playerState.soloPath !== path : true;
+      const iframe = tile.querySelector(".ms-iframe");
+      const video = tile.querySelector(".ms-video");
+      if (iframe) {
+        const cur = iframe.getAttribute("src") || "";
+        const base = cur.replace(/[?&](muted|mute)=[^&]*/g, "").replace(/[?&]$/, "");
+        if (base) {
+          const sep = base.includes("?") ? "&" : "?";
+          const param = base.includes("youtube.com") ? `mute=${muted ? 1 : 0}` : `muted=${muted}`;
+          const next = base + sep + param;
+          if (next !== cur) iframe.setAttribute("src", next);
+        }
+      }
+      if (video) video.muted = muted;
+      // Swap solo/unsolo button label.
+      const soloBtn = tile.querySelector(".ms-solo, .ms-unsolo");
+      if (soloBtn) {
+        if (muted && !soloBtn.classList.contains("ms-solo")) {
+          soloBtn.classList.remove("ms-unsolo");
+          soloBtn.classList.add("ms-solo");
+          soloBtn.textContent = "🔇";
+          soloBtn.title = "Unmute (solo this tile)";
+        } else if (!muted && !soloBtn.classList.contains("ms-unsolo")) {
+          soloBtn.classList.remove("ms-solo");
+          soloBtn.classList.add("ms-unsolo");
+          soloBtn.textContent = "🔊";
+          soloBtn.title = "Mute (mute-all)";
+        }
+      }
+      continue;
+    }
+    // Content changed. Render the new tile, swap it in, re-wire it.
+    // Existing iframes in OTHER tiles never get detached — only this
+    // tile's old element does.
+    const tmp = document.createElement("div");
+    tmp.innerHTML = renderSlot(currNode, path, streams);
+    const newTile = tmp.firstElementChild;
+    if (!newTile) return false;
+    tile.replaceWith(newTile);
+    wireTileHandlers(newTile, stage, watch, streams);
+  }
+
+  // Toolbar reflects layout-aware bits (preset label, leaf count,
+  // mute-all pressed state). Tree shape didn't change, so the only
+  // things that can shift are leaf-count (same — slots unchanged) and
+  // the mute-all pressed state.
+  const muteAll = watch.querySelector("#watch-mute-all");
+  if (muteAll) muteAll.classList.toggle("active", !playerState.soloPath);
+  return true;
+}
+
+// Robust CSS attribute-selector escaping for data-path values (root is
+// "" and paths are alphabetic). Falls back when the browser lacks
+// CSS.escape (some older runtimes).
+function cssEscape(s) {
+  if (typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function") {
+    return CSS.escape(s);
+  }
+  return String(s).replace(/[^A-Za-z0-9_-]/g, (m) => `\\${m}`);
+}
+
 function paintPlayerStage(watch, streams) {
   const layout = playerState.layout;
+  // Fast path: if the tree shape didn't change, patch only the slots
+  // whose contents differ. Unchanged tiles' DOM is never touched, so
+  // their iframes never detach — adding / removing / dropping a
+  // single stream no longer reloads the others. Falls through to the
+  // full repaint when the tree shape changes (split / collapse / preset
+  // switch / first paint).
+  if (playerState.lastPaintedLayout
+      && tryPatchPlayerStage(watch, playerState.lastPaintedLayout, layout, streams)) {
+    playerState.lastPaintedLayout = structuredClone(layout);
+    playerState.chatRailLastStreams = streams;
+    reconcilePlayerChatRail(streams);
+    return;
+  }
   const leaves = countLeaves(layout);
 
   // Build the preset menu (rendered as a details element). The current
@@ -4684,6 +5744,24 @@ function paintPlayerStage(watch, streams) {
       <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>
     </div>`;
 
+  // Capture existing iframes/videos before we blow the stage away so
+  // we can re-attach them to the new layout intact. Adding a stream,
+  // switching presets, splitting tiles, etc. should not reload the
+  // streams that were already playing — only newly-added slots
+  // actually need fresh media elements. Keyed by stream/recording id
+  // because layout paths shift across operations.
+  const reusableMedia = new Map();
+  watch.querySelectorAll(".ms-leaf").forEach((leaf) => {
+    const sid = leaf.dataset.streamId;
+    const rid = leaf.dataset.recordingId;
+    const media = leaf.querySelector(".ms-iframe, .ms-video");
+    if (!media) return;
+    const key = sid ? `s:${sid}` : rid ? `r:${rid}` : null;
+    if (!key) return;
+    reusableMedia.set(key, media);
+    media.remove(); // detach (live state survives) so innerHTML reset can't nuke it
+  });
+
   const stage = document.createElement("div");
   stage.className = "ms-stage";
   stage.innerHTML = renderLayoutNode(layout, "", streams);
@@ -4691,6 +5769,33 @@ function paintPlayerStage(watch, streams) {
   watch.innerHTML = "";
   watch.insertAdjacentHTML("beforeend", toolbar);
   watch.appendChild(stage);
+
+  // Re-attach the reused media into their new layout positions. When
+  // the new src is identical (the layout change didn't flip mute or
+  // swap source) the iframe survives without a reload. When it
+  // differs (solo flipped on/off → muted query param toggles) we sync
+  // src so the layout's intent wins; that path still reloads on
+  // Twitch's side but the non-solo'd tiles do not.
+  stage.querySelectorAll(".ms-leaf").forEach((leaf) => {
+    const sid = leaf.dataset.streamId;
+    const rid = leaf.dataset.recordingId;
+    const key = sid ? `s:${sid}` : rid ? `r:${rid}` : null;
+    if (!key) return;
+    const reused = reusableMedia.get(key);
+    if (!reused) return;
+    const placeholder = leaf.querySelector(".ms-iframe, .ms-video");
+    if (!placeholder) return;
+    if (reused.tagName === "IFRAME") {
+      const wantSrc = placeholder.getAttribute("src");
+      if (reused.getAttribute("src") !== wantSrc) reused.setAttribute("src", wantSrc);
+    } else if (reused.tagName === "VIDEO") {
+      // Recording playback: src usually unchanged across layout ops;
+      // only the muted attribute flips on solo / mute-all.
+      const wantMuted = placeholder.hasAttribute("muted");
+      if (wantMuted !== reused.muted) reused.muted = wantMuted;
+    }
+    placeholder.replaceWith(reused);
+  });
 
   // ── Preset menu ──
   watch.querySelectorAll(".ms-preset-opt").forEach((btn) => {
@@ -4769,147 +5874,28 @@ function paintPlayerStage(watch, streams) {
     paintPlayerStage(watch, streams);
   });
 
-  // ── Tile focus (click on background, not on iframe / buttons) ──
+  // Per-tile interactions (dragstart on populated, drop targets on all,
+  // slot picker on empty, solo/fs/remove on populated). Single source
+  // of truth — `wireTileHandlers` is also called by the in-place patch
+  // path so a surgical tile replacement gets identical wiring.
   stage.querySelectorAll(".ms-leaf").forEach((tile) => {
-    tile.addEventListener("mousedown", (e) => {
-      if (e.target.closest("button, select, iframe")) return;
-      stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
-      tile.classList.add("is-focused");
-    });
+    wireTileHandlers(tile, stage, watch, streams);
   });
 
-  // ── Empty-slot stream pickers ──
-  stage.querySelectorAll("select.ms-slot-pick").forEach((sel) => {
-    sel.addEventListener("change", () => {
-      const path = sel.dataset.path || "";
-      const val = sel.value;
-      if (!val) return;
-      // Values are prefixed (live:<id> or rec:<id>) to disambiguate
-      // the two source types.
-      let next;
-      if (val.startsWith("rec:")) next = _slot(null, val.slice(4));
-      else if (val.startsWith("live:")) next = _slot(val.slice(5), null);
-      else next = _slot(val); // legacy bare stream id
-      playerState.layout = setNodeAt(playerState.layout, path, next);
-      savePlayerLayout();
-      paintPlayerStage(watch, streams);
-    });
-  });
-
-  // ── Solo / mute toggles ──
-  stage.querySelectorAll(".ms-solo").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      playerState.soloPath = btn.dataset.path || "";
-      paintPlayerStage(watch, streams);
-    });
-  });
-  stage.querySelectorAll(".ms-unsolo").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      playerState.soloPath = "";
-      paintPlayerStage(watch, streams);
-    });
-  });
+  // Mute-all toolbar button: top-level, not per-tile.
   watch.querySelector("#watch-mute-all")?.addEventListener("click", () => {
     playerState.soloPath = "";
     paintPlayerStage(watch, streams);
   });
 
-  // ── Remove stream from slot (X button) ──
-  stage.querySelectorAll(".ms-remove").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const path = btn.dataset.path || "";
-      playerState.layout = setNodeAt(playerState.layout, path, _slot());
-      savePlayerLayout();
-      paintPlayerStage(watch, streams);
-    });
-  });
-
-  // ── Fullscreen tile ──
-  stage.querySelectorAll(".ms-fs").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const tile = btn.closest(".ms-leaf");
-      if (!tile) return;
-      // Safari / iOS throw a NotAllowedError if requestFullscreen is
-      // called from anything but a user-gesture handler; catch it so
-      // a denied request doesn't leak into the console + Toast the user.
-      try {
-        if (document.fullscreenElement) document.exitFullscreen?.();
-        else tile.requestFullscreen?.();
-      } catch (err) {
-        Toast.error(`Fullscreen denied: ${err && err.message || err}`);
-      }
-    });
-  });
-
-  // ── Drag-and-drop: rail channels → empty slot · tile ↔ tile swap ──
-  // Sentinels are mandatory because getData("missing type") returns
-  // the empty string — indistinguishable from a tile drag whose path
-  // happens to be "" (the root single slot). We disambiguate with
-  // non-empty prefixes:
-  //   strivo-tile:<path>      — populated tile drag (incl. root)
-  //   strivo-stream:<id>      — rail channel drag (live stream)
-  // Both ride on text/plain (works cross-browser without permissions);
-  // the receiver parses the prefix.
-  stage.querySelectorAll(".ms-leaf").forEach((tile) => {
-    if (tile.dataset.streamId || tile.dataset.recordingId) {
-      tile.draggable = true;
-      tile.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", `strivo-tile:${tile.dataset.path || ""}`);
-        e.dataTransfer.effectAllowed = "move";
-        tile.classList.add("is-dragging");
-      });
-      tile.addEventListener("dragend", () => tile.classList.remove("is-dragging"));
-    }
-    tile.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      tile.classList.add("is-drop-target");
-    });
-    tile.addEventListener("dragleave", () => tile.classList.remove("is-drop-target"));
-    tile.addEventListener("drop", (e) => {
-      e.preventDefault();
-      tile.classList.remove("is-drop-target");
-      const parsed = parsePlayerDragPayload(e.dataTransfer.getData("text/plain"));
-      const toPath = tile.dataset.path || "";
-      if (!parsed) return; // unknown / corrupted / browser URL drag — leave the tile alone
-      if (parsed.type === "tile") {
-        const fromPath = parsed.path;
-        if (fromPath === toPath) return;
-        const fromNode = getNodeAt(playerState.layout, fromPath);
-        const toNode = getNodeAt(playerState.layout, toPath);
-        let next = setNodeAt(
-          playerState.layout,
-          fromPath,
-          _slot(toNode.streamId || null, toNode.recordingId || null),
-        );
-        next = setNodeAt(
-          next,
-          toPath,
-          _slot(fromNode.streamId || null, fromNode.recordingId || null),
-        );
-        playerState.layout = next;
-      } else if (parsed.type === "stream") {
-        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(parsed.id, null));
-      } else if (parsed.type === "recording") {
-        playerState.layout = setNodeAt(playerState.layout, toPath, _slot(null, parsed.id));
-      }
-      savePlayerLayout();
-      paintPlayerStage(watch, streams);
-    });
-  });
-  // Make rail channel rows draggable as a stream source. Note: <a>
-  // elements are already draggable by default (the browser drags the
-  // href). The custom dragstart MUST run AND set effectAllowed before
-  // the browser's URL-drag logic takes over.
+  // Channel-list rail rows are draggable as a stream source. <a> tags
+  // are draggable by default (the browser drags the href); our custom
+  // dragstart MUST run AND set effectAllowed first so the browser's
+  // URL-drag default doesn't win.
   document.querySelectorAll(".ch-row[data-channel-key]").forEach((row) => {
     if (!row.dataset.liveStreamId) return;
     row.draggable = true;
     row.addEventListener("dragstart", (e) => {
-      // setData first so the browser's URL-drag default is overridden.
       e.dataTransfer.setData("text/plain", `strivo-stream:${row.dataset.liveStreamId}`);
       e.dataTransfer.effectAllowed = "copy";
     });
@@ -4955,6 +5941,14 @@ function paintPlayerStage(watch, streams) {
       document.addEventListener("mouseup", onUp);
     });
   });
+
+  // Snapshot the layout we just painted so the next call can try the
+  // fast in-place patch path instead of rebuilding the stage. Stashed
+  // *after* the full paint so a mid-paint exception doesn't leave the
+  // diff comparing against a partial state.
+  playerState.lastPaintedLayout = structuredClone(layout);
+  playerState.chatRailLastStreams = streams;
+  reconcilePlayerChatRail(streams);
 }
 
 // Recursive renderer. Returns an HTML string.
@@ -4994,7 +5988,7 @@ function renderSlot(slot, path, streams) {
         </div>
         <video class="watch-tile-iframe ms-video" controls playsinline ${muted ? "muted" : ""}
                preload="metadata"
-               src="/api/v1/recordings/${encodeURIComponent(slot.recordingId)}/file"></video>
+               src="/api/v1/recordings/${encodeURIComponent(slot.recordingId)}/download"></video>
       </div>`;
   }
   // ─ Live stream path ─

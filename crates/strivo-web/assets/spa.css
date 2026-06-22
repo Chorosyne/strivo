@@ -921,6 +921,39 @@ button.sm {
   color: var(--bg);
   animation: pulse 1.2s ease-in-out infinite;
 }
+/* In-flight downloads with a known/projected percentage get a fill
+   bar inside the pill driven by --state-fill, replacing the pulsing
+   "Downloading" text with a live "NN%" label. The fill colour mirrors
+   the standalone .vod-dl-fill gradient so the two surfaces read as
+   the same thing. */
+.state-pill.has-fill {
+  position: relative;
+  overflow: hidden;
+  /* Cancel the pulse — the fill width is now the activity signal. */
+  animation: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--fg);
+  min-width: 4.2em;
+  text-align: center;
+  padding: 0.15rem 0.55rem;
+}
+.state-pill.has-fill .state-pill-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--state-fill, 0%);
+  background: linear-gradient(90deg, var(--secondary) 0%, var(--accent2) 60%, var(--live) 100%);
+  z-index: 0;
+  transition: width 250ms ease-out;
+}
+.state-pill.has-fill .state-pill-label {
+  position: relative;
+  z-index: 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  /* Drop-shadow keeps the digits legible no matter where the fill
+     boundary lands on the label. */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+}
 .recordings-table .state-pill.finished {
   background: var(--live);
   color: var(--bg);
@@ -4521,3 +4554,393 @@ body.ms-resizing { cursor: ew-resize; user-select: none; }
   flex: 1; height: 8px; border-radius: 4px;
   background: linear-gradient(90deg, rgb(76, 201, 240), rgb(251, 191, 36), rgb(239, 68, 68));
 }
+
+/* ── Player view — right-rail chat ─────────────────────────────────
+   The watch root is a two-column grid: stage on the left, chat rail on
+   the right (32px collapsed, 340px open). Pinned to the visible
+   viewport (minus chrome) so the rail's message body can scroll inside
+   its share instead of growing the page — without this the chat
+   "infinitely extended" while the stage stayed locked. */
+.watch-root {
+  display: grid;
+  grid-template-columns: 1fr 32px;
+  gap: 0.6rem;
+  padding: 0.5rem 0.8rem;
+  align-items: stretch;
+  height: calc(100vh - 80px);
+  min-height: 0;
+}
+.watch-root.has-chat-rail {
+  grid-template-columns: 1fr 340px;
+}
+.watch-content {
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  gap: 0.6rem;
+}
+/* Stage fills the remaining vertical space inside .watch-content; the
+   `height: calc(100vh - 180px)` override on `.ms-stage` is replaced by
+   flex sizing so the chat rail's height matches the stage exactly. */
+.watch-content .ms-stage {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+.player-chat-rail {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.18);
+  overflow: hidden;
+  min-height: 0;
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-title,
+.player-chat-rail[data-open="false"] .player-chat-rail-room,
+.player-chat-rail[data-open="false"] .player-chat-rail-tabs,
+.player-chat-rail[data-open="false"] .player-chat-rail-body {
+  display: none;
+}
+.player-chat-rail-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+.player-chat-rail-toggle {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  padding: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.9rem;
+}
+.player-chat-rail-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.player-chat-rail-room {
+  font-size: 0.78rem;
+  opacity: 0.7;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.player-chat-rail-tabs {
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.12);
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.player-chat-rail-tab {
+  appearance: none; -webkit-appearance: none;
+  border: 2px solid transparent;
+  background: transparent;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 80ms ease;
+}
+.player-chat-rail-tab:hover { transform: scale(1.08); }
+.player-chat-rail-tab.active {
+  border-color: var(--accent, #ffcc00);
+}
+.player-chat-rail-avatar {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+  font-size: 0.85rem;
+  user-select: none;
+}
+.player-chat-rail-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.player-chat-rail-body .chat-msg {
+  /* Same .chat-msg rules from /chat — overflow-wrap so long emote
+     names don't blow out the narrower rail width. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 0.1rem 0;
+}
+.player-chat-rail-empty {
+  padding: 0.6rem; text-align: center;
+}
+
+/* ── /chat route — collapsible channel list ───────────────────────── */
+.chat-root.tabs-collapsed {
+  grid-template-columns: 0 1fr;
+}
+.chat-root.tabs-collapsed .chat-tabs {
+  display: none;
+}
+.chat-main-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.15rem 0.2rem 0;
+}
+.chat-tabs-toggle {
+  flex-shrink: 0;
+}
+.chat-main-active {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* ── Chatterino-grade compose bar ───────────────────────────────────
+   Used by both the /chat route (`.chat-compose-host`) and the player
+   right-rail (`.player-chat-rail-compose`). Per-platform accent set via
+   the `data-platform` attribute — Twitch purple, YouTube red,
+   Patreon coral. All other surfaces inherit the default accent. */
+.chat-compose-bar {
+  --cc-accent: var(--accent, #ffcc00);
+  --cc-accent-soft: color-mix(in srgb, var(--cc-accent) 25%, transparent);
+  position: relative;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-light);
+  border-top-color: var(--cc-accent-soft);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.22);
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.4rem 0.3rem;
+}
+.chat-compose-bar[data-platform="twitch"]  { --cc-accent: #a970ff; }  /* Twitch brand purple */
+.chat-compose-bar[data-platform="youtube"] { --cc-accent: #ff4d4d; }  /* YouTube red, slightly desaturated */
+.chat-compose-bar[data-platform="patreon"] { --cc-accent: #f96854; }  /* Patreon coral */
+.chat-compose-bar[data-platform="none"]    { --cc-accent: var(--accent, #ffcc00); }
+.chat-compose-bar .cc-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 0.35rem;
+  align-items: end;
+}
+.chat-compose-bar .cc-tool {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  align-self: stretch;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 120ms, background 120ms;
+}
+.chat-compose-bar .cc-tool:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-tool[aria-expanded="true"] {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-input {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.35);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  resize: none;
+  min-height: 1.95em;
+  line-height: 1.35;
+  overflow-y: auto;
+  outline: none;
+  transition: border-color 120ms;
+}
+.chat-compose-bar .cc-input:focus {
+  border-color: var(--cc-accent);
+  box-shadow: 0 0 0 1px var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-input:disabled {
+  opacity: 0.55; cursor: not-allowed;
+}
+.chat-compose-bar .cc-meta {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 0.2rem; min-width: 4ch;
+}
+.chat-compose-bar .cc-count {
+  font-size: 0.7rem; opacity: 0.6;
+  text-align: right;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.chat-compose-bar .cc-count.near-cap { opacity: 0.95; color: #f4b042; }
+.chat-compose-bar .cc-count.at-cap   { color: #ef4444; opacity: 1; }
+.chat-compose-bar .cc-send {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--cc-accent);
+  background: var(--cc-accent);
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  transition: filter 120ms, transform 80ms;
+}
+.chat-compose-bar .cc-send:hover { filter: brightness(1.12); }
+.chat-compose-bar .cc-send:active { transform: translateY(1px); }
+.chat-compose-bar .cc-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-compose-bar .cc-hint {
+  margin-top: 0.25rem;
+  min-height: 1em;
+  font-size: 0.74rem;
+}
+
+/* Popups (emote + slash-command palettes) */
+.chat-compose-bar .cc-popup {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--cc-accent);
+  border-radius: 8px;
+  background: var(--surface-bg, rgba(20,20,28,0.96));
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  z-index: 50;
+  overflow: hidden;
+}
+.chat-compose-bar .cc-popup[hidden] { display: none; }
+.chat-compose-bar .cc-popup-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.25);
+}
+.chat-compose-bar .cc-popup-tab {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  opacity: 0.7;
+}
+.chat-compose-bar .cc-popup-tab:hover { opacity: 1; }
+.chat-compose-bar .cc-popup-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--cc-accent);
+}
+.chat-compose-bar .cc-popup-search {
+  padding: 0.35rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+}
+.chat-compose-bar .cc-popup-search input {
+  width: 100%;
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.35);
+  color: inherit;
+  border-radius: 5px;
+  padding: 0.25rem 0.45rem;
+  font: inherit;
+  outline: none;
+}
+.chat-compose-bar .cc-popup-search input:focus { border-color: var(--cc-accent); }
+.chat-compose-bar .cc-popup-body {
+  flex: 1; overflow-y: auto;
+  padding: 0.35rem;
+}
+.chat-compose-bar .cc-emote-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 0.2rem;
+}
+.chat-compose-bar .cc-emote-cell {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px;
+  cursor: pointer;
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1;
+}
+.chat-compose-bar .cc-emote-cell:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-emote-cell img {
+  max-width: 28px; max-height: 28px;
+  display: block;
+}
+.chat-compose-bar .cc-emoji-cell { font-size: 22px; }
+.chat-compose-bar .cc-popup-empty {
+  padding: 0.6rem; text-align: center; font-size: 0.85rem;
+}
+.chat-compose-bar .cc-cmd-body {
+  display: flex; flex-direction: column;
+}
+.chat-compose-bar .cc-cmd-cell {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  text-align: left;
+  display: flex; flex-direction: column;
+  gap: 0.1rem;
+  color: inherit;
+}
+.chat-compose-bar .cc-cmd-cell:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-cmd-label {
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.chat-compose-bar .cc-cmd-hint { font-size: 0.74rem; }
+
+/* Compact (rail) variant — fewer pixels, smaller font, popup is wider
+   than the rail so emote grids stay scannable. */
+.chat-compose-bar[data-compact="1"] {
+  margin: 0;
+  padding: 0.25rem 0.3rem;
+  border-radius: 0;
+  border-left: none; border-right: none; border-bottom: none;
+}
+.chat-compose-bar[data-compact="1"] .cc-input {
+  font-size: 0.82rem;
+  padding: 0.3rem 0.4rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-tool {
+  padding: 0.2rem 0.3rem;
+  font-size: 0.95rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-send {
+  padding: 0.25rem 0.45rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-popup {
+  /* Edge-to-edge within the rail. Trying to spill outside (an earlier
+     `left: -180px` attempt to widen the grid) was clipped by the rail's
+     `overflow: hidden`. With auto-fill emote columns the narrower
+     width still lays out cleanly — 7–8 cells per row inside the rail. */
+  left: 0;
+  right: 0;
+  width: auto;
+}
+
+/* Container for the rail's compose region — sits below the message
+   body, anchored to the bottom of the aside. */
+.player-chat-rail-compose {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-light);
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-compose { display: none; }
+
+/* Container for the /chat route's compose — replaces the old inline
+   form's positioning. */
+.chat-compose-host { /* no extra rules — compose-bar styles itself */ }

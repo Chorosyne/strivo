@@ -14,10 +14,11 @@ use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
+use tokio::io::AsyncSeekExt;
 use strivo_core::ipc::ServerMessage;
 use uuid::Uuid;
 
@@ -148,7 +149,67 @@ fn guess_mime(p: &std::path::Path) -> &'static str {
     }
 }
 
-async fn download(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+/// Parse a single-range `Range: bytes=…` header against a known file size.
+///
+/// Returns `Ok(Some((start, end_inclusive)))` for a satisfiable range,
+/// `Ok(None)` if no `Range` header was sent, and `Err(())` for a syntactically
+/// valid but unsatisfiable range (caller turns this into `416`). Multipart
+/// ranges (`bytes=0-9,20-29`) are deliberately not supported: `<video>`
+/// elements only ever ask for a single contiguous range, and the multipart
+/// boundary encoding is meaningful complexity for zero browser benefit.
+fn parse_range(headers: &HeaderMap, file_len: u64) -> Result<Option<(u64, u64)>, ()> {
+    let Some(raw) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) else {
+        return Ok(None);
+    };
+    let spec = raw.strip_prefix("bytes=").ok_or(())?.trim();
+    // Reject multi-range — browsers never send these for media seek.
+    if spec.contains(',') {
+        return Err(());
+    }
+    let (s, e) = spec.split_once('-').ok_or(())?;
+    let s = s.trim();
+    let e = e.trim();
+    if file_len == 0 {
+        return Err(());
+    }
+    let last = file_len - 1;
+    let (start, end) = match (s.is_empty(), e.is_empty()) {
+        // `bytes=-N` — final N bytes
+        (true, false) => {
+            let n: u64 = e.parse().map_err(|_| ())?;
+            if n == 0 {
+                return Err(());
+            }
+            let n = n.min(file_len);
+            (file_len - n, last)
+        }
+        // `bytes=N-` — N to EOF
+        (false, true) => {
+            let n: u64 = s.parse().map_err(|_| ())?;
+            if n > last {
+                return Err(());
+            }
+            (n, last)
+        }
+        // `bytes=A-B`
+        (false, false) => {
+            let a: u64 = s.parse().map_err(|_| ())?;
+            let b: u64 = e.parse().map_err(|_| ())?;
+            if a > b || a > last {
+                return Err(());
+            }
+            (a, b.min(last))
+        }
+        _ => return Err(()),
+    };
+    Ok(Some((start, end)))
+}
+
+async fn download(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Response {
     let raw = match lookup_path(&state, id).await {
         Ok(p) => p,
         Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
@@ -163,13 +224,14 @@ async fn download(State(state): State<AppState>, Path(id): Path<Uuid>) -> Respon
         Ok(p) => p,
         Err(code) => return (code, "path outside recording directory").into_response(),
     };
-    let file = match tokio::fs::File::open(&path).await {
+    let mut file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-    let len = file.metadata().await.map(|m| m.len()).ok();
-    let stream = tokio_util::io::ReaderStream::new(file);
-    let body = Body::from_stream(stream);
+    let total_len = match file.metadata().await.map(|m| m.len()) {
+        Ok(l) => l,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -181,21 +243,57 @@ async fn download(State(state): State<AppState>, Path(id): Path<Uuid>) -> Respon
         Some(m) => m,
         None => guess_mime(&path),
     };
-    let mut resp = Response::new(body);
-    resp.headers_mut().insert(
+
+    let range = match parse_range(&headers, total_len) {
+        Ok(r) => r,
+        Err(()) => {
+            // 416 Requested Range Not Satisfiable — RFC 9110 mandates a
+            // `Content-Range: bytes */<total>` indicator so the client can
+            // re-issue with a corrected range.
+            let mut resp = (StatusCode::RANGE_NOT_SATISFIABLE, "invalid range").into_response();
+            if let Ok(v) = header::HeaderValue::from_str(&format!("bytes */{total_len}")) {
+                resp.headers_mut().insert(header::CONTENT_RANGE, v);
+            }
+            return resp;
+        }
+    };
+
+    let (status, start, end) = match range {
+        Some((s, e)) => (StatusCode::PARTIAL_CONTENT, s, e),
+        None => (StatusCode::OK, 0, total_len.saturating_sub(1)),
+    };
+    let slice_len = end - start + 1;
+
+    if start > 0 {
+        if let Err(e) = file.seek(std::io::SeekFrom::Start(start)).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    }
+    // `take` caps the stream at the requested length so partial-content
+    // responses don't bleed past `end`.
+    let bounded = tokio::io::AsyncReadExt::take(file, slice_len);
+    let body = Body::from_stream(tokio_util::io::ReaderStream::new(bounded));
+
+    let mut resp = Response::builder().status(status).body(body).unwrap();
+    let h = resp.headers_mut();
+    h.insert(
         header::CONTENT_TYPE,
         mime.parse()
             .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream")),
     );
-    resp.headers_mut().insert(
+    h.insert(
         header::CONTENT_DISPOSITION,
         format!("inline; filename=\"{filename}\"")
             .parse()
             .unwrap_or_else(|_| header::HeaderValue::from_static("inline")),
     );
-    if let Some(l) = len {
-        if let Ok(v) = header::HeaderValue::from_str(&l.to_string()) {
-            resp.headers_mut().insert(header::CONTENT_LENGTH, v);
+    h.insert(header::ACCEPT_RANGES, header::HeaderValue::from_static("bytes"));
+    if let Ok(v) = header::HeaderValue::from_str(&slice_len.to_string()) {
+        h.insert(header::CONTENT_LENGTH, v);
+    }
+    if status == StatusCode::PARTIAL_CONTENT {
+        if let Ok(v) = header::HeaderValue::from_str(&format!("bytes {start}-{end}/{total_len}")) {
+            h.insert(header::CONTENT_RANGE, v);
         }
     }
     resp
@@ -303,6 +401,49 @@ mod tests {
         // Unrecognised
         assert_eq!(detect_mime(b"random garbage"), None);
         assert_eq!(detect_mime(&[]), None);
+    }
+
+    fn range_headers(spec: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::RANGE, header::HeaderValue::from_str(spec).unwrap());
+        h
+    }
+
+    #[test]
+    fn parse_range_absent_returns_none() {
+        assert_eq!(parse_range(&HeaderMap::new(), 1000), Ok(None));
+    }
+
+    #[test]
+    fn parse_range_handles_all_three_grammar_forms() {
+        // bytes=A-B
+        assert_eq!(parse_range(&range_headers("bytes=10-19"), 1000), Ok(Some((10, 19))));
+        // bytes=N- (open-ended → EOF)
+        assert_eq!(parse_range(&range_headers("bytes=500-"), 1000), Ok(Some((500, 999))));
+        // bytes=-N (suffix length)
+        assert_eq!(parse_range(&range_headers("bytes=-100"), 1000), Ok(Some((900, 999))));
+        // suffix larger than file → clamp to whole file
+        assert_eq!(parse_range(&range_headers("bytes=-9999"), 1000), Ok(Some((0, 999))));
+        // end past EOF → clamp to last byte
+        assert_eq!(parse_range(&range_headers("bytes=10-9999"), 1000), Ok(Some((10, 999))));
+    }
+
+    #[test]
+    fn parse_range_rejects_malformed_and_unsatisfiable() {
+        // missing prefix
+        assert!(parse_range(&range_headers("0-9"), 1000).is_err());
+        // multi-range deliberately unsupported
+        assert!(parse_range(&range_headers("bytes=0-9,20-29"), 1000).is_err());
+        // start past EOF
+        assert!(parse_range(&range_headers("bytes=1000-"), 1000).is_err());
+        // start > end
+        assert!(parse_range(&range_headers("bytes=50-10"), 1000).is_err());
+        // zero-length suffix
+        assert!(parse_range(&range_headers("bytes=-0"), 1000).is_err());
+        // empty file
+        assert!(parse_range(&range_headers("bytes=0-0"), 0).is_err());
+        // non-numeric
+        assert!(parse_range(&range_headers("bytes=a-b"), 1000).is_err());
     }
 
     #[test]
