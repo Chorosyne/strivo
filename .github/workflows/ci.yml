@@ -48,5 +48,14 @@ jobs:
       - name: test
         run: cargo test --workspace --release --all-targets --locked
 
-      - name: build
+      - name: build (PVR — default edition)
         run: cargo build --release --locked
+
+      # The default build/test above is the pure PVR (workspace default-members).
+      # These steps exercise the Creator Edition feature-gated code paths in
+      # strivo-core/strivo-web/strivo-bin, which the default build never compiles.
+      - name: build (Creator Edition)
+        run: cargo build --release -p strivo-bin --features creator --locked
+
+      - name: test (Creator Edition)
+        run: cargo test --release -p strivo-web -p strivo-bin --features creator --all-targets --locked

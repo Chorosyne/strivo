@@ -1,8 +1,8 @@
 # strivo
 
-Self-hosted live-stream PVR with a web UI. Monitor channels across Twitch, YouTube, and Patreon — automatically record when they go live, play back in the browser, and transcribe, analyse, and clip recordings from the SPA.
+Self-hosted live-stream PVR with a web UI — "Sonarr/Radarr for live streams." Monitor channels across Twitch, YouTube, and Patreon, automatically record when they go live, finalize them into a clean library, and play back in the browser.
 
-strivo is evolving from a recorder into a **stream→clip analytics & content-creation engine**: extract structured signals from streams and clips as fast as they record, then parse, save, export, and visualise them. See [ROADMAP.md](./ROADMAP.md) for the north star and the phased plan to get there.
+strivo ships in two editions from one codebase. The default build is the **pure PVR**. **Creator Edition** (`--features creator`) adds the creator/analytics toolkit — transcription, clip discovery, the EDL editor, and a domain-agnostic stream→signal analytics engine. See [ROADMAP.md](./ROADMAP.md) for the PVR roadmap and the Creator Edition trajectory.
 
 > **TUI removed.** The original ratatui-based TUI was retired; the web UI
 > is the only supported frontend. See [CHANGELOG.md](./CHANGELOG.md) for
@@ -122,14 +122,20 @@ strivo              # starts daemon + webui on http://127.0.0.1:8181
 ```bash
 git clone https://github.com/Chorosyne/strivo.git
 cd strivo
-cargo build --release
+cargo build --release                                    # StriVo (pure PVR)
+cargo build --release -p strivo-bin --features creator   # StriVo Creator Edition
 ```
+
+The default build is the pure PVR. The `creator` feature adds the
+transcription/analysis/editor toolkit (the `strivo-plugins` host and the
+in-tree tool crates); see [the edition split in ROADMAP.md](./ROADMAP.md#the-edition-split--shipped).
 
 ### Dev install (current checkout → `~/.local/bin/strivo`)
 
 For hacking on a clone: build the latest from the working tree and drop
-`strivo` on your `PATH`, with every first-party plugin enabled in a
-generated default config.
+`strivo` on your `PATH`. The script builds **Creator Edition** (it enables
+the `crunchr` + `archiver` plugins in the generated config), so it passes
+`--features creator`.
 
 ```bash
 scripts/install-dev.sh                # release build

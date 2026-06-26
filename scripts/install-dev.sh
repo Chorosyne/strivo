@@ -93,13 +93,16 @@ if [[ -f .gitmodules ]] && ! [[ -f "$WHISPERX_SCRIPT_SRC" ]]; then
 fi
 
 # ── build ────────────────────────────────────────────────────────────────────
+# This dev installer provisions the full Creator Edition (it enables the
+# crunchr + archiver plugins in the generated config), so it builds with the
+# `creator` feature. For a pure-PVR build use `cargo build --release`.
 if [[ "$MODE" == "release" ]]; then
-    log "building strivo-bin (release)"
-    "$CARGO_BIN" build --release -p strivo-bin
+    log "building strivo-bin (release, creator edition)"
+    "$CARGO_BIN" build --release -p strivo-bin --features creator
     BUILT_BIN="$REPO_ROOT/target/release/strivo"
 else
-    log "building strivo-bin (debug)"
-    "$CARGO_BIN" build -p strivo-bin
+    log "building strivo-bin (debug, creator edition)"
+    "$CARGO_BIN" build -p strivo-bin --features creator
     BUILT_BIN="$REPO_ROOT/target/debug/strivo"
 fi
 
