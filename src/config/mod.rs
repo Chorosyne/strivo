@@ -47,9 +47,11 @@ pub struct AppConfig {
     #[serde(default)]
     pub schedule: Vec<ScheduleEntry>,
 
+    #[cfg(feature = "creator")]
     #[serde(default, alias = "sloptube")]
     pub crunchr: CrunchrConfig,
 
+    #[cfg(feature = "creator")]
     #[serde(default)]
     pub archiver: ArchiverConfig,
 
@@ -97,6 +99,7 @@ pub struct WebConfig {
     pub session_secret: Option<String>,
 }
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrunchrConfig {
     /// Whether the plugin is enabled (gates tandem auto-processing).
@@ -173,6 +176,7 @@ pub struct CrunchrConfig {
     pub active_preset: Option<String>,
 }
 
+#[cfg(feature = "creator")]
 impl Default for CrunchrConfig {
     fn default() -> Self {
         Self {
@@ -195,6 +199,7 @@ impl Default for CrunchrConfig {
     }
 }
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrunchrAnalysisConfig {
     #[serde(default)]
@@ -209,6 +214,7 @@ pub struct CrunchrAnalysisConfig {
     pub model: String,
 }
 
+#[cfg(feature = "creator")]
 impl Default for CrunchrAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -219,22 +225,27 @@ impl Default for CrunchrAnalysisConfig {
     }
 }
 
+#[cfg(feature = "creator")]
 fn default_crunchr_backend() -> String {
     "voxtral-openrouter".to_string()
 }
 
+#[cfg(feature = "creator")]
 fn default_whisper_timeout() -> u64 {
     7200
 }
 
+#[cfg(feature = "creator")]
 fn default_embed_subs() -> bool {
     true
 }
 
+#[cfg(feature = "creator")]
 fn default_analysis_model() -> String {
     "mistralai/mistral-7b-instruct".to_string()
 }
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiverConfig {
     /// Whether the plugin is enabled (gates tandem auto-processing).
@@ -264,6 +275,7 @@ pub struct ArchiverConfig {
     pub tandem_playlists: Vec<String>,
 }
 
+#[cfg(feature = "creator")]
 impl Default for ArchiverConfig {
     fn default() -> Self {
         Self {
@@ -279,14 +291,17 @@ impl Default for ArchiverConfig {
     }
 }
 
+#[cfg(feature = "creator")]
 fn default_archive_dir() -> PathBuf {
     directories::UserDirs::new()
         .map(|d| d.home_dir().join("Videos/StriVo/Archives"))
         .unwrap_or_else(|| PathBuf::from("./archives"))
 }
+#[cfg(feature = "creator")]
 fn default_archive_format() -> String {
     "best".to_string()
 }
+#[cfg(feature = "creator")]
 fn default_concurrent_fragments() -> u32 {
     4
 }
@@ -751,7 +766,9 @@ impl Default for AppConfig {
             capture_profiles: Vec::new(),
             auto_pull_creators: Vec::new(),
             schedule: Vec::new(),
+            #[cfg(feature = "creator")]
             crunchr: CrunchrConfig::default(),
+            #[cfg(feature = "creator")]
             archiver: ArchiverConfig::default(),
             web: WebConfig::default(),
             notifications: NotificationsConfig::default(),

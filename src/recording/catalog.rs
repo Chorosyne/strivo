@@ -35,6 +35,7 @@ pub struct CatalogPullOptions {
     pub force: bool,
     /// When true, emit a `crunchr_auto` marker file so the Crunchr plugin picks
     /// the episode up automatically without per-channel tandem config.
+    #[cfg(feature = "creator")]
     pub crunchr_auto: bool,
 }
 
@@ -169,6 +170,7 @@ pub async fn run_pull(
                 if let Err(e) = write_metadata_json(&ep_dir, &meta) {
                     tracing::warn!("catalog: metadata.json write failed: {e}");
                 }
+                #[cfg(feature = "creator")]
                 if opts.crunchr_auto {
                     // Marker the Crunchr plugin can grep for in lieu of tandem config.
                     let _ = std::fs::write(ep_dir.join(".crunchr-auto"), b"");

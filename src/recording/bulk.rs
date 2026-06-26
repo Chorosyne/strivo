@@ -316,6 +316,7 @@ async fn run_channel_pull(
         format: resolved,
         cookies_path,
         force: false,
+        #[cfg(feature = "creator")]
         crunchr_auto: config.crunchr.enabled,
     };
 

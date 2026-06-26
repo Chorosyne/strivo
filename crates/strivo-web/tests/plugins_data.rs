@@ -1,3 +1,5 @@
+// Creator Edition only: exercises the first-party plugin read path.
+#![cfg(feature = "creator")]
 //! Integration coverage for the read path behind `/api/v1/plugins/*`.
 //!
 //! The route handlers are thin: open the plugin's SQLite DB read-only and call

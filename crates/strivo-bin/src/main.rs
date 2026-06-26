@@ -6,7 +6,10 @@
 
 mod cli;
 
-use strivo_core::{config, daemon, ipc, plugin, recording};
+use strivo_core::{config, daemon, ipc, recording};
+// `plugin` is only referenced by the Creator Edition plugin registration.
+#[cfg(feature = "creator")]
+use strivo_core::plugin;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
@@ -40,6 +43,7 @@ async fn run_default_webui(args: cli::Args) -> Result<()> {
         tokio::spawn(async move {
             #[allow(unused_mut)]
             let mut host = strivo_core::daemon::DaemonPluginHost::new();
+            #[cfg(feature = "creator")]
             register_first_party_plugins(&mut host.registry);
             if let Err(e) = daemon::run_with_plugins(host).await {
                 tracing::error!("daemon exited: {e}");
@@ -66,7 +70,9 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
             // Plugins boot inside the daemon process: init_all opens
             // each plugin's SQLite DB, status_line contributions and
             // PluginRpc dispatch hang off here.
+            #[allow(unused_mut)]
             let mut host = strivo_core::daemon::DaemonPluginHost::new();
+            #[cfg(feature = "creator")]
             register_first_party_plugins(&mut host.registry);
             daemon::run_with_plugins(host).await
         }
@@ -224,12 +230,18 @@ async fn handle_pull(
     }
     println!("Discovered {} VOD(s).", vods.len());
 
+    // `--no-transcribe` only gates the Crunchr tandem hook, which exists in
+    // Creator Edition; in the pure-PVR build the flag is accepted but inert.
+    #[cfg(not(feature = "creator"))]
+    let _ = no_transcribe;
+
     let opts = CatalogPullOptions {
         root: config.recording_dir.clone(),
         channel_name: channel_id.to_string(),
         format: resolved,
         cookies_path,
         force,
+        #[cfg(feature = "creator")]
         crunchr_auto: !no_transcribe && config.crunchr.enabled,
     };
 
@@ -1180,11 +1192,10 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
-/// Register every first-party plugin into the daemon's registry. Was
-/// feature-gated while strivo-plugins lived in a private submodule;
-/// the gate was removed when the plugins were folded into the
-/// workspace, and the function shrank to this list when the TUI host
-/// retired.
+/// Register every first-party plugin into the daemon's registry. Creator
+/// Edition only — the pure-PVR build ships no plugins, so the daemon runs
+/// with an empty registry and the plugin RPC/event paths are no-ops.
+#[cfg(feature = "creator")]
 fn register_first_party_plugins(registry: &mut plugin::registry::PluginRegistry) {
     registry.register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
     registry.register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));

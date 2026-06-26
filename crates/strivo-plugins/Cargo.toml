@@ -25,7 +25,9 @@ semantic-search = []
 [dependencies]
 # Host types + Plugin trait. Was a `git = "..."` ref while strivo-plugins
 # lived in its own repo; folded into the workspace, this is a path dep.
-strivo-core = { path = "../.." }
+# The plugin host is the Creator Edition surface, so it always pulls in
+# core's `creator` feature (the Crunchr/Archiver config types live there).
+strivo-core = { path = "../..", features = ["creator"] }
 
 # Shared with host
 tokio = { version = "1", features = ["full"] }

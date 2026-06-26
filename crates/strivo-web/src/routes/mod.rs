@@ -4,9 +4,10 @@ pub mod events;
 pub mod licence;
 pub mod login;
 // First-party plugin routes (Crunchr/Archiver/Insights/Viewguard + the
-// recording captions VTT endpoint). The `pro` cargo feature gate was
-// removed when the plugins were folded into the workspace; the licence
-// runtime gate still filters locked Pro plugins for non-entitled clients.
+// recording captions VTT endpoint) — Creator Edition only. The licence
+// runtime gate still filters locked Pro plugins for non-entitled clients
+// within the edition.
+#[cfg(feature = "creator")]
 pub mod plugins;
 // Retained but unmounted: the sole recording file-serving path (download/
 // play) plus the path-containment guard + tests from roadmap item 2. The

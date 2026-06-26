@@ -10,44 +10,87 @@ rust-version = "1.75"
 [lib]
 path = "src/lib.rs"
 
+[features]
+# Creator Edition: mounts the plugin/tooling routes (`routes::plugins`, plus
+# the marketplace/pipelines/capabilities endpoints in `routes::api`) and pulls
+# in every first-party tool crate the web UI surfaces. The default build is a
+# pure PVR web UI — recordings, monitor, schedule, library, settings.
+creator = [
+    "strivo-core/creator",
+    "dep:strivo-plugins",
+    "dep:strivo-chapters",
+    "dep:strivo-cuepoints",
+    "dep:strivo-clipper",
+    "dep:strivo-thumbnails",
+    "dep:strivo-insights-compare",
+    "dep:strivo-captions",
+    "dep:strivo-multitrack",
+    "dep:strivo-brandsafe",
+    "dep:strivo-reuse",
+    "dep:strivo-casebook",
+    "dep:strivo-heatmap",
+    "dep:strivo-editor",
+    "dep:strivo-viewguard-trend",
+    "dep:strivo-pipelines-dag",
+    "dep:strivo-marketplace",
+    "dep:strivo-broll",
+    "dep:strivo-chat-density",
+    "dep:strivo-deadair",
+    "dep:strivo-branding",
+    "dep:strivo-multistream",
+    "dep:strivo-chat",
+    "dep:strivo-loudness",
+    "dep:strivo-structure",
+    "dep:strivo-automation",
+    "dep:strivo-scenes",
+    "dep:strivo-schedule-optimizer",
+    "dep:strivo-beat-detect",
+    "dep:strivo-vad",
+    "dep:strivo-sidechain",
+    "dep:strivo-insert-fx",
+    "dep:strivo-pitch",
+    "dep:strivo-dataviz",
+]
+
 [dependencies]
 strivo-core = { path = "../.." }
-# First-party plugins: the web UI reads their on-disk SQLite DBs (read-only)
-# to surface transcripts, catalogs, verdicts, and insights. Actions still go
-# through the daemon over IPC (PluginRpc verb dispatch).
-strivo-plugins = { path = "../strivo-plugins" }
-strivo-chapters = { path = "../chapters" }
-strivo-cuepoints = { path = "../cuepoints" }
-strivo-clipper = { path = "../clipper" }
-strivo-thumbnails = { path = "../thumbnails" }
-strivo-insights-compare = { path = "../insights-compare" }
-strivo-captions = { path = "../captions" }
-strivo-multitrack = { path = "../multitrack" }
-strivo-brandsafe = { path = "../brandsafe" }
-strivo-reuse = { path = "../reuse" }
-strivo-casebook = { path = "../casebook" }
-strivo-heatmap = { path = "../heatmap" }
-strivo-editor = { path = "../editor" }
-strivo-viewguard-trend = { path = "../viewguard-trend" }
-strivo-pipelines-dag = { path = "../pipelines-dag" }
-strivo-marketplace = { path = "../marketplace" }
-strivo-broll = { path = "../broll" }
-strivo-chat-density = { path = "../chat-density" }
-strivo-deadair = { path = "../deadair" }
-strivo-branding = { path = "../branding" }
-strivo-multistream = { path = "../multistream" }
-strivo-chat = { path = "../chat" }
-strivo-loudness = { path = "../loudness" }
-strivo-structure = { path = "../structure" }
-strivo-automation = { path = "../automation" }
-strivo-scenes = { path = "../scenes" }
-strivo-schedule-optimizer = { path = "../schedule-optimizer" }
-strivo-beat-detect = { path = "../beat-detect" }
-strivo-vad = { path = "../vad" }
-strivo-sidechain = { path = "../sidechain" }
-strivo-insert-fx = { path = "../insert-fx" }
-strivo-pitch = { path = "../pitch" }
-strivo-dataviz = { path = "../dataviz" }
+# First-party plugins + tool crates: the web UI reads their on-disk SQLite DBs
+# (read-only) to surface transcripts, catalogs, verdicts, and insights, and
+# dispatches actions through the daemon over IPC (PluginRpc verb dispatch).
+# All gated behind the `creator` feature; absent in the pure-PVR build.
+strivo-plugins = { path = "../strivo-plugins", optional = true }
+strivo-chapters = { path = "../chapters", optional = true }
+strivo-cuepoints = { path = "../cuepoints", optional = true }
+strivo-clipper = { path = "../clipper", optional = true }
+strivo-thumbnails = { path = "../thumbnails", optional = true }
+strivo-insights-compare = { path = "../insights-compare", optional = true }
+strivo-captions = { path = "../captions", optional = true }
+strivo-multitrack = { path = "../multitrack", optional = true }
+strivo-brandsafe = { path = "../brandsafe", optional = true }
+strivo-reuse = { path = "../reuse", optional = true }
+strivo-casebook = { path = "../casebook", optional = true }
+strivo-heatmap = { path = "../heatmap", optional = true }
+strivo-editor = { path = "../editor", optional = true }
+strivo-viewguard-trend = { path = "../viewguard-trend", optional = true }
+strivo-pipelines-dag = { path = "../pipelines-dag", optional = true }
+strivo-marketplace = { path = "../marketplace", optional = true }
+strivo-broll = { path = "../broll", optional = true }
+strivo-chat-density = { path = "../chat-density", optional = true }
+strivo-deadair = { path = "../deadair", optional = true }
+strivo-branding = { path = "../branding", optional = true }
+strivo-multistream = { path = "../multistream", optional = true }
+strivo-chat = { path = "../chat", optional = true }
+strivo-loudness = { path = "../loudness", optional = true }
+strivo-structure = { path = "../structure", optional = true }
+strivo-automation = { path = "../automation", optional = true }
+strivo-scenes = { path = "../scenes", optional = true }
+strivo-schedule-optimizer = { path = "../schedule-optimizer", optional = true }
+strivo-beat-detect = { path = "../beat-detect", optional = true }
+strivo-vad = { path = "../vad", optional = true }
+strivo-sidechain = { path = "../sidechain", optional = true }
+strivo-insert-fx = { path = "../insert-fx", optional = true }
+strivo-pitch = { path = "../pitch", optional = true }
+strivo-dataviz = { path = "../dataviz", optional = true }
 rusqlite = { version = "0.33", features = ["bundled"] }
 
 # HTTP

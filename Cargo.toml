@@ -1,5 +1,11 @@
 [workspace]
 members = [".", "crates/strivo-bin", "crates/strivo-web", "crates/strivo-plugins", "crates/chapters", "crates/cuepoints", "crates/clipper", "crates/thumbnails", "crates/insights-compare", "crates/captions", "crates/multitrack", "crates/brandsafe", "crates/reuse", "crates/casebook", "crates/heatmap", "crates/editor", "crates/viewguard-trend", "crates/pipelines-dag", "crates/marketplace", "crates/broll", "crates/chat-density", "crates/deadair", "crates/branding", "crates/multistream", "crates/chat", "crates/loudness", "crates/structure", "crates/automation", "crates/scenes", "crates/schedule-optimizer", "crates/beat-detect", "crates/vad", "crates/sidechain", "crates/insert-fx", "crates/pitch", "crates/ab-render", "crates/submix", "crates/dataviz"]
+# Plain `cargo build`/`test` (no -p, no --workspace) builds the pure Live
+# Stream PVR: core + the `strivo` binary + the web UI. The Creator Edition
+# crates (strivo-plugins + the tool crates) stay workspace members so
+# `cargo build -p strivo-bin --features creator` and `--workspace` reach them,
+# but they are excluded from the default set.
+default-members = [".", "crates/strivo-bin", "crates/strivo-web"]
 resolver = "2"
 
 [package]
@@ -18,6 +24,13 @@ rust-version = "1.75"
 
 [lib]
 path = "src/lib.rs"
+
+[features]
+# Enables the "Creator Edition" surface in the core library: the Crunchr
+# (transcription) and Archiver config sections, plus the `crunchr_auto`
+# tandem handshake on the back-catalog pull path. Default builds are a pure
+# Live Stream PVR with zero creator config surface. See ROADMAP.md.
+creator = []
 
 [dependencies]
 # Async

@@ -17,9 +17,16 @@ rust-version = "1.75"
 name = "strivo"
 path = "src/main.rs"
 
+[features]
+# Creator Edition build. Registers the first-party plugins (Crunchr, Archiver,
+# Insights, Editor, Viewguard) into the daemon and turns on the creator web
+# routes + core config surface. The default `cargo build` is a pure Live Stream
+# PVR: `cargo build -p strivo-bin --features creator` builds the full edition.
+creator = ["dep:strivo-plugins", "strivo-web/creator", "strivo-core/creator"]
+
 [dependencies]
 strivo-core = { path = "../.." }
-strivo-plugins = { path = "../strivo-plugins" }
+strivo-plugins = { path = "../strivo-plugins", optional = true }
 strivo-web = { path = "../strivo-web" }
 
 tokio = { version = "1", features = ["full"] }

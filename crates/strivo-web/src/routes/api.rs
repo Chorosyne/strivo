@@ -25,6 +25,9 @@ use serde_json::json;
 use strivo_core::ipc::{BulkAction, ClientMessage, ServerMessage};
 use strivo_core::platform::PlatformKind;
 use strivo_core::recording::RecordingCommand;
+// Bare `Problem` is used only by the creator-gated pipelines handlers; PVR
+// handlers reference `crate::problem::Problem` by full path.
+#[cfg(feature = "creator")]
 use crate::problem::Problem;
 use uuid::Uuid;
 
@@ -376,7 +379,8 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
             // Strip secrets — never expose client_secret / cookies_path.
             // We surface only the existence (`configured: bool`) of each
             // platform, not their credential payloads.
-            let body = json!({
+            #[allow(unused_mut)]
+            let mut body = json!({
                 "recording_dir": cfg.recording_dir,
                 "poll_interval_secs": cfg.poll_interval_secs,
                 "recording": cfg.recording,
@@ -384,7 +388,6 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
                 "auto_record_channels": cfg.auto_record_channels,
                 "capture_profiles": cfg.capture_profiles,
                 "schedule": cfg.schedule,
-                "archiver": cfg.archiver,
                 "notifications": cfg.notifications,
                 "monitor_limits": cfg.monitor_limits,
                 "plugin_toggles": cfg.plugin_toggles,
@@ -392,6 +395,14 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
                 "youtube_configured": cfg.youtube.is_some(),
                 "patreon_configured": cfg.patreon.is_some(),
             });
+            // Creator Edition surfaces the Archiver config section.
+            #[cfg(feature = "creator")]
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "archiver".into(),
+                    serde_json::to_value(&cfg.archiver).unwrap_or(serde_json::Value::Null),
+                );
+            }
             Json(body).into_response()
         }
         Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
@@ -1078,6 +1089,7 @@ async fn update_setting(
         "recording.auto_trim_ads" => take_bool(&body.value).map(|v| cfg.recording.auto_trim_ads = v),
         "ui.reduce_motion" => take_bool(&body.value).map(|v| cfg.ui.reduce_motion = v),
         "ui.verbose_status" => take_bool(&body.value).map(|v| cfg.ui.verbose_status = v),
+        #[cfg(feature = "creator")]
         "archiver.enabled" => take_bool(&body.value).map(|v| cfg.archiver.enabled = v),
         // Notifications — every flag is a bool the daemon's notify-rust
         // integration consults before firing a banner.
@@ -1137,6 +1149,7 @@ async fn update_setting(
                 Err("disk_budget_reserved_gb must be 0..=100000".into())
             }
         }),
+        #[cfg(feature = "creator")]
         "archiver.concurrent_fragments" => {
             // Clamp to 1..=16 — yt-dlp accepts more but past 16 you're
             // just thrashing the platform's rate limiter.
@@ -1154,9 +1167,11 @@ async fn update_setting(
         }),
         "recording.container" => take_str_in(&body.value, &["matroska", "mp4", "webm"])
             .map(|s| cfg.recording.format.container = Some(s)),
+        #[cfg(feature = "creator")]
         "archiver.archive_dir" => take_nonempty_str(&body.value).map(|s| {
             cfg.archiver.archive_dir = std::path::PathBuf::from(s);
         }),
+        #[cfg(feature = "creator")]
         "archiver.format" => take_nonempty_str(&body.value).map(|s| {
             cfg.archiver.format = s;
         }),
@@ -1722,11 +1737,13 @@ async fn put_auto_record(
         .into_response()
 }
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Deserialize)]
 struct TandemPayload {
     enabled: bool,
 }
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Deserialize)]
 struct TandemPlaylistsPayload {
     /// Per-key entries the user wants captured. Empty string at the end
@@ -1738,6 +1755,7 @@ struct TandemPlaylistsPayload {
 /// archiver tandem mode for the given Platform:channel_id key. When
 /// enabled, the daemon auto-downloads new uploads as the monitor
 /// discovers them.
+#[cfg(feature = "creator")]
 async fn put_archiver_tandem(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -1768,6 +1786,7 @@ async fn put_archiver_tandem(
 /// playlist allow-list for a YouTube channel under archiver tandem.
 /// Empty list = whole channel. Channel-level archiver tandem is
 /// independent; this just narrows the scope.
+#[cfg(feature = "creator")]
 async fn put_archiver_playlists(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -1831,28 +1850,34 @@ async fn monitor_state(
             })
         })
         .collect();
-    // Pivot tandem_playlists from "Key/Playlist" back to per-channel
-    // lists so the SPA can render them grouped.
-    let mut tandem: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-    for raw in &cfg.archiver.tandem_playlists {
-        if let Some((key, pl)) = raw.split_once('/') {
-            tandem.entry(key.to_string()).or_default().push(pl.to_string());
+    // Archiver tandem downloads are a Creator Edition surface; the PVR build
+    // reports an empty list so the SPA's Monitor page renders identically.
+    #[cfg(feature = "creator")]
+    let auto_download: Vec<serde_json::Value> = {
+        // Pivot tandem_playlists from "Key/Playlist" back to per-channel
+        // lists so the SPA can render them grouped.
+        let mut tandem: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for raw in &cfg.archiver.tandem_playlists {
+            if let Some((key, pl)) = raw.split_once('/') {
+                tandem.entry(key.to_string()).or_default().push(pl.to_string());
+            }
         }
-    }
-    let auto_download: Vec<serde_json::Value> = cfg
-        .archiver
-        .tandem_channels
-        .iter()
-        .map(|key| {
-            let (platform, channel_id) = key.split_once(':').unwrap_or((key.as_str(), ""));
-            json!({
-                "platform": platform,
-                "channel_id": channel_id,
-                "key": key,
-                "playlists": tandem.get(key).cloned().unwrap_or_default(),
+        cfg.archiver
+            .tandem_channels
+            .iter()
+            .map(|key| {
+                let (platform, channel_id) = key.split_once(':').unwrap_or((key.as_str(), ""));
+                json!({
+                    "platform": platform,
+                    "channel_id": channel_id,
+                    "key": key,
+                    "playlists": tandem.get(key).cloned().unwrap_or_default(),
+                })
             })
-        })
-        .collect();
+            .collect()
+    };
+    #[cfg(not(feature = "creator"))]
+    let auto_download: Vec<serde_json::Value> = Vec::new();
     Json(json!({
         "auto_record": auto_record,
         "auto_download": auto_download,
@@ -1866,6 +1891,7 @@ async fn monitor_state(
 /// daemon exposes the registry over IPC we'll switch to that. The
 /// SPA renders this as the cross-plugin pipeline graph and lets
 /// users discover "who does what".
+#[cfg(feature = "creator")]
 async fn plugin_capabilities() -> impl IntoResponse {
     use strivo_core::plugin::capability as cap;
     // (capability, [(plugin, status)]) where status is "available"
@@ -1938,6 +1964,7 @@ async fn plugin_capabilities() -> impl IntoResponse {
 
 // ── W2: plugin RPC ───────────────────────────────────────────────────
 
+#[cfg(feature = "creator")]
 #[derive(Debug, Deserialize, Default)]
 struct PluginRpcPayload {
     #[serde(default)]
@@ -1952,6 +1979,7 @@ struct PluginRpcPayload {
 /// IPC (see `daemon::run_with_plugins`), spawning any returned SpawnTask
 /// work headless. The read side of the webui (`routes::plugins`) reads
 /// each plugin's SQLite output directly to render results.
+#[cfg(feature = "creator")]
 async fn plugin_rpc(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -2187,6 +2215,7 @@ async fn patreon_pull(
 /// Public surface (not Pro-gated) so free builds preview the upgrade
 /// path. Installed detection plugs in when the install endpoint lands;
 /// today it always reports `false`.
+#[cfg(feature = "creator")]
 async fn marketplace_catalog() -> impl IntoResponse {
     let mut catalog = strivo_marketplace::default_catalog();
     // Strip any catalog entries that fail validation — better to hide
@@ -2202,11 +2231,13 @@ async fn marketplace_catalog() -> impl IntoResponse {
 /// DAG. Public surface (not Pro-gated) so the SPA's Pipelines page
 /// renders even on free builds, where it doubles as a roadmap teaser
 /// alongside the upgrade card.
+#[cfg(feature = "creator")]
 fn chains_dir() -> std::path::PathBuf {
     strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("recipe-chains")
 }
+#[cfg(feature = "creator")]
 fn chain_path(id: &str) -> Option<std::path::PathBuf> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return None;
@@ -2215,6 +2246,7 @@ fn chain_path(id: &str) -> Option<std::path::PathBuf> {
 }
 
 /// `GET /api/v1/pipelines/chains` — every persisted recipe chain.
+#[cfg(feature = "creator")]
 async fn pipelines_chains_list() -> impl IntoResponse {
     let dir = chains_dir();
     let mut out: Vec<strivo_pipelines_dag::RecipeChain> = vec![];
@@ -2231,6 +2263,7 @@ async fn pipelines_chains_list() -> impl IntoResponse {
 }
 
 /// `POST /api/v1/pipelines/chains` — upsert a chain by `id`.
+#[cfg(feature = "creator")]
 async fn pipelines_chains_save(
     Json(body): Json<strivo_pipelines_dag::RecipeChain>,
 ) -> impl IntoResponse {
@@ -2254,6 +2287,7 @@ async fn pipelines_chains_save(
 }
 
 /// `DELETE /api/v1/pipelines/chains/<id>` — drop a chain.
+#[cfg(feature = "creator")]
 async fn pipelines_chains_delete(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
@@ -2269,6 +2303,7 @@ async fn pipelines_chains_delete(
     }
 }
 
+#[cfg(feature = "creator")]
 async fn pipelines_dag() -> impl IntoResponse {
     let pipelines = strivo_pipelines_dag::default_pipelines();
     // Bundle each pipeline with its topological order so the SPA can
@@ -2291,11 +2326,8 @@ async fn pipelines_dag() -> impl IntoResponse {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/api/v1/pipelines/dag", get(pipelines_dag))
-        .route("/api/v1/pipelines/chains", get(pipelines_chains_list).post(pipelines_chains_save))
-        .route("/api/v1/pipelines/chains/{id}", axum::routing::delete(pipelines_chains_delete))
-        .route("/api/v1/marketplace/catalog", get(marketplace_catalog))
+    #[allow(unused_mut)]
+    let mut r = Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/health/checks", get(health_checks))
         .route("/api/v1/channels", get(channels))
@@ -2332,17 +2364,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/channels/{channel_key}/auto_record",
             put(put_auto_record),
         )
-        .route(
-            "/api/v1/channels/{channel_key}/archiver_tandem",
-            put(put_archiver_tandem),
-        )
-        .route(
-            "/api/v1/channels/{channel_key}/archiver_playlists",
-            put(put_archiver_playlists),
-        )
         .route("/api/v1/monitor", get(monitor_state))
-        .route("/api/v1/plugins/capabilities", get(plugin_capabilities))
-        .route("/api/v1/plugins/{plugin}/{verb}", post(plugin_rpc))
         // W5: stream-recorder surfaces
         .route("/api/v1/storage", get(storage))
         .route("/api/v1/gantt", get(gantt))
@@ -2360,7 +2382,37 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/patreon/pull", post(patreon_pull))
         .route("/api/v1/vods/download", post(vod_download))
         // #19: Add-Channel wizard — resolve a name/id to a channel.
-        .route("/api/v1/channels/resolve", post(resolve_channel))
+        .route("/api/v1/channels/resolve", post(resolve_channel));
+
+    // Creator Edition routes: plugin/tooling surfaces (archiver tandem,
+    // pipelines, marketplace, plugin capabilities + RPC dispatch). Omitted
+    // entirely from the pure-PVR build.
+    #[cfg(feature = "creator")]
+    {
+        r = r
+            .route("/api/v1/pipelines/dag", get(pipelines_dag))
+            .route(
+                "/api/v1/pipelines/chains",
+                get(pipelines_chains_list).post(pipelines_chains_save),
+            )
+            .route(
+                "/api/v1/pipelines/chains/{id}",
+                axum::routing::delete(pipelines_chains_delete),
+            )
+            .route("/api/v1/marketplace/catalog", get(marketplace_catalog))
+            .route(
+                "/api/v1/channels/{channel_key}/archiver_tandem",
+                put(put_archiver_tandem),
+            )
+            .route(
+                "/api/v1/channels/{channel_key}/archiver_playlists",
+                put(put_archiver_playlists),
+            )
+            .route("/api/v1/plugins/capabilities", get(plugin_capabilities))
+            .route("/api/v1/plugins/{plugin}/{verb}", post(plugin_rpc));
+    }
+
+    r
 }
 
 #[cfg(test)]
