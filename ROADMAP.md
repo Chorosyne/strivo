@@ -241,3 +241,32 @@ template (highlight/retention rollups + publish-ready clips).
 - A PVR slice is: change + tests + daemon/web wiring + SPA surface + E2E verify.
   A Creator slice adds: signal-store/contract change (where relevant) + pure-data
   crate + capability/marketplace registration. The wiring step separates 🟡 from ✅.
+
+---
+
+## revoy ledger block
+
+Machine-readable current phase for the revoy cross-project ledger. Tracks the
+outstanding (⬜) items of the near-term PVR phase (the product comes first); roll
+to the next phase when these land. Keep in sync with the tables above.
+
+<!-- revoy:begin -->
+```toml
+phase = "PVR near-term (product-first, v0.5.x)"
+
+[[todo]]
+line = "Quality profiles (tiered): grow CaptureProfile beyond boolean transcode + container"
+difficulty = 45
+priority = "MED"
+
+[[todo]]
+line = "Filename-token browser + JSON channel import/export (competitor-expected)"
+difficulty = 35
+priority = "MED"
+
+[[todo]]
+line = "Build-time SPA split to drop dead creator JS (~30+ unused API methods) from the PVR build"
+difficulty = 35
+priority = "LOW"
+```
+<!-- revoy:end -->
