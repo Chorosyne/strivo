@@ -44,6 +44,7 @@ struct DaemonState {
 impl DaemonState {
     fn snapshot(&self) -> ServerMessage {
         ServerMessage::StateSnapshot {
+            version: crate::ipc::IPC_PROTOCOL_VERSION,
             channels: self.channels.clone(),
             recordings: self.recordings.clone(),
             twitch_connected: self.twitch_connected,
@@ -728,6 +729,7 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                                             twitch.clone(),
                                             recording_tx.clone(),
                                             config.clone(),
+                                            cancel.clone(),
                                         );
                                     }
                                 }
@@ -842,7 +844,14 @@ async fn handle_client(
         };
 
         match msg {
-            ClientMessage::Hello => {
+            ClientMessage::Hello { version } => {
+                if version != ipc::IPC_PROTOCOL_VERSION {
+                    tracing::warn!(
+                        client_version = version,
+                        daemon_version = ipc::IPC_PROTOCOL_VERSION,
+                        "IPC protocol version mismatch — client and daemon may be mismatched"
+                    );
+                }
                 // Send the state snapshot through the writer task. (The
                 // snapshot is captured at connect time; good enough — the
                 // client also receives live events thereafter.)
@@ -1128,6 +1137,13 @@ async fn handle_client(
                     "daemon: dispatched plugin verb"
                 );
                 process_daemon_plugin_actions(actions, &registry, &event_tx);
+            }
+            ClientMessage::Unknown => {
+                // Forward-compatibility: a message variant added in a newer
+                // client is silently ignored rather than crashing the daemon.
+                tracing::debug!(
+                    "received unknown IPC message variant — ignored (protocol forward-compat)"
+                );
             }
         }
     }

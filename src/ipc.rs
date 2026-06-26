@@ -8,11 +8,23 @@ use crate::platform::{ChannelEntry, PlatformKind};
 use crate::recording::job::RecordingJob;
 use crate::recording::RecordingCommand;
 
+/// Wire protocol version.  Bump when a backward-incompatible change is made;
+/// peers log a warning when the versions differ but continue to operate.
+pub const IPC_PROTOCOL_VERSION: u32 = 1;
+
 /// Messages sent from TUI client to daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
-    /// Request full state snapshot
-    Hello,
+    /// Request full state snapshot, with protocol version for the handshake.
+    /// Older peers that still send the bare `"Hello"` string (unit-variant
+    /// wire form) are caught by the `Unknown` catch-all below; the daemon
+    /// logs the mismatch and continues.
+    Hello {
+        /// Protocol version sent by the client.  Old clients (pre-versioning)
+        /// omit this field; `#[serde(default)]` gives them version 0.
+        #[serde(default)]
+        version: u32,
+    },
     /// Forward a recording command
     Recording(RecordingCommand),
     /// Trigger immediate channel poll
@@ -123,6 +135,11 @@ pub enum ClientMessage {
         platform: PlatformKind,
         query: String,
     },
+    /// Forward-compatibility catch-all: an unknown variant from a newer peer
+    /// deserializes here so the daemon doesn't hard-error.  Handled as a
+    /// logged no-op.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +153,10 @@ pub enum BulkAction {
 pub enum ServerMessage {
     /// Full state snapshot (sent in response to Hello)
     StateSnapshot {
+        /// Daemon's protocol version.  Old daemons (pre-versioning) omit this
+        /// field; `#[serde(default)]` gives them version 0.
+        #[serde(default)]
+        version: u32,
         channels: Vec<ChannelEntry>,
         recordings: HashMap<Uuid, RecordingJob>,
         twitch_connected: bool,
@@ -153,6 +174,10 @@ pub enum ServerMessage {
     },
     /// Incremental update event
     Event(DaemonEvent),
+    /// Forward-compatibility catch-all: an unknown variant from a newer daemon
+    /// deserializes here instead of hard-erroring the client.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Socket path for the daemon
@@ -224,5 +249,76 @@ pub fn sweep_stale_files() {
     if stale_pid {
         let _ = std::fs::remove_file(&pid_file);
         let _ = std::fs::remove_file(&sock_file);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_client_message_deserializes_to_unknown() {
+        // A new *unit* variant from a future release must not crash an older
+        // peer.  In serde's externally-tagged JSON encoding, a unit variant
+        // is a bare JSON string (`"PeerReady"`), not a map.  The
+        // `#[serde(other)]` catch-all captures this case; struct variants
+        // with a non-null payload are not caught and are an inherent
+        // limitation of externally-tagged enums.
+        let json = r#""FutureUnitVariant""#;
+        let msg: ClientMessage =
+            serde_json::from_str(json).expect("should parse unknown unit variant as Unknown");
+        assert!(
+            matches!(msg, ClientMessage::Unknown),
+            "unexpected variant: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_server_message_deserializes_to_unknown() {
+        // Same as above for ServerMessage.
+        let json = r#""FutureUnitVariant""#;
+        let msg: ServerMessage =
+            serde_json::from_str(json).expect("should parse unknown unit variant as Unknown");
+        assert!(
+            matches!(msg, ServerMessage::Unknown),
+            "unexpected variant: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn hello_version_roundtrip() {
+        let msg = ClientMessage::Hello {
+            version: IPC_PROTOCOL_VERSION,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let decoded: ClientMessage = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            matches!(decoded, ClientMessage::Hello { version: v } if v == IPC_PROTOCOL_VERSION),
+            "decoded: {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn hello_missing_version_defaults_to_zero() {
+        // An old client sends {"Hello":{}} with no version field; the new
+        // daemon must parse this as version 0.
+        let json = r#"{"Hello":{}}"#;
+        let msg: ClientMessage =
+            serde_json::from_str(json).expect("struct variant with no fields");
+        assert!(
+            matches!(msg, ClientMessage::Hello { version: 0 }),
+            "expected Hello {{ version: 0 }}, got: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn state_snapshot_missing_version_defaults_to_zero() {
+        // An old daemon omits the version field; the new client parses it as 0.
+        let json = r#"{"StateSnapshot":{"version":0,"channels":[],"recordings":{},"twitch_connected":false,"youtube_connected":false,"patreon_connected":false,"pending_auth":null,"patreon_creators":[],"patreon_posts":[]}}"#;
+        let msg: ServerMessage = serde_json::from_str(json).expect("deserialize snapshot");
+        assert!(
+            matches!(msg, ServerMessage::StateSnapshot { version: 0, .. }),
+            "expected version 0, got: {msg:?}"
+        );
     }
 }

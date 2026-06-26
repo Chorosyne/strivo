@@ -61,7 +61,9 @@ impl IpcClient {
             .await
             .context("connect to daemon socket")?;
         let (reader, mut writer) = stream.into_split();
-        let payload = ipc::encode_message(&ClientMessage::Hello)?;
+        let payload = ipc::encode_message(&ClientMessage::Hello {
+            version: ipc::IPC_PROTOCOL_VERSION,
+        })?;
         writer.write_all(payload.as_bytes()).await?;
         writer.flush().await?;
 
@@ -86,7 +88,9 @@ impl IpcClient {
                 .await
                 .context("connect to daemon socket for /events")?;
             let (reader, mut writer) = stream.into_split();
-            let payload = ipc::encode_message(&ClientMessage::Hello)?;
+            let payload = ipc::encode_message(&ClientMessage::Hello {
+                version: ipc::IPC_PROTOCOL_VERSION,
+            })?;
             writer.write_all(payload.as_bytes()).await?;
             writer.flush().await?;
 

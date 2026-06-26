@@ -17,6 +17,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 fn snapshot_stub() -> ServerMessage {
     ServerMessage::StateSnapshot {
+        version: ipc::IPC_PROTOCOL_VERSION,
         channels: Vec::new(),
         recordings: std::collections::HashMap::new(),
         twitch_connected: false,
@@ -42,7 +43,7 @@ async fn client_hello_receives_state_snapshot() {
         let mut line = String::new();
         buf.read_line(&mut line).await.unwrap();
         let msg: ClientMessage = serde_json::from_str(line.trim()).unwrap();
-        assert!(matches!(msg, ClientMessage::Hello));
+        assert!(matches!(msg, ClientMessage::Hello { .. }));
 
         let encoded = ipc::encode_message(&snapshot_stub()).unwrap();
         writer.write_all(encoded.as_bytes()).await.unwrap();
@@ -61,7 +62,10 @@ async fn client_hello_receives_state_snapshot() {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut buf = BufReader::new(reader);
 
-    let hello = ipc::encode_message(&ClientMessage::Hello).unwrap();
+    let hello = ipc::encode_message(&ClientMessage::Hello {
+        version: ipc::IPC_PROTOCOL_VERSION,
+    })
+    .unwrap();
     writer.write_all(hello.as_bytes()).await.unwrap();
 
     let mut line = String::new();
