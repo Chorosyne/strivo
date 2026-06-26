@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::DaemonEvent;
 use crate::config::{AppConfig, RecordingFormat};
+use crate::events::DaemonEvent;
 use crate::platform::{Platform, PlatformKind, VodEntry};
 use crate::recording::catalog::{self, CatalogProgress, CatalogPullOptions};
 use crate::recording::persist::PersistDb;
@@ -106,10 +106,13 @@ pub fn spawn(
                     let cfg = config.clone();
                     let etx = event_tx.clone();
                     tokio::spawn(async move {
-                        let playlists = fetch_playlists(&cfg, &channel_id).await.unwrap_or_else(|e| {
-                            tracing::warn!("bulk-dl: fetch_playlists failed: {e:#}");
-                            Vec::new()
-                        });
+                        let playlists =
+                            fetch_playlists(&cfg, &channel_id)
+                                .await
+                                .unwrap_or_else(|e| {
+                                    tracing::warn!("bulk-dl: fetch_playlists failed: {e:#}");
+                                    Vec::new()
+                                });
                         let _ = etx.send(DaemonEvent::PlaylistList {
                             channel_id,
                             playlists,
@@ -129,10 +132,7 @@ pub fn spawn(
                                 tracing::warn!("bulk-dl: fetch_recent_vods failed: {e:#}");
                                 Vec::new()
                             });
-                        let _ = etx.send(DaemonEvent::ChannelVods {
-                            channel_id,
-                            vods,
-                        });
+                        let _ = etx.send(DaemonEvent::ChannelVods { channel_id, vods });
                     });
                 }
                 BulkCommand::ResolveChannel { platform, query } => {
@@ -227,9 +227,7 @@ async fn resolve_channel(
                 .with_context(|| format!("no Twitch channel for login '{query}'"))?;
             Ok((id, display_name))
         }
-        PlatformKind::YouTube | PlatformKind::Patreon => {
-            Ok((query.to_string(), query.to_string()))
-        }
+        PlatformKind::YouTube | PlatformKind::Patreon => Ok((query.to_string(), query.to_string())),
     }
 }
 
@@ -318,6 +316,8 @@ async fn run_channel_pull(
         force: false,
         #[cfg(feature = "creator")]
         crunchr_auto: config.crunchr.enabled,
+        #[cfg(not(feature = "creator"))]
+        crunchr_auto: false,
     };
 
     let db_path = AppConfig::data_dir().join("jobs.db");

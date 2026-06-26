@@ -88,9 +88,11 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
         Command::Import { source } => handle_import(source, config_path),
         Command::Merge { output, sources } => handle_merge(output, sources),
         Command::Thumbnail { file, seek } => handle_thumbnail(file, *seek).await,
-        Command::TwitchRewind { channel, sample_secs, out } => {
-            handle_twitch_rewind(channel, *sample_secs, out.clone(), config_path).await
-        }
+        Command::TwitchRewind {
+            channel,
+            sample_secs,
+            out,
+        } => handle_twitch_rewind(channel, *sample_secs, out.clone(), config_path).await,
         Command::Completions { shell } => handle_completions(*shell),
         Command::Man => handle_man(),
         Command::Pull {
@@ -243,6 +245,8 @@ async fn handle_pull(
         force,
         #[cfg(feature = "creator")]
         crunchr_auto: !no_transcribe && config.crunchr.enabled,
+        #[cfg(not(feature = "creator"))]
+        crunchr_auto: false,
     };
 
     let report = catalog::run_pull(&db, vods, &opts, None, None).await?;
@@ -272,7 +276,6 @@ fn handle_man() -> Result<()> {
     man.render(&mut std::io::stdout())?;
     Ok(())
 }
-
 
 fn handle_import(source: &cli::ImportSource, config_path: Option<&std::path::Path>) -> Result<()> {
     use strivo_core::config::import::{parse_obs_export, parse_streamlink_lines, Candidate};
@@ -384,10 +387,12 @@ async fn handle_twitch_rewind(
     println!("master_url = {}", stream.master_url);
 
     if let Some(secs) = sample_secs {
-        let out_path = out.unwrap_or_else(|| {
-            std::path::PathBuf::from(format!("./rewind-sample-{channel}.mkv"))
-        });
-        println!("\nffmpeg smoke test: pulling first {secs}s into {}...", out_path.display());
+        let out_path = out
+            .unwrap_or_else(|| std::path::PathBuf::from(format!("./rewind-sample-{channel}.mkv")));
+        println!(
+            "\nffmpeg smoke test: pulling first {secs}s into {}...",
+            out_path.display()
+        );
         let status = tokio::process::Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "warning", "-y", "-t"])
             .arg(secs.to_string())

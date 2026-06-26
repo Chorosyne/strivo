@@ -34,8 +34,12 @@ pub struct CatalogPullOptions {
     pub cookies_path: Option<PathBuf>,
     pub force: bool,
     /// When true, emit a `crunchr_auto` marker file so the Crunchr plugin picks
-    /// the episode up automatically without per-channel tandem config.
-    #[cfg(feature = "creator")]
+    /// the episode up automatically without per-channel tandem config. Always
+    /// present (a plain bool) — gating the field tripped Cargo feature
+    /// unification under `--workspace` (strivo-plugins turns on
+    /// `strivo-core/creator`, but strivo-bin's own `creator` stays off, so its
+    /// struct literal would omit a then-present field). In the pure-PVR build
+    /// callers always set this `false`, so the marker is never written.
     pub crunchr_auto: bool,
 }
 
@@ -88,7 +92,10 @@ pub async fn run_pull(
         // be stopped from the TUI. We check between vods — an in-flight
         // yt-dlp download finishes, then we stop before the next one.
         if cancel.is_some_and(|c| c.is_cancelled()) {
-            tracing::info!("catalog: bulk pull cancelled after {} downloaded", report.downloaded);
+            tracing::info!(
+                "catalog: bulk pull cancelled after {} downloaded",
+                report.downloaded
+            );
             break;
         }
 
@@ -170,7 +177,9 @@ pub async fn run_pull(
                 if let Err(e) = write_metadata_json(&ep_dir, &meta) {
                     tracing::warn!("catalog: metadata.json write failed: {e}");
                 }
-                #[cfg(feature = "creator")]
+                // `crunchr_auto` is only ever true in Creator Edition builds
+                // (PVR callers hard-set it false), so this marker write is a
+                // no-op there without needing a cfg guard.
                 if opts.crunchr_auto {
                     // Marker the Crunchr plugin can grep for in lieu of tandem config.
                     let _ = std::fs::write(ep_dir.join(".crunchr-auto"), b"");
