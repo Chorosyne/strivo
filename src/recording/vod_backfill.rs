@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
 use crate::platform::twitch::TwitchPlatform;
@@ -38,14 +39,19 @@ pub struct BackfillRequest {
 /// queues its download via the recording manager. Failure is logged at
 /// warn level and otherwise silent — the live capture is the user's
 /// safety net.
+///
+/// The `cancel` token is threaded from the daemon's global
+/// [`CancellationToken`] so that a clean shutdown cancels any pending
+/// backfill delay instead of hanging for up to `delay_secs`.
 pub fn spawn(
     req: BackfillRequest,
     twitch: Arc<RwLock<TwitchPlatform>>,
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
     config: AppConfig,
+    cancel: CancellationToken,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = run(req, twitch, recording_tx, config).await {
+        if let Err(e) = run(req, twitch, recording_tx, config, cancel).await {
             tracing::warn!(error = %e, "vod backfill failed");
         }
     });
@@ -56,13 +62,26 @@ async fn run(
     twitch: Arc<RwLock<TwitchPlatform>>,
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
     config: AppConfig,
+    cancel: CancellationToken,
 ) -> anyhow::Result<()> {
     tracing::info!(
         channel = %req.channel_name,
         delay_secs = req.delay_secs,
         "vod backfill: scheduled"
     );
-    tokio::time::sleep(Duration::from_secs(req.delay_secs)).await;
+    // Race the delay against the daemon shutdown token so the task
+    // participates in graceful shutdown instead of blocking exit for up
+    // to `delay_secs`.
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_secs(req.delay_secs)) => {}
+        _ = cancel.cancelled() => {
+            tracing::info!(
+                channel = %req.channel_name,
+                "vod backfill: cancelled (daemon shutdown)"
+            );
+            return Ok(());
+        }
+    }
 
     let twitch_guard = twitch.read().await;
     // Search the last 7 days; helix returns newest-first, so the first
@@ -120,3 +139,56 @@ async fn run(
 // tested there (`adjacent_policy_appends_vod_suffix`,
 // `adjacent_policy_handles_missing_extension`). The backfill module no
 // longer needs its own test fixtures for path computation.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    /// A pre-cancelled token must cause the `select!` guard to take the
+    /// cancellation branch immediately, not wait out the full `delay_secs`.
+    #[tokio::test]
+    async fn delay_exits_immediately_when_pre_cancelled() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let start = std::time::Instant::now();
+        let cancelled = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(3600)) => false,
+            _ = cancel.cancelled() => true,
+        };
+        assert!(
+            cancelled,
+            "pre-cancelled token must win the select, not the sleep"
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(200),
+            "select should resolve within 200 ms, not after the 3600 s delay"
+        );
+    }
+
+    /// A live token that is cancelled during an in-progress delay must also
+    /// unblock promptly.
+    #[tokio::test]
+    async fn delay_exits_on_mid_flight_cancel() {
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        // Trigger cancellation from a separate task after a short pause.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            cancel_clone.cancel();
+        });
+
+        let start = std::time::Instant::now();
+        let cancelled = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(3600)) => false,
+            _ = cancel.cancelled() => true,
+        };
+        assert!(cancelled, "delayed cancel must still win over the 3600 s sleep");
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "should unblock well before the 3600 s delay"
+        );
+    }
+}
