@@ -523,6 +523,47 @@ pub struct AutoRecordEntry {
     pub profile: Option<String>,
 }
 
+/// Named quality presets that map to yt-dlp/streamlink format selectors.
+/// A `CaptureProfile` carries one of these instead of a raw format string
+/// so the UI can offer a stable, human-readable set of choices.
+///
+/// Tier → yt-dlp `-f` selector:
+/// * `Best`      → `"best"` (yt-dlp default; picks the highest merged format)
+/// * `P1080`     → `"bestvideo[height<=1080]+bestaudio/best[height<=1080]"`
+/// * `P720`      → `"bestvideo[height<=720]+bestaudio/best[height<=720]"`
+/// * `P480`      → `"bestvideo[height<=480]+bestaudio/best[height<=480]"`
+/// * `AudioOnly` → `"bestaudio/best"` (no video stream; sets `audio_only` semantics)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityTier {
+    Best,
+    #[serde(rename = "1080p")]
+    P1080,
+    #[serde(rename = "720p")]
+    P720,
+    #[serde(rename = "480p")]
+    P480,
+    AudioOnly,
+}
+
+impl QualityTier {
+    /// Translate to the yt-dlp `-f` format selector string.
+    pub fn format_selector(&self) -> &'static str {
+        match self {
+            QualityTier::Best => "best",
+            QualityTier::P1080 => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            QualityTier::P720 => "bestvideo[height<=720]+bestaudio/best[height<=720]",
+            QualityTier::P480 => "bestvideo[height<=480]+bestaudio/best[height<=480]",
+            QualityTier::AudioOnly => "bestaudio/best",
+        }
+    }
+
+    /// True when the tier selects no video (audio-only pipeline).
+    pub fn is_audio_only(&self) -> bool {
+        matches!(self, QualityTier::AudioOnly)
+    }
+}
+
 /// A named, reusable capture profile (roadmap item 21) — define recording
 /// settings once ("1080p60+transcript", "audio-only") and attach to many
 /// channels via `AutoRecordEntry::profile`.
@@ -530,6 +571,12 @@ pub struct AutoRecordEntry {
 pub struct CaptureProfile {
     /// Unique profile name referenced by `AutoRecordEntry::profile`.
     pub name: String,
+
+    /// Named quality tier. When set, the tier's format selector is used as
+    /// the effective yt-dlp `-f` argument unless `format.format` is also
+    /// set (explicit selector wins over the tier).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_tier: Option<QualityTier>,
 
     /// Format/bitrate selection for channels using this profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1019,6 +1066,65 @@ fn quarantine(path: &std::path::Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
+mod quality_tier_tests {
+    use super::*;
+
+    #[test]
+    fn tier_format_selectors() {
+        assert_eq!(QualityTier::Best.format_selector(), "best");
+        assert_eq!(
+            QualityTier::P1080.format_selector(),
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        );
+        assert_eq!(
+            QualityTier::P720.format_selector(),
+            "bestvideo[height<=720]+bestaudio/best[height<=720]"
+        );
+        assert_eq!(
+            QualityTier::P480.format_selector(),
+            "bestvideo[height<=480]+bestaudio/best[height<=480]"
+        );
+        assert_eq!(QualityTier::AudioOnly.format_selector(), "bestaudio/best");
+    }
+
+    #[test]
+    fn tier_audio_only_flag() {
+        assert!(QualityTier::AudioOnly.is_audio_only());
+        assert!(!QualityTier::Best.is_audio_only());
+        assert!(!QualityTier::P1080.is_audio_only());
+    }
+
+    #[test]
+    fn tier_serde_roundtrip() {
+        let t = QualityTier::P1080;
+        let s = serde_json::to_string(&t).unwrap();
+        assert_eq!(s, r#""1080p""#);
+        let back: QualityTier = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, QualityTier::P1080);
+    }
+
+    #[test]
+    fn audio_only_serde_name() {
+        let s = serde_json::to_string(&QualityTier::AudioOnly).unwrap();
+        assert_eq!(s, r#""audio_only""#);
+    }
+
+    #[test]
+    fn capture_profile_with_tier_is_backward_compat() {
+        // A config.toml without quality_tier should deserialise fine (old format).
+        let toml = r#"
+            [[capture_profiles]]
+            name = "legacy"
+            audio_only = false
+            transcript = false
+        "#;
+        let cfg: AppConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.capture_profiles.len(), 1);
+        assert!(cfg.capture_profiles[0].quality_tier.is_none());
+    }
+}
+
+#[cfg(test)]
 mod profile_tests {
     use super::*;
 
@@ -1038,6 +1144,7 @@ mod profile_tests {
         cfg.capture_profiles = vec![
             CaptureProfile {
                 name: "hq".into(),
+                quality_tier: None,
                 format: None,
                 transcode: None,
                 audio_only: false,
@@ -1046,6 +1153,7 @@ mod profile_tests {
             },
             CaptureProfile {
                 name: "hq".into(), // duplicate
+                quality_tier: None,
                 format: None,
                 transcode: None,
                 audio_only: false,
@@ -1079,6 +1187,7 @@ mod profile_tests {
         cfg.recording.transcode = false; // global default off
         cfg.capture_profiles = vec![CaptureProfile {
             name: "hq".into(),
+            quality_tier: None,
             format: None,
             transcode: Some(true), // profile turns it on
             audio_only: false,
@@ -1103,6 +1212,7 @@ mod profile_tests {
         let mut cfg = AppConfig::default();
         cfg.capture_profiles = vec![CaptureProfile {
             name: "hq".into(),
+            quality_tier: None,
             format: None,
             transcode: Some(true),
             audio_only: false,

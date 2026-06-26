@@ -30,19 +30,75 @@ use crate::recording::ytdlp::YtDlpProcess;
 use crate::stream::resolver;
 
 /// Resolve the format/quality settings for a recording, walking
-/// per-channel override → global → built-in defaults.
+/// per-channel override → capture-profile tier → global → built-in defaults.
+///
+/// Resolution order for the yt-dlp `-f` selector:
+/// 1. Per-channel `format.format` (explicit override on the auto-record entry)
+/// 2. Capture profile `format.format` (explicit override on the profile)
+/// 3. Capture profile `quality_tier` (named preset → format selector)
+/// 4. Global `recording.format.format`
+/// 5. Built-in default `"best"`
 pub fn resolve_format(
     config: &AppConfig,
     channel_id: &str,
     platform: PlatformKind,
 ) -> ResolvedFormat {
     let platform_str = platform.to_string();
-    let channel_override: Option<&RecordingFormat> = config
+    let entry = config
         .auto_record_channels
         .iter()
-        .find(|c| c.channel_id == channel_id && c.platform == platform_str)
-        .and_then(|c| c.format.as_ref());
-    RecordingFormat::resolved(channel_override, &config.recording.format)
+        .find(|c| c.channel_id == channel_id && c.platform == platform_str);
+
+    let channel_override = entry.and_then(|c| c.format.as_ref());
+
+    // Build an effective "intermediate" format from the capture profile:
+    // if the profile has an explicit format, use it; if it has a quality_tier
+    // but no explicit format, synthesise one from the tier's selector.
+    // We use a local to own any synthesised RecordingFormat so the reference
+    // to it (`profile_fmt`) stays valid for the merge below.
+    let synthesised_tier: Option<RecordingFormat> = entry
+        .and_then(|e| e.profile.as_ref())
+        .and_then(|name| config.capture_profiles.iter().find(|p| &p.name == name))
+        .and_then(|profile| {
+            if profile.format.is_some() {
+                None // explicit format on profile wins; handled below
+            } else {
+                profile.quality_tier.as_ref().map(|tier| RecordingFormat {
+                    format: Some(tier.format_selector().to_string()),
+                    ..Default::default()
+                })
+            }
+        });
+
+    let profile_fmt: Option<&RecordingFormat> = entry
+        .and_then(|e| e.profile.as_ref())
+        .and_then(|name| config.capture_profiles.iter().find(|p| &p.name == name))
+        .and_then(|profile| {
+            profile
+                .format
+                .as_ref()
+                .or(synthesised_tier.as_ref())
+        });
+
+    // 3-level merge: channel_override > profile_fmt > global.
+    // We collapse profile_fmt + global into a single RecordingFormat first
+    // (profile fills gaps in global), then apply channel_override on top.
+    let effective_global = if let Some(pf) = profile_fmt {
+        // Build a merged RecordingFormat from profile + global so channel
+        // override has a single RecordingFormat to sit on top of.
+        let r = RecordingFormat::resolved(Some(pf), &config.recording.format);
+        RecordingFormat {
+            format:      Some(r.format),
+            bitrate_kbps: r.bitrate_kbps,
+            container:   Some(r.container),
+            video_codec: Some(r.video_codec),
+            audio_codec: Some(r.audio_codec),
+        }
+    } else {
+        config.recording.format.clone()
+    };
+
+    RecordingFormat::resolved(channel_override, &effective_global)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1195,5 +1251,86 @@ mod tests {
         assert_eq!(sanitize_path_component("a/b\\c:d"), "a_b_c_d");
         let long = "x".repeat(200);
         assert_eq!(sanitize_path_component(&long).len(), 80);
+    }
+
+    // ── Quality-tier resolution ──────────────────────────────────────
+    use crate::config::{AppConfig, AutoRecordEntry, CaptureProfile, QualityTier};
+
+    fn make_arc_with_profile(
+        channel_id: &str,
+        profile: Option<&str>,
+    ) -> AutoRecordEntry {
+        AutoRecordEntry {
+            platform: "Twitch".into(),
+            channel_id: channel_id.into(),
+            channel_name: channel_id.into(),
+            format: None,
+            profile: profile.map(String::from),
+        }
+    }
+
+    fn make_profile_with_tier(name: &str, tier: QualityTier) -> CaptureProfile {
+        CaptureProfile {
+            name: name.into(),
+            quality_tier: Some(tier),
+            format: None,
+            transcode: None,
+            audio_only: false,
+            transcript: false,
+            cutoff_episodes: None,
+        }
+    }
+
+    #[test]
+    fn quality_tier_1080p_resolves_correctly() {
+        let mut cfg = AppConfig::default();
+        cfg.capture_profiles = vec![make_profile_with_tier("hd", QualityTier::P1080)];
+        cfg.auto_record_channels = vec![make_arc_with_profile("streamer1", Some("hd"))];
+        let r = resolve_format(&cfg, "streamer1", PlatformKind::Twitch);
+        assert_eq!(r.format, "bestvideo[height<=1080]+bestaudio/best[height<=1080]");
+    }
+
+    #[test]
+    fn quality_tier_audio_only() {
+        let mut cfg = AppConfig::default();
+        cfg.capture_profiles = vec![make_profile_with_tier("ao", QualityTier::AudioOnly)];
+        cfg.auto_record_channels = vec![make_arc_with_profile("streamer2", Some("ao"))];
+        let r = resolve_format(&cfg, "streamer2", PlatformKind::Twitch);
+        assert_eq!(r.format, "bestaudio/best");
+    }
+
+    #[test]
+    fn channel_explicit_format_wins_over_tier() {
+        let mut cfg = AppConfig::default();
+        cfg.capture_profiles = vec![make_profile_with_tier("hd", QualityTier::P720)];
+        cfg.auto_record_channels = vec![AutoRecordEntry {
+            platform: "Twitch".into(),
+            channel_id: "streamer3".into(),
+            channel_name: "streamer3".into(),
+            format: Some(RecordingFormat {
+                format: Some("worst".into()),
+                ..Default::default()
+            }),
+            profile: Some("hd".into()),
+        }];
+        let r = resolve_format(&cfg, "streamer3", PlatformKind::Twitch);
+        assert_eq!(r.format, "worst", "per-channel explicit format must win over tier");
+    }
+
+    #[test]
+    fn no_profile_falls_back_to_global() {
+        let mut cfg = AppConfig::default();
+        cfg.recording.format.format = Some("bestvideo+bestaudio".into());
+        cfg.auto_record_channels = vec![make_arc_with_profile("streamer4", None)];
+        let r = resolve_format(&cfg, "streamer4", PlatformKind::Twitch);
+        assert_eq!(r.format, "bestvideo+bestaudio");
+    }
+
+    #[test]
+    fn unknown_channel_falls_back_to_global() {
+        let mut cfg = AppConfig::default();
+        cfg.recording.format.format = Some("global_selector".into());
+        let r = resolve_format(&cfg, "not_in_list", PlatformKind::Twitch);
+        assert_eq!(r.format, "global_selector");
     }
 }
