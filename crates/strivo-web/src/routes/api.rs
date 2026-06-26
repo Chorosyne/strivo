@@ -1661,6 +1661,25 @@ async fn blocklist_remove(
 #[derive(Debug, Deserialize)]
 struct AutoRecordPayload {
     enabled: bool,
+    /// Per-channel container override (e.g. "mkv", "mp4"). Empty string = use global.
+    #[serde(default)]
+    format: Option<String>,
+    /// Named capture-profile to apply (e.g. "1080p60+transcript"). Empty = global.
+    #[serde(default)]
+    profile: Option<String>,
+}
+
+/// Build a `RecordingFormat` with only the container field set from a
+/// UI-supplied string. Returns `None` when the string is absent or empty
+/// (meaning "use the global default").
+fn build_recording_format(container: &Option<String>) -> Option<strivo_core::config::RecordingFormat> {
+    container
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|c| strivo_core::config::RecordingFormat {
+            container: Some(c.to_string()),
+            ..Default::default()
+        })
 }
 
 /// `PUT /api/v1/channels/<channel_key>/auto_record` — toggle
@@ -1719,9 +1738,20 @@ async fn put_auto_record(
                     platform: format!("{platform:?}"),
                     channel_id: ch_id.to_string(),
                     channel_name: display_name,
-                    format: None,
-                    profile: None,
+                    format: build_recording_format(&body.format),
+                    profile: body.profile.clone().filter(|s| !s.is_empty()),
                 });
+        }
+        (true, true) => {
+            // Already in list — update format/profile overrides in place.
+            if let Some(entry) = cfg
+                .auto_record_channels
+                .iter_mut()
+                .find(|c| format!("{}:{}", c.platform, c.channel_id) == channel_key)
+            {
+                entry.format = build_recording_format(&body.format);
+                entry.profile = body.profile.clone().filter(|s| !s.is_empty());
+            }
         }
         (false, true) => {
             cfg.auto_record_channels
@@ -1845,11 +1875,17 @@ async fn monitor_state(
         .auto_record_channels
         .iter()
         .map(|c| {
+            // Expose the container override (from format.container) and
+            // profile name so the Monitor page can render per-channel
+            // format/quality selects without an extra API call.
+            let container = c.format.as_ref().and_then(|f| f.container.as_deref());
             json!({
                 "platform": c.platform,
                 "channel_id": c.channel_id,
                 "channel_name": c.channel_name,
                 "key": format!("{}:{}", c.platform, c.channel_id),
+                "format": container,
+                "profile": c.profile,
             })
         })
         .collect();

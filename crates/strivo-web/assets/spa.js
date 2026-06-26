@@ -75,10 +75,16 @@ const API = {
     API._fetch(`/recordings/${encodeURIComponent(id)}/file`, { method: "DELETE" }),
   clearErroredRecordings: () =>
     API._fetch("/recordings/clear_errored", { method: "POST" }),
-  toggleAutoRecord: (channelKey, enabled) =>
+  toggleAutoRecord: (channelKey, enabled, opts = {}) =>
     API._fetch(`/channels/${encodeURIComponent(channelKey)}/auto_record`, {
       method: "PUT",
-      body: { enabled },
+      body: { enabled, ...opts },
+    }),
+  // Update format/profile overrides on an already-enabled auto-record entry.
+  setAutoRecordFormat: (channelKey, format, profile) =>
+    API._fetch(`/channels/${encodeURIComponent(channelKey)}/auto_record`, {
+      method: "PUT",
+      body: { enabled: true, format: format || "", profile: profile || "" },
     }),
   pollNow: () => API._fetch("/poll_now", { method: "POST" }),
   health: () => API._fetch("/health"),
@@ -462,6 +468,10 @@ const channelVods = {};
 const vodDownloadState = {};
 let dashRecordings = [];
 let dashSchedule = [];
+// Cached max-concurrent-recordings limit from /settings; updated by
+// setupChromeHandlers on every page render so the topbar slot pill
+// stays in sync when the user changes the limit on the Monitor page.
+let maxConcurrentSlots = 0;
 
 // True for recording states still in flight.
 function isInProgress(state) {
@@ -959,6 +969,11 @@ function chrome(content) {
               title="Live updates connection">● reconnecting…</span>
         <a id="health-pill" class="health-pill" href="#/system" hidden
            role="status" title="System health — click for details"></a>
+        <span id="live-pill" class="live-pill" style="display:none"
+              title="Active recordings"></span>
+        <span id="rec-slot-pill" class="storage-pill" style="display:none"
+              title="Active recordings / concurrent cap — click to manage"
+              role="status"></span>
         <span class="spacer"></span>
         <nav class="topnav" aria-label="Main navigation">${nav}</nav>
         <button id="add-channel" title="Add a channel to monitor"
@@ -991,6 +1006,8 @@ function setupChromeHandlers() {
     }
   });
   document.getElementById("add-channel")?.addEventListener("click", () => openAddChannelWizard());
+  // Slot pill navigates to Monitor page so users can adjust the cap.
+  document.getElementById("rec-slot-pill")?.addEventListener("click", () => route("schedule"));
   document.getElementById("logout")?.addEventListener("click", () => {
     // Quick confirm — one misclick on the topbar shouldn't sign you out.
     if (!confirm("Sign out? You'll need to re-enter the API key to come back.")) return;
@@ -998,6 +1015,13 @@ function setupChromeHandlers() {
   });
   // Health pill — amber/red when any check is degraded (roadmap item 13).
   refreshHealthPill();
+  // Populate the concurrent-slot pill with the configured cap. Fire-and-forget;
+  // failures silently leave maxConcurrentSlots at its current cached value so
+  // a transient /settings error doesn't blank the topbar.
+  API.settings().then((s) => {
+    maxConcurrentSlots = (s && s.monitor_limits && s.monitor_limits.max_concurrent_recordings) || 0;
+    updateLiveCount(recCache.filter((r) => isInProgress(r.state)).length);
+  }).catch(() => {});
   // Channel list lives in the left rail on every page.
   paintChannelList();
   // Per-page first-visit hint banner. No-op when this route's hint has
@@ -10276,13 +10300,28 @@ async function renderSystem() {
     })
     .join("");
 
-  // Disk gauge.
+  // Segmented disk-usage gauge (Task 2 — storage gauge near disk-space health row).
+  // Three segments: recordings (accent), other filesystem usage (muted), free (transparent).
   const gauge = storage && storage.filesystem_total_bytes
     ? (() => {
-        const usedPct = (1 - storage.filesystem_avail_bytes / storage.filesystem_total_bytes) * 100;
-        return `<div class="sys-gauge"><div class="sys-gauge-fill" style="width:${usedPct.toFixed(1)}%"></div></div>
-          <div class="sys-gauge-label">${formatBytes(storage.bytes_used_by_recordings || 0)} recordings ·
-          ${formatBytes(storage.filesystem_avail_bytes)} free of ${formatBytes(storage.filesystem_total_bytes)}</div>`;
+        const total = storage.filesystem_total_bytes;
+        const recBytes = storage.bytes_used_by_recordings || 0;
+        const avail = storage.filesystem_avail_bytes || 0;
+        const other = Math.max(0, total - avail - recBytes);
+        const recPct = Math.min(100, (recBytes / total) * 100);
+        const otherPct = Math.min(100 - recPct, (other / total) * 100);
+        const freePct = Math.max(0, (avail / total) * 100);
+        const warnClass = (avail / total) < 0.05 ? "gauge-crit" : (avail / total) < 0.15 ? "gauge-warn" : "";
+        return `
+          <div class="sys-gauge-wrap${warnClass ? ` ${warnClass}` : ""}" title="Disk usage — ${freePct.toFixed(0)}% free">
+            <div class="sys-gauge-seg" style="width:${recPct.toFixed(1)}%;background:var(--accent)" title="Recordings: ${formatBytes(recBytes)}"></div>
+            <div class="sys-gauge-seg" style="width:${otherPct.toFixed(1)}%;background:var(--muted);opacity:0.5" title="Other: ${formatBytes(other)}"></div>
+          </div>
+          <div class="sys-gauge-legend">
+            <span class="sys-gauge-dot" style="background:var(--accent)"></span> Recordings: ${formatBytes(recBytes)}
+            &ensp;<span class="sys-gauge-dot" style="background:var(--muted);opacity:0.6"></span> Other: ${formatBytes(other)}
+            &ensp;<span class="sys-gauge-dot" style="background:var(--border-light)"></span> Free: ${formatBytes(avail)} of ${formatBytes(total)}
+          </div>`;
       })()
     : '<div class="empty sm">Disk stats unavailable</div>';
 
@@ -10796,17 +10835,45 @@ async function renderSchedule() {
     (c) => c.platform === "YouTube",
   );
 
+  // Build option lists for per-channel format/profile overrides (Task 4).
+  const captureProfiles = (settings.capture_profiles || []);
+  const containerOptions = ["", "mkv", "mp4", "ts"]
+    .map((c) => `<option value="${htmlEscape(c)}">${htmlEscape(c || "(default)")}</option>`)
+    .join("");
+  const profileOptions = ["", ...captureProfiles.map((p) => p.name)]
+    .map((p) => `<option value="${htmlEscape(p)}">${htmlEscape(p || "(default)")}</option>`)
+    .join("");
+
   // Section 1 — record when live (existing auto-record list).
   const recordRows = monitor.auto_record
     .map(
-      (e) => `
+      (e) => {
+        const curContainer = e.format || "";
+        const curProfile = e.profile || "";
+        // Rebuild option lists with selected=true on the current values.
+        const containerOpts = ["", "mkv", "mp4", "ts"]
+          .map((c) => `<option value="${htmlEscape(c)}"${c === curContainer ? " selected" : ""}>${htmlEscape(c || "(default)")}</option>`)
+          .join("");
+        const profileOpts = ["", ...captureProfiles.map((p) => p.name)]
+          .map((p) => `<option value="${htmlEscape(p)}"${p === curProfile ? " selected" : ""}>${htmlEscape(p || "(default)")}</option>`)
+          .join("");
+        return `
     <div class="task-row">
       <div class="task-info">
         <span class="task-name">${htmlEscape(e.channel_name || e.channel_id)} <span class="mon-plat plat-${htmlEscape(e.platform.toLowerCase())}">${htmlEscape(e.platform)}</span></span>
         <span class="task-cadence">${htmlEscape(e.key)}</span>
+        <span class="mon-fmt-row">
+          <label class="mon-fmt-label" title="Container override for this channel">Container</label>
+          <select class="mon-fmt-sel" data-key="${htmlEscape(e.key)}" data-field="format"
+                  title="Per-channel container override (empty = global default)">${containerOpts}</select>
+          <label class="mon-fmt-label" title="Named capture profile for this channel">Profile</label>
+          <select class="mon-fmt-sel" data-key="${htmlEscape(e.key)}" data-field="profile"
+                  title="Per-channel capture profile (empty = global default)">${profileOpts}</select>
+        </span>
       </div>
       <button class="sm mon-rec-rm" data-key="${htmlEscape(e.key)}" title="Stop auto-recording this channel">✕</button>
-    </div>`,
+    </div>`;
+      },
     )
     .join("");
 
@@ -10909,6 +10976,8 @@ async function renderSchedule() {
     <h1 class="page-title">Monitor</h1>
     <p class="page-subtitle">Channels StriVo is watching. Record live broadcasts as they happen, or auto-download new YouTube uploads.</p>
 
+    ${buildCalStrip(cronEntries)}
+
     ${statusBanner}
 
     <section class="cfg-card">
@@ -10982,6 +11051,23 @@ async function renderSchedule() {
         renderSchedule();
       } catch (e) {
         Toast.error(`Couldn't stop: ${e.message}`);
+      }
+    });
+  });
+
+  // Per-channel format/profile override — save on change (Task 4).
+  document.querySelectorAll(".mon-fmt-sel").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const key = sel.dataset.key;
+      const row = sel.closest(".task-row");
+      if (!row) return;
+      const fmtSel = row.querySelector('.mon-fmt-sel[data-field="format"]');
+      const profSel = row.querySelector('.mon-fmt-sel[data-field="profile"]');
+      try {
+        await API.setAutoRecordFormat(key, fmtSel ? fmtSel.value : "", profSel ? profSel.value : "");
+        Toast.success("Format saved");
+      } catch (err) {
+        Toast.error(`Format save failed: ${err.message}`);
       }
     });
   });
@@ -11529,15 +11615,90 @@ function historyPillHtml(j) {
     </div>`;
 }
 
-// ── Live-count ticker ────────────────────────────────────────────────
+// ── 7-day calendar strip (Task 1) ────────────────────────────────────
+// Derives a stable hue [0,360) from a channel name by DJB2-style hash.
+function channelHue(name) {
+  let h = 5381;
+  for (let i = 0; i < (name || "").length; i++)
+    h = ((h << 5) + h + (name || "").charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+}
+
+// Build a compact 7-day strip of upcoming cron schedule firings.
+// `entries` is the /schedule array with next_fire timestamps.
+// Returns an HTML string (empty string when there are no upcoming firings).
+function buildCalStrip(entries) {
+  const upcoming = (entries || []).filter((e) => e.next_fire);
+  if (!upcoming.length) return "";
+  const now = new Date();
+  const days = Array.from({ length: 7 }, (_, d) => {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 1);
+    const label =
+      d === 0 ? "Today" :
+      d === 1 ? "Tomorrow" :
+      start.toLocaleDateString([], { weekday: "short", month: "numeric", day: "numeric" });
+    return { start, end, label, firings: [] };
+  });
+  for (const e of upcoming) {
+    const t = new Date(e.next_fire);
+    const day = days.find((d) => t >= d.start && t < d.end);
+    if (day) day.firings.push(e);
+  }
+  const dayHtml = days.map(({ label, firings, start }) => {
+    const isToday = start.toDateString() === now.toDateString();
+    const blocks = firings.map((e) => {
+      const hue = channelHue(e.channel || "");
+      const time = new Date(e.next_fire).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const tip = `${e.channel || ""}  ·  ${time}${e.duration ? "  ·  " + e.duration : ""}`;
+      return `<a class="cal-block" href="#/schedule"
+                 style="background:hsl(${hue},45%,32%);border-color:hsl(${hue},50%,48%)"
+                 title="${htmlEscape(tip)}">${htmlEscape((e.channel || "").slice(0, 12))}</a>`;
+    }).join("");
+    return `<div class="cal-day${isToday ? " cal-today" : ""}">
+      <div class="cal-day-label">${htmlEscape(label)}</div>
+      <div class="cal-day-blocks">${blocks || '<span class="cal-no-fire">—</span>'}</div>
+    </div>`;
+  }).join("");
+  return `<section class="cfg-card cal-section">
+    <h2 class="cfg-title">Upcoming cron schedule <span class="cal-subtitle">(next 7 days)</span></h2>
+    <div class="cal-strip">${dayHtml}</div>
+  </section>`;
+}
+
+// ── Live-count ticker + concurrent-slot indicator ────────────────────
+// Both pills sit in the topbar. The slot pill shows "N / M rec" where N
+// is in-progress count and M is monitor_limits.max_concurrent_recordings.
+// maxConcurrentSlots is populated by setupChromeHandlers from /settings.
 function updateLiveCount(n) {
   const pill = document.getElementById("live-pill");
-  if (!pill) return;
-  if (n > 0) {
-    pill.textContent = `● LIVE NOW: ${n}`;
-    pill.style.display = "";
-  } else {
-    pill.style.display = "none";
+  if (pill) {
+    if (n > 0) {
+      pill.textContent = `● LIVE: ${n}`;
+      pill.style.display = "";
+    } else {
+      pill.style.display = "none";
+    }
+  }
+  const slotPill = document.getElementById("rec-slot-pill");
+  if (slotPill) {
+    if (maxConcurrentSlots > 0) {
+      slotPill.textContent = `${n} / ${maxConcurrentSlots} rec`;
+      slotPill.style.display = "";
+      const saturated = n >= maxConcurrentSlots;
+      slotPill.className = `storage-pill${saturated ? " storage-pill-warn" : ""}`;
+      slotPill.title = saturated
+        ? `⚠ Concurrent cap hit: ${n}/${maxConcurrentSlots} — click to adjust`
+        : `${n} of ${maxConcurrentSlots} recording slots in use — click to manage`;
+    } else if (n > 0) {
+      slotPill.textContent = `${n} rec`;
+      slotPill.style.display = "";
+      slotPill.className = "storage-pill";
+      slotPill.title = `${n} recording${n === 1 ? "" : "s"} in progress`;
+    } else {
+      slotPill.style.display = "none";
+    }
   }
 }
 

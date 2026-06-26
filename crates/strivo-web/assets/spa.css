@@ -4943,3 +4943,129 @@ body.ms-resizing { cursor: ew-resize; user-select: none; }
 /* Container for the /chat route's compose — replaces the old inline
    form's positioning. */
 .chat-compose-host { /* no extra rules — compose-bar styles itself */ }
+
+/* ── Task 1: 7-day calendar strip (Monitor / Schedule page) ─────────── */
+.cal-section { margin-bottom: 0.5rem; }
+.cal-subtitle { font-size: 0.75em; font-weight: 400; opacity: 0.6; margin-left: 0.4rem; }
+.cal-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+@media (max-width: 720px) {
+  .cal-strip { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 480px) {
+  .cal-strip { grid-template-columns: repeat(2, 1fr); }
+}
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 3.5rem;
+}
+.cal-day-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.cal-today .cal-day-label {
+  color: var(--accent2);
+}
+.cal-day-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+}
+.cal-block {
+  display: block;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: filter 0.12s ease;
+}
+.cal-block:hover { filter: brightness(1.25); }
+.cal-no-fire {
+  font-size: 0.8rem;
+  color: var(--dim);
+  align-self: flex-start;
+}
+
+/* ── Task 2: Segmented storage gauge (System page) ─────────────────── */
+.sys-gauge-wrap {
+  height: 10px;
+  background: var(--overlay);
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  margin-top: 0.75rem;
+}
+.sys-gauge-seg {
+  height: 100%;
+  transition: width 0.2s ease;
+}
+.sys-gauge-wrap.gauge-warn { outline: 1px solid var(--secondary); }
+.sys-gauge-wrap.gauge-crit { outline: 1px solid var(--recording); }
+.sys-gauge-legend {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0;
+  align-items: center;
+}
+.sys-gauge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 0.2rem;
+}
+
+/* ── Task 3: Concurrent-slot pill (topbar) ──────────────────────────── */
+/* storage-pill already covers the base style; this adds the warn variant. */
+.storage-pill.storage-pill-warn {
+  background: color-mix(in srgb, var(--secondary) 25%, transparent);
+  color: var(--secondary);
+}
+/* Make the slot pill clickable-looking so users know they can open Monitor. */
+#rec-slot-pill { cursor: pointer; }
+#rec-slot-pill:hover { filter: brightness(1.15); }
+
+/* ── Task 4: Per-channel format/profile selects (Monitor page) ──────── */
+.mon-fmt-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
+  margin-top: 0.25rem;
+}
+.mon-fmt-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mon-fmt-sel {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.4rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+.mon-fmt-sel:focus { outline: 2px solid var(--primary); }
