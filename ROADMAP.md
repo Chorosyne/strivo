@@ -96,31 +96,32 @@ ui-ux, backend) and `research/exemplars/`.
 | Desktop notifications dispatched (notify-rust was a dead dep) | ✅ | `src/daemon.rs` — per-flag banners on a blocking task |
 | Atomic `config.toml` write (tmp+rename) | ✅ | `src/config/mod.rs` |
 | Atomic `schedule-state.json` write | ✅ | `src/recording/schedule.rs` |
-| **Stall detection** — frozen ffmpeg/yt-dlp stays `Recording` forever, silently | ⬜ | HIGH. Track `prev_bytes_written`; no growth for N s → warn + optional stop/retry. `recording/mod.rs:714-831` |
-| Concurrency cap is porous — manual `Start` paths bypass `max_concurrent_recordings` | ⬜ | MED. Move the gate into `run_manager`'s Start handler |
-| Single-loop monitor — a slow platform delays all live detection that tick | ⬜ | MED. Per-platform concurrent polls; `last_channels` fallback already exists |
-| yt-dlp retry falls back to FFmpeg for YouTube live-from-start | ⬜ | MED. Wrong reconnect process. `recording/mod.rs:763-789` |
-| IPC protocol unversioned — silent drop/deser failure across peer versions | ⬜ | MED. Add `version` to Hello/StateSnapshot or `#[serde(other)]` |
-| `count_finished_recordings` O(N), undercounts >500/channel | ⬜ | MED. Use `WHERE channel_id=? AND state='finished'` |
-| `.orig.mkv` safety copies accumulate after every remux | ⬜ | LOW. Auto-delete after verifying the remux, or config opt-out |
-| VOD backfill ignores the daemon CancellationToken (300 s sleep on shutdown) | ⬜ | LOW |
+| **Stall detection** — frozen ffmpeg/yt-dlp stays `Recording` forever, silently | ✅ | `recording/mod.rs` — per-recording growth clock; 120 s no-growth → warn + stop (feeds retry) |
+| Concurrency cap is porous — manual `Start` paths bypass `max_concurrent_recordings` | ✅ | gate now in the manager's `Start` handler (all paths) |
+| Single-loop monitor — a slow platform delays all live detection that tick | ✅ | `monitor/mod.rs` — per-platform fetches fan out via `join_all`; state mutations stay serial |
+| yt-dlp retry falls back to FFmpeg for YouTube live-from-start | ✅ | retry now re-spawns the original process kind (yt-dlp `--live-from-start`) |
+| `count_finished_recordings` O(N), undercounts >500/channel | ✅ | `persist.rs` — `SELECT COUNT(*) … WHERE channel_id=? AND state='finished'` |
+| `.orig.mkv` safety copies accumulate after every remux | ✅ | deleted after the remuxed file is verified non-empty; kept on failure |
+| IPC protocol unversioned — silent drop/deser failure across peer versions | ⬜ | MED. Add `version` to Hello/StateSnapshot or `#[serde(other)]`. (Cross-cuts daemon↔web — deferred from the fanout.) |
+| VOD backfill ignores the daemon CancellationToken (300 s sleep on shutdown) | ⬜ | LOW. (Couples to daemon shutdown wiring — deferred from the fanout.) |
 
 ### Web UI — finish the clean PVR split
 | Item | State | Notes |
 |---|---|---|
 | `creator_enabled` exposed in `/api/v1/settings` | ✅ | the enabler for SPA gating |
-| **SPA still shows creator UI in the PVR build** (not feature-gated) | ⬜ | HIGH. Consume `creator_enabled`: gate TOPNAV (Studio/Analytics/Publish/Pipelines), the 7 Recording-Info-modal buttons, Settings→Plugins (→ upgrade CTA), the empty Monitor "Tandem downloads" section. `spa.js:887-892,8050-8056,9960` |
+| SPA hides creator UI in the PVR build | ✅ | consumes `creator_enabled`: filters TOPNAV, bounces creator deep-links, hides the Recording-Info plugin actions, Settings→Plugins pane, and Monitor "Tandem downloads". Chat kept (client-side IRC) |
 | Build-time SPA split to drop dead creator JS (~30+ unused API methods) | ⬜ | LOW. Follow-up after runtime gating |
 
 ### PVR feature gaps vs *arr / streamerREC
 | Item | State | Notes |
 |---|---|---|
-| Calendar / upcoming-streams grid | ⬜ | Schedule is a cron table only. 7-day strip off existing `next_fire`; full EPG later |
-| Per-channel quality/format overrides in the UI | ⬜ | `AutoRecordEntry` already has `format`/`profile`; the UI never writes them |
+| Calendar / upcoming-streams grid | ✅ | 7-day strip on the Schedule page off `next_fire`; full EPG later |
+| Per-channel quality/format overrides in the UI | ✅ | Monitor rows expose container/profile selects; `put_auto_record` persists them |
+| Outbound webhook / notification connectors | ✅ | `[notifications.webhook]` (enabled/url); `src/webhook.rs` POSTs streamerREC-shaped JSON off `DaemonEvent`. Discord/ntfy presets later |
+| Storage gauge in the UI | ✅ | three-segment disk bar on the System page from `/api/v1/storage` |
+| Concurrent-slot indicator ("N / M rec") | ✅ | topbar slot pill from `monitor_limits.max_concurrent_recordings` + live count |
 | Quality profiles (tiered) | ⬜ | Today only boolean transcode + container; grow `CaptureProfile` toward tiers |
-| Outbound webhook / notification connectors | ⬜ | HIGH-value. `DaemonEvent::Notification` is the seam; ~50-line generic JSON POST unblocks n8n/ntfy/Gotify/Discord |
-| Storage gauge in the UI | ⬜ | `/api/v1/storage` returns the data; render a bar |
-| Concurrent-slot indicator ("N / M rec"), filename-token browser, JSON channel import/export | ⬜ | small, expected by competitors |
+| Filename-token browser, JSON channel import/export | ⬜ | small, expected by competitors |
 
 ### DESIGN.md compliance ✅ (resolved — JellySkin is canonical)
 DESIGN.md previously mandated ElegantFin while the SPA shipped JellySkin. Owner
