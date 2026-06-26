@@ -765,6 +765,12 @@ function teardownAcrossRoutes() {
 
 async function render() {
   const r = currentRoute();
+  // Bounce Creator Edition deep-links to Home in the pure-PVR build (their
+  // backend routes don't exist here). The hash change re-enters render().
+  if (CREATOR_ROUTES.has(r) && !CREATOR_ENABLED) {
+    location.hash = "#/library";
+    return;
+  }
   teardownAcrossRoutes();
   // P0 perf: tear down per-route long-lived resources before painting
   // the next route. Chat WebSockets, chat buffers, and dataviz resize
@@ -868,6 +874,27 @@ async function render() {
   maybeMountPageHint(r);
 }
 
+// ── Edition gating ────────────────────────────────────────────────────
+// The SPA bundle is shared by both editions. `creator_enabled` from
+// /api/v1/settings says whether this server is the Creator Edition; the
+// pure-PVR daemon does not mount the plugin/tooling routes, so those nav
+// entries + actions would 404. Default false (a missing flag = PVR/older
+// daemon) so we fail closed and hide creator surfaces.
+let CREATOR_ENABLED = false;
+// Routes whose backend lives behind `--features creator`. (Chat is NOT here:
+// it speaks Twitch IRC directly from the browser, so it works in the PVR build.)
+const CREATOR_ROUTES = new Set([
+  "studio", "analytics", "publish", "pipelines", "plugins", "dataviz",
+]);
+async function fetchEdition() {
+  try {
+    const st = await API.settings();
+    CREATOR_ENABLED = !!st.creator_enabled;
+  } catch (_) {
+    CREATOR_ENABLED = false;
+  }
+}
+
 // Top-bar route nav (functional pages). The left rail is the channel
 // list now; these icon links reach the management pages.
 // Tuple: [route, fallbackGlyph, label, key, iconHref?]
@@ -910,7 +937,11 @@ function chrome(content) {
         ...TOPNAV.filter((e) => !layoutOrder.includes(e[0])),
       ]
     : TOPNAV;
-  const nav = navItems.map(([route, glyph, label, key, iconHref]) => {
+  // Hide Creator Edition routes in the pure-PVR build.
+  const visibleNav = CREATOR_ENABLED
+    ? navItems
+    : navItems.filter((e) => !CREATOR_ROUTES.has(e[0]));
+  const nav = visibleNav.map(([route, glyph, label, key, iconHref]) => {
     const inner = iconHref
       ? `<img class="topnav-icon" src="${iconHref}" alt="" />`
       : `<span aria-hidden="true">${glyph}</span>`;
@@ -8023,6 +8054,28 @@ async function openRecordingInfo(jobId) {
   const actionsHtml = (verbBtns + showTranscriptHtml) ||
     `<div class="empty sm">No plugin actions available.</div>`;
 
+  // The plugin-actions section is Creator Edition only — every control here
+  // dispatches to a plugin route that the pure-PVR daemon does not mount.
+  const creatorActionsHtml = CREATOR_ENABLED ? `
+    <section class="rec-info-actions">
+      <h3>Plugin actions</h3>
+      <div class="rec-info-verbs">${actionsHtml}</div>
+      ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-editor-btn" data-action="rec-info-editor" title="Open the EDL editor — cut, ripple-delete, render">✄ EDL editor</button>` : ""}
+      <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
+      <div class="rec-clipper" id="rec-clipper" hidden></div>
+      <div class="rec-thumbs" id="rec-thumbs" hidden></div>
+      <div class="rec-tracks" id="rec-tracks" hidden></div>
+      <div class="rec-reuse" id="rec-reuse" hidden></div>
+      <div class="rec-casebook" id="rec-casebook" hidden></div>
+      <div class="rec-editor" id="rec-editor" hidden></div>
+    </section>` : "";
+
   overlay.querySelector(".modal-card").innerHTML = `
     <header class="rec-info-head">
       <span class="state-pill ${stateClass}">${htmlEscape(state)}</span>
@@ -8044,24 +8097,7 @@ async function openRecordingInfo(jobId) {
       </dl>
     </div>
     ${probeSectionHtml(probe)}
-    <section class="rec-info-actions">
-      <h3>Plugin actions</h3>
-      <div class="rec-info-verbs">${actionsHtml}</div>
-      ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-editor-btn" data-action="rec-info-editor" title="Open the EDL editor — cut, ripple-delete, render">✄ EDL editor</button>` : ""}
-      <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
-      <div class="rec-clipper" id="rec-clipper" hidden></div>
-      <div class="rec-thumbs" id="rec-thumbs" hidden></div>
-      <div class="rec-tracks" id="rec-tracks" hidden></div>
-      <div class="rec-reuse" id="rec-reuse" hidden></div>
-      <div class="rec-casebook" id="rec-casebook" hidden></div>
-      <div class="rec-editor" id="rec-editor" hidden></div>
-    </section>
+    ${creatorActionsHtml}
     <footer class="rec-info-foot">
       ${isFinished ? `<button class="primary" data-action="rec-info-play">▶ Open in player</button>` : ""}
       ${isFinished ? `<button class="sm" data-action="rec-info-remux" title="Remux to matroska + aac_adtstoasc so the in-browser player can decode it. Keeps the original as .orig.">⟳ Remux for browser</button>` : ""}
@@ -9548,9 +9584,11 @@ const SETTINGS_SECTIONS = [
 async function renderSettings() {
   const parts = routeParts(); // ["settings", <slug?>]
   const slug = parts[1] || "general";
-  const known = SETTINGS_SECTIONS.find((s) => s.slug === slug)
+  let known = SETTINGS_SECTIONS.find((s) => s.slug === slug)
     ? slug
     : "general";
+  // The Plugins pane is Creator Edition only.
+  if (known === "plugins" && !CREATOR_ENABLED) known = "general";
 
   let s = {};
   try {
@@ -9560,7 +9598,9 @@ async function renderSettings() {
   }
   root.removeAttribute("aria-busy");
 
-  const rail = SETTINGS_SECTIONS.map((sec) => `
+  const rail = SETTINGS_SECTIONS
+    .filter((sec) => CREATOR_ENABLED || sec.slug !== "plugins")
+    .map((sec) => `
     <a class="stg-rail-item ${sec.slug === known ? "is-active" : ""}"
        href="#/settings/${sec.slug}">
       <span class="stg-rail-icon" aria-hidden="true">${sec.icon}</span>
@@ -10794,6 +10834,24 @@ async function renderSchedule() {
     })
     .join("");
 
+  // Auto-download (Archiver tandem) is Creator Edition only — the PVR daemon
+  // mounts no archiver routes, so the whole section is hidden there.
+  const downloadSectionHtml = CREATOR_ENABLED ? `
+    <section class="cfg-card">
+      <h2 class="cfg-title">Auto-download new uploads</h2>
+      <p class="mon-help">Pulls new uploads from a YouTube channel as the monitor sees them. Leave the playlist field empty for the whole channel, or paste one or more playlist IDs to limit scope.</p>
+      ${downloadRows || '<div class="empty sm">No channels are set to auto-download yet.</div>'}
+      <form id="mon-dl-add" class="mon-add">
+        <select id="mon-dl-channel">
+          <option value="">Pick a YouTube channel…</option>
+          ${channelsAvailableForDownload
+            .map((c) => `<option value="${htmlEscape(`${c.platform}:${c.id}`)}">${htmlEscape(c.display_name || c.name)}</option>`)
+            .join("")}
+        </select>
+        <button class="btn-primary" type="submit">Enable</button>
+      </form>
+    </section>` : "";
+
   // Cron schedule section — kept for power users who already use it,
   // collapsed by default. Empty unless config.toml has entries.
   const cronGroup = cronEntries.length
@@ -10883,20 +10941,7 @@ async function renderSchedule() {
       ${recordRows || '<div class="empty sm">No channels are set to record-when-live yet.</div>'}
     </section>
 
-    <section class="cfg-card">
-      <h2 class="cfg-title">Auto-download new uploads</h2>
-      <p class="mon-help">Pulls new uploads from a YouTube channel as the monitor sees them. Leave the playlist field empty for the whole channel, or paste one or more playlist IDs to limit scope.</p>
-      ${downloadRows || '<div class="empty sm">No channels are set to auto-download yet.</div>'}
-      <form id="mon-dl-add" class="mon-add">
-        <select id="mon-dl-channel">
-          <option value="">Pick a YouTube channel…</option>
-          ${channelsAvailableForDownload
-            .map((c) => `<option value="${htmlEscape(`${c.platform}:${c.id}`)}">${htmlEscape(c.display_name || c.name)}</option>`)
-            .join("")}
-        </select>
-        <button class="btn-primary" type="submit">Enable</button>
-      </form>
-    </section>
+    ${downloadSectionHtml}
 
     ${cronGroup}
   `);
@@ -12174,9 +12219,11 @@ events.on((event) => {
 });
 events.start();
 injectKeyboardHelp();
-// Seed Patreon from the daemon snapshot before first paint, then render,
-// so the Patreon section is populated on load (not after the next poll).
-seedPatreon()
+// Resolve the edition (creator vs PVR) and seed Patreon from the daemon
+// snapshot before first paint, so the nav hides creator routes and the
+// Patreon section is populated on load (not after the next poll).
+fetchEdition()
+  .finally(seedPatreon)
   .finally(render)
   .finally(() => {
     // Fire the welcome tour once per machine — runs after the first
