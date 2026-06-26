@@ -48,17 +48,17 @@ pub struct SharedWord {
 /// Compare two top-K word lists. Returns sets of shared / unique
 /// entries with a Jaccard score. Case-insensitive matching.
 pub fn compare_words(a: &[WordCount], b: &[WordCount]) -> WordComparison {
-    let mut a_map: std::collections::HashMap<String, u64> = a
-        .iter()
-        .map(|w| (w.word.to_lowercase(), w.count))
-        .collect();
-    let mut b_map: std::collections::HashMap<String, u64> = b
-        .iter()
-        .map(|w| (w.word.to_lowercase(), w.count))
-        .collect();
+    let mut a_map: std::collections::HashMap<String, u64> =
+        a.iter().map(|w| (w.word.to_lowercase(), w.count)).collect();
+    let mut b_map: std::collections::HashMap<String, u64> =
+        b.iter().map(|w| (w.word.to_lowercase(), w.count)).collect();
 
     let mut shared: Vec<SharedWord> = Vec::new();
-    let shared_keys: Vec<String> = a_map.keys().filter(|k| b_map.contains_key(*k)).cloned().collect();
+    let shared_keys: Vec<String> = a_map
+        .keys()
+        .filter(|k| b_map.contains_key(*k))
+        .cloned()
+        .collect();
     for key in shared_keys {
         let count_a = a_map.remove(&key).unwrap_or(0);
         let count_b = b_map.remove(&key).unwrap_or(0);
@@ -75,18 +75,18 @@ pub fn compare_words(a: &[WordCount], b: &[WordCount]) -> WordComparison {
         });
     }
     // Sort shared by combined frequency desc — most-discussed words first.
-    shared.sort_by(|x, y| (y.count_a + y.count_b).cmp(&(x.count_a + x.count_b)));
+    shared.sort_by_key(|w| std::cmp::Reverse(w.count_a + w.count_b));
 
     let mut only_a: Vec<WordCount> = a_map
         .into_iter()
         .map(|(w, c)| WordCount { word: w, count: c })
         .collect();
-    only_a.sort_by(|x, y| y.count.cmp(&x.count));
+    only_a.sort_by_key(|w| std::cmp::Reverse(w.count));
     let mut only_b: Vec<WordCount> = b_map
         .into_iter()
         .map(|(w, c)| WordCount { word: w, count: c })
         .collect();
-    only_b.sort_by(|x, y| y.count.cmp(&x.count));
+    only_b.sort_by_key(|w| std::cmp::Reverse(w.count));
 
     let union_size = shared.len() + only_a.len() + only_b.len();
     let jaccard = if union_size == 0 {
@@ -155,12 +155,13 @@ pub fn compute_retention(
         let words_per_sec = (s.word_count as f32) / (s.end_sec - s.start_sec).max(0.001);
         let lo = (s.start_sec / bucket_secs).floor() as usize;
         let hi = ((s.end_sec / bucket_secs).ceil() as usize).min(n_buckets);
-        for b in lo..hi {
+        for (offset, slot) in talk[lo..hi].iter_mut().enumerate() {
+            let b = lo + offset;
             let b_lo = b as f32 * bucket_secs;
             let b_hi = b_lo + bucket_secs;
             let overlap = (s.end_sec.min(b_hi) - s.start_sec.max(b_lo)).max(0.0);
             if overlap > 0.0 {
-                talk[b] += words_per_sec * overlap / bucket_secs;
+                *slot += words_per_sec * overlap / bucket_secs;
             }
         }
     }
@@ -208,7 +209,10 @@ mod tests {
     use super::*;
 
     fn wc(word: &str, count: u64) -> WordCount {
-        WordCount { word: word.to_string(), count }
+        WordCount {
+            word: word.to_string(),
+            count,
+        }
     }
 
     #[test]
@@ -270,7 +274,11 @@ mod tests {
     #[test]
     fn retention_distributes_words_across_buckets() {
         // Single 60s segment with 60 words straddling buckets 0 and 1.
-        let segs = vec![Segment { start_sec: 30.0, end_sec: 90.0, word_count: 60 }];
+        let segs = vec![Segment {
+            start_sec: 30.0,
+            end_sec: 90.0,
+            word_count: 60,
+        }];
         let out = compute_retention(&segs, &[], 120.0, 60.0);
         assert_eq!(out.len(), 2);
         // Both buckets should have non-zero talk density.
@@ -292,12 +300,23 @@ mod tests {
         // Three buckets with [1, 0, 1] talk pattern; smoothing
         // should pull the middle off zero.
         let segs = vec![
-            Segment { start_sec: 0.0, end_sec: 60.0, word_count: 60 },
-            Segment { start_sec: 120.0, end_sec: 180.0, word_count: 60 },
+            Segment {
+                start_sec: 0.0,
+                end_sec: 60.0,
+                word_count: 60,
+            },
+            Segment {
+                start_sec: 120.0,
+                end_sec: 180.0,
+                word_count: 60,
+            },
         ];
         let out = compute_retention(&segs, &[], 180.0, 60.0);
         assert_eq!(out.len(), 3);
-        assert!(out[1].retention > 0.0, "middle should be smoothed > 0, got {out:?}");
+        assert!(
+            out[1].retention > 0.0,
+            "middle should be smoothed > 0, got {out:?}"
+        );
     }
 
     #[test]
@@ -312,7 +331,10 @@ mod tests {
         let cps: Vec<f32> = (0..10).map(|i| (i * 60) as f32).collect();
         let out = compute_retention(&segs, &cps, 600.0, 60.0);
         for p in &out {
-            assert!((0.0..=1.0).contains(&p.retention), "out of unit range: {p:?}");
+            assert!(
+                (0.0..=1.0).contains(&p.retention),
+                "out of unit range: {p:?}"
+            );
         }
     }
 }

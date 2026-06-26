@@ -45,6 +45,11 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # --workspace builds with the `creator` feature OFF, so the feature-gated
+      # code in core/web/bin is never linted above. Lint it explicitly.
+      - name: clippy (Creator Edition)
+        run: cargo clippy -p strivo-core -p strivo-web -p strivo-bin --features creator --all-targets --locked -- -D warnings
+
       - name: test
         run: cargo test --workspace --release --all-targets --locked
 

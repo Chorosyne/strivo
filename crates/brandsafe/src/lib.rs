@@ -99,22 +99,29 @@ const DEFAULT_PROFANITY: &[&str] = &[
 pub fn default_restricted_games(platform: &str) -> &'static [&'static str] {
     match platform.to_ascii_lowercase().as_str() {
         "twitch" => &[
-            "gambling", "slots", "blackjack", "roulette",
-            "stake", "duelbits", "csgoroll",
+            "gambling",
+            "slots",
+            "blackjack",
+            "roulette",
+            "stake",
+            "duelbits",
+            "csgoroll",
             "rust", // Twitch-restricted for nudity events historically (illustrative)
         ],
-        "youtube" => &[
-            "gambling", "slots",
-            "vape", "tobacco",
-        ],
+        "youtube" => &["gambling", "slots", "vape", "tobacco"],
         _ => &[],
     }
 }
 
 /// Music-mention heuristic terms. Casing-insensitive substring match.
 const MUSIC_HINT_TERMS: &[&str] = &[
-    "spotify", "apple music", "song is", "this song", "play that song",
-    "soundcloud", "youtube music",
+    "spotify",
+    "apple music",
+    "song is",
+    "this song",
+    "play that song",
+    "soundcloud",
+    "youtube music",
 ];
 
 /// Slur scanner. Matches against [`DEFAULT_SLURS_MASKED`] *after*
@@ -224,15 +231,12 @@ pub fn scan_all(segments: &[Segment], category: &str, platforms: &[&str]) -> Vec
     out.extend(scan_restricted_game(category, platforms));
     out.extend(scan_music_mentions(segments));
     out.sort_by(|a, b| {
-        b.severity
-            .rank()
-            .cmp(&a.severity.rank())
-            .then_with(|| {
-                a.at_sec
-                    .unwrap_or(f32::INFINITY)
-                    .partial_cmp(&b.at_sec.unwrap_or(f32::INFINITY))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        b.severity.rank().cmp(&a.severity.rank()).then_with(|| {
+            a.at_sec
+                .unwrap_or(f32::INFINITY)
+                .partial_cmp(&b.at_sec.unwrap_or(f32::INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
     out
 }
@@ -292,7 +296,11 @@ mod tests {
     use super::*;
 
     fn seg(start: f32, text: &str) -> Segment {
-        Segment { start_sec: start, end_sec: start + 5.0, text: text.into() }
+        Segment {
+            start_sec: start,
+            end_sec: start + 5.0,
+            text: text.into(),
+        }
     }
 
     #[test]
@@ -327,7 +335,7 @@ mod tests {
     #[test]
     fn restricted_game_flags_twitch_gambling() {
         let out = scan_restricted_game("Slots Gambling Stream", &["Twitch"]);
-        assert!(out.len() >= 1);
+        assert!(!out.is_empty());
         assert!(out.iter().any(|v| v.platform.as_deref() == Some("Twitch")));
         assert!(out.iter().all(|v| v.severity == Severity::High));
     }
@@ -338,7 +346,10 @@ mod tests {
         let cat = "Vape Review Stream";
         let twitch = scan_restricted_game(cat, &["Twitch"]);
         let yt = scan_restricted_game(cat, &["YouTube"]);
-        assert!(twitch.is_empty(), "twitch should not flag vape, got {twitch:?}");
+        assert!(
+            twitch.is_empty(),
+            "twitch should not flag vape, got {twitch:?}"
+        );
         assert!(yt.iter().any(|v| v.platform.as_deref() == Some("YouTube")));
     }
 

@@ -76,7 +76,9 @@ async fn chapters_generate(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("chapters") { return r; }
+    if let Err(r) = gate_pro("chapters") {
+        return r;
+    }
     let crunchr_path = crunchr_db();
     if !crunchr_path.exists() {
         return Problem::not_found("crunchr DB not initialised").into_response();
@@ -99,7 +101,8 @@ async fn chapters_generate(
         "recording_id": recording_id,
         "chapters": chapters,
         "description": description,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `POST /api/v1/plugins/cuepoints/<recording_id>` — extract (or
@@ -113,7 +116,9 @@ async fn cuepoints_generate(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("cuepoints") { return r; }
+    if let Err(r) = gate_pro("cuepoints") {
+        return r;
+    }
     let id = match uuid::Uuid::parse_str(&recording_id) {
         Ok(u) => u,
         Err(_) => return Problem::bad_request("recording id must be a uuid").into_response(),
@@ -207,7 +212,9 @@ async fn clipper_analyze(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("clipper") { return r; }
+    if let Err(r) = gate_pro("clipper") {
+        return r;
+    }
     // We need cuepoints to score. If they're not cached we extract
     // them now — same path the standalone Cuepoints button uses.
     let input = match resolve_recording_path(&recording_id).await {
@@ -242,7 +249,8 @@ async fn clipper_analyze(
         },
     };
     let window = strivo_clipper::DEFAULT_WINDOW_SECS;
-    let highlights = strivo_clipper::score_highlights(&cuepoints, window, strivo_clipper::DEFAULT_TOP_K);
+    let highlights =
+        strivo_clipper::score_highlights(&cuepoints, window, strivo_clipper::DEFAULT_TOP_K);
     let store_path = strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("clipper")
@@ -269,7 +277,9 @@ async fn clipper_extract(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("clipper") { return r; }
+    if let Err(r) = gate_pro("clipper") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -277,7 +287,9 @@ async fn clipper_extract(
     if !input.exists() {
         return Problem::not_found("recording file missing").into_response();
     }
-    let dur = body.duration_sec.unwrap_or(strivo_clipper::DEFAULT_CLIP_DURATION_SECS);
+    let dur = body
+        .duration_sec
+        .unwrap_or(strivo_clipper::DEFAULT_CLIP_DURATION_SECS);
     let (start, duration) = strivo_clipper::clamp_request(body.start_sec, dur, None);
     let extension = input.extension().and_then(|e| e.to_str()).unwrap_or("mkv");
     let fallback_stem = format!("clip_{:.0}", start);
@@ -323,7 +335,9 @@ async fn clipper_list_clips(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("clipper") { return r; }
+    if let Err(r) = gate_pro("clipper") {
+        return r;
+    }
     let store_path = strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("clipper")
@@ -339,7 +353,13 @@ async fn clipper_list_clips(
 fn sanitize_stem(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
@@ -380,7 +400,9 @@ async fn thumbnails_generate(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("thumbnails") { return r; }
+    if let Err(r) = gate_pro("thumbnails") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -442,7 +464,8 @@ async fn thumbnails_generate(
         stem: stem.to_string(),
         facecam: body.facecam,
     };
-    let result = match strivo_thumbnails::generate_candidates(&input, (w, h), &opts, &recording_id) {
+    let result = match strivo_thumbnails::generate_candidates(&input, (w, h), &opts, &recording_id)
+    {
         Ok(r) => r,
         Err(e) => return Problem::internal(format!("thumbnails: {e}")).into_response(),
     };
@@ -465,9 +488,12 @@ async fn thumbnails_generate(
 fn probe_duration(input: &std::path::Path) -> Option<f32> {
     let out = std::process::Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
         ])
         .arg(input)
         .output()
@@ -480,10 +506,14 @@ fn probe_duration(input: &std::path::Path) -> Option<f32> {
 fn probe_resolution(input: &std::path::Path) -> Option<(u32, u32)> {
     let out = std::process::Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0",
         ])
         .arg(input)
         .output()
@@ -507,7 +537,9 @@ async fn thumbnails_list(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("thumbnails") { return r; }
+    if let Err(r) = gate_pro("thumbnails") {
+        return r;
+    }
     let store_path = strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("thumbnails")
@@ -516,7 +548,11 @@ async fn thumbnails_list(
         Ok(s) => s,
         Err(_) => return Json(json!({ "candidates": [] })).into_response(),
     };
-    let candidates = store.load(&recording_id, &stem).ok().flatten().unwrap_or_default();
+    let candidates = store
+        .load(&recording_id, &stem)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     Json(json!({ "candidates": candidates })).into_response()
 }
 
@@ -532,7 +568,9 @@ async fn thumbnails_serve_file(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("thumbnails") { return r; }
+    if let Err(r) = gate_pro("thumbnails") {
+        return r;
+    }
     let root = strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("thumbnails");
@@ -592,7 +630,9 @@ async fn insights_compare(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     let ids: Vec<String> = q
         .recs
         .split(',')
@@ -655,7 +695,9 @@ async fn insights_retention(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     // Pull Crunchr segments.
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
@@ -703,12 +745,8 @@ async fn insights_retention(
         .fold(0.0_f32, f32::max)
         .max(q.bucket_secs * 2.0);
     let bucket = q.bucket_secs.max(5.0);
-    let curve = strivo_insights_compare::compute_retention(
-        &segments,
-        &cuepoint_times,
-        duration,
-        bucket,
-    );
+    let curve =
+        strivo_insights_compare::compute_retention(&segments, &cuepoint_times, duration, bucket);
     Json(json!({
         "recording_id": recording_id,
         "duration_sec": duration,
@@ -728,8 +766,12 @@ struct CaptionsQuery {
     lang: String,
 }
 
-fn default_captions_fmt() -> String { "srt".to_string() }
-fn default_captions_lang() -> String { "en".to_string() }
+fn default_captions_fmt() -> String {
+    "srt".to_string()
+}
+fn default_captions_lang() -> String {
+    "en".to_string()
+}
 
 /// `GET /api/v1/plugins/captions/<recording_id>?fmt=srt&lang=en` —
 /// emit a caption file for the recording in the requested format. The
@@ -744,7 +786,9 @@ async fn captions_export(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("captions") { return r; }
+    if let Err(r) = gate_pro("captions") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
@@ -822,7 +866,10 @@ async fn captions_export(
             "srt",
         ),
     };
-    let safe = recording_id.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+    let safe = recording_id.replace(
+        |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+        "_",
+    );
     let filename = format!("{safe}.{}.{ext}", q.lang);
     (
         [
@@ -847,7 +894,9 @@ async fn multitrack_list(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("multitrack") { return r; }
+    if let Err(r) = gate_pro("multitrack") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -890,7 +939,9 @@ async fn multitrack_extract(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("multitrack") { return r; }
+    if let Err(r) = gate_pro("multitrack") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -900,11 +951,12 @@ async fn multitrack_extract(
     }
     // Pick a sensible extension. Default to the source file's extension
     // since `-c copy` keeps the codec; user can override via the payload.
-    let src_ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mka");
-    let ext = if body.ext.is_empty() { src_ext } else { body.ext.as_str() };
+    let src_ext = input.extension().and_then(|e| e.to_str()).unwrap_or("mka");
+    let ext = if body.ext.is_empty() {
+        src_ext
+    } else {
+        body.ext.as_str()
+    };
     let stem = if body.stem.is_empty() {
         format!("track_{}", body.track_index)
     } else {
@@ -955,7 +1007,9 @@ async fn brandsafe_scan(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("brandsafe") { return r; }
+    if let Err(r) = gate_pro("brandsafe") {
+        return r;
+    }
 
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
@@ -1005,7 +1059,9 @@ async fn reuse_generate(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("reuse") { return r; }
+    if let Err(r) = gate_pro("reuse") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -1024,12 +1080,16 @@ async fn reuse_generate(
     let mut topics: Vec<String> = Vec::new();
     let mut top_words: Vec<String> = Vec::new();
     if let Some(conn) = &crunchr_conn {
-        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id)
+        {
             summary = detail.summary.unwrap_or_default();
             topics = detail.topics;
         }
         if let Ok(words) = strivo_plugins::insights::frequency::top_words_for_recording(
-            conn, &recording_id, 30, false,
+            conn,
+            &recording_id,
+            30,
+            false,
         ) {
             top_words = words.into_iter().map(|w| w.word).collect();
         }
@@ -1041,7 +1101,11 @@ async fn reuse_generate(
         .join("clipper.db");
     let clip_starts: Vec<f32> = strivo_clipper::store::ClipperStore::open(&clipper_path)
         .ok()
-        .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
+        .and_then(|s| {
+            s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS)
+                .ok()
+                .flatten()
+        })
         .unwrap_or_default()
         .into_iter()
         .map(|h| h.time_sec)
@@ -1100,7 +1164,9 @@ async fn reuse_list(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("reuse") { return r; }
+    if let Err(r) = gate_pro("reuse") {
+        return r;
+    }
     let store_path = strivo_core::config::AppConfig::data_dir()
         .join("plugins")
         .join("reuse")
@@ -1142,36 +1208,48 @@ async fn casebook_generate(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("casebook") { return r; }
+    if let Err(r) = gate_pro("casebook") {
+        return r;
+    }
 
     let crunchr_conn = open_ro(&crunchr_db());
     // Title + channel + started_at from persist; duration from ffprobe.
-    let (mut title, channel_name, started_at) = match resolve_recording_meta_full(&recording_id).await {
-        Some((t, c, s)) => (t, c, s),
-        None => (recording_id.clone(), String::new(), None),
-    };
-    let input_path = match resolve_recording_path(&recording_id).await {
-        Ok(p) => Some(p),
-        Err(_) => None,
-    };
-    let duration_sec = input_path.as_ref().and_then(|p| probe_duration(p)).unwrap_or(0.0);
+    let (mut title, channel_name, started_at) =
+        match resolve_recording_meta_full(&recording_id).await {
+            Some((t, c, s)) => (t, c, s),
+            None => (recording_id.clone(), String::new(), None),
+        };
+    let input_path = resolve_recording_path(&recording_id).await.ok();
+    let duration_sec = input_path
+        .as_ref()
+        .and_then(|p| probe_duration(p))
+        .unwrap_or(0.0);
 
     // Crunchr summary + topics.
     let mut summary = String::new();
     let mut topics: Vec<String> = Vec::new();
     let mut top_words: Vec<strivo_casebook::WordCount> = Vec::new();
     if let Some(conn) = &crunchr_conn {
-        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id)
+        {
             summary = detail.summary.unwrap_or_default();
             topics = detail.topics;
             if title == recording_id || title.is_empty() {
                 title = detail.title;
             }
         }
-        if let Ok(words) = strivo_plugins::insights::frequency::top_words_for_recording(conn, &recording_id, 30, false) {
+        if let Ok(words) = strivo_plugins::insights::frequency::top_words_for_recording(
+            conn,
+            &recording_id,
+            30,
+            false,
+        ) {
             top_words = words
                 .into_iter()
-                .map(|w| strivo_casebook::WordCount { word: w.word, count: w.count as u64 })
+                .map(|w| strivo_casebook::WordCount {
+                    word: w.word,
+                    count: w.count as u64,
+                })
                 .collect();
         }
     }
@@ -1187,7 +1265,10 @@ async fn casebook_generate(
             .ok()
             .unwrap_or_default()
             .into_iter()
-            .map(|c| strivo_casebook::Chapter { start_sec: c.start_sec, title: c.title })
+            .map(|c| strivo_casebook::Chapter {
+                start_sec: c.start_sec,
+                title: c.title,
+            })
             .collect()
     } else {
         Vec::new()
@@ -1198,18 +1279,27 @@ async fn casebook_generate(
         .join("plugins")
         .join("clipper")
         .join("clipper.db");
-    let highlights: Vec<strivo_casebook::Highlight> = strivo_clipper::store::ClipperStore::open(&clipper_path)
-        .ok()
-        .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
-        .unwrap_or_default()
-        .into_iter()
-        .map(|h| strivo_casebook::Highlight { time_sec: h.time_sec, score: h.score })
-        .collect();
+    let highlights: Vec<strivo_casebook::Highlight> =
+        strivo_clipper::store::ClipperStore::open(&clipper_path)
+            .ok()
+            .and_then(|s| {
+                s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| strivo_casebook::Highlight {
+                time_sec: h.time_sec,
+                score: h.score,
+            })
+            .collect();
 
     // Brandsafe — best-effort scan now so the count is fresh.
     let mut bs_counts = strivo_casebook::BrandsafeCounts::default();
     if let Some(conn) = &crunchr_conn {
-        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id) {
+        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(conn, &recording_id)
+        {
             let segments: Vec<strivo_brandsafe::Segment> = detail
                 .segments
                 .iter()
@@ -1219,7 +1309,8 @@ async fn casebook_generate(
                     text: s.text.clone(),
                 })
                 .collect();
-            let verdicts = strivo_brandsafe::scan_all(&segments, &channel_name, &["Twitch", "YouTube"]);
+            let verdicts =
+                strivo_brandsafe::scan_all(&segments, &channel_name, &["Twitch", "YouTube"]);
             for v in &verdicts {
                 match v.severity {
                     strivo_brandsafe::Severity::Critical => bs_counts.critical += 1,
@@ -1267,12 +1358,17 @@ async fn casebook_generate(
     let fmt = q.fmt.unwrap_or_else(|| "json".to_string());
     if fmt == "markdown" || fmt == "md" {
         let body = strivo_casebook::to_markdown(&report);
-        let safe = recording_id
-            .replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+        let safe = recording_id.replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+            "_",
+        );
         let filename = format!("casebook_{safe}.md");
         return (
             [
-                (axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    "text/markdown; charset=utf-8",
+                ),
                 (
                     axum::http::header::CONTENT_DISPOSITION,
                     Box::leak(format!("attachment; filename=\"{filename}\"").into_boxed_str()),
@@ -1295,14 +1391,18 @@ struct CasebookQuery {
     fmt: Option<String>,
 }
 
-async fn resolve_recording_meta_full(recording_id: &str) -> Option<(String, String, Option<String>)> {
+async fn resolve_recording_meta_full(
+    recording_id: &str,
+) -> Option<(String, String, Option<String>)> {
     let id = uuid::Uuid::parse_str(recording_id).ok()?;
     let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
     let db = strivo_core::recording::persist::PersistDb::open(&jobs_db).ok()?;
     let rows = db.load_recording_jobs().await.ok()?;
     rows.into_iter().find(|j| j.id == id).map(|j| {
         (
-            j.stream_title.clone().unwrap_or_else(|| j.channel_name.clone()),
+            j.stream_title
+                .clone()
+                .unwrap_or_else(|| j.channel_name.clone()),
             j.channel_name.clone(),
             Some(j.started_at.to_rfc3339()),
         )
@@ -1328,7 +1428,9 @@ async fn heatmap_compute(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("heatmap") { return r; }
+    if let Err(r) = gate_pro("heatmap") {
+        return r;
+    }
 
     let input_path = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
@@ -1340,7 +1442,9 @@ async fn heatmap_compute(
     let mut segments: Vec<strivo_heatmap::TranscriptSegment> = Vec::new();
     let mut transcript_max_end: f32 = 0.0;
     if let Some(conn) = open_ro(&crunchr_db()) {
-        if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+        if let Ok(Some(detail)) =
+            strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id)
+        {
             segments = detail
                 .segments
                 .iter()
@@ -1355,7 +1459,11 @@ async fn heatmap_compute(
                 .collect();
         }
     }
-    let duration_sec = if probed > 0.0 { probed } else { transcript_max_end };
+    let duration_sec = if probed > 0.0 {
+        probed
+    } else {
+        transcript_max_end
+    };
 
     // Cuepoints — best-effort from cache.
     let cp_path = strivo_core::config::AppConfig::data_dir()
@@ -1364,7 +1472,11 @@ async fn heatmap_compute(
         .join("cuepoints.db");
     let cuepoint_times: Vec<f32> = strivo_cuepoints::store::CuepointsStore::open(&cp_path)
         .ok()
-        .and_then(|s| s.load(&recording_id, strivo_cuepoints::DEFAULT_THRESHOLD).ok().flatten())
+        .and_then(|s| {
+            s.load(&recording_id, strivo_cuepoints::DEFAULT_THRESHOLD)
+                .ok()
+                .flatten()
+        })
         .unwrap_or_default()
         .into_iter()
         .map(|c| c.time_sec)
@@ -1378,10 +1490,17 @@ async fn heatmap_compute(
     let highlights: Vec<strivo_heatmap::ScoredEvent> =
         strivo_clipper::store::ClipperStore::open(&clipper_path)
             .ok()
-            .and_then(|s| s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS).ok().flatten())
+            .and_then(|s| {
+                s.load_highlights(&recording_id, strivo_clipper::DEFAULT_WINDOW_SECS)
+                    .ok()
+                    .flatten()
+            })
             .unwrap_or_default()
             .into_iter()
-            .map(|h| strivo_heatmap::ScoredEvent { time_sec: h.time_sec, score: h.score })
+            .map(|h| strivo_heatmap::ScoredEvent {
+                time_sec: h.time_sec,
+                score: h.score,
+            })
             .collect();
 
     // Brand-safety — fresh scan; harvest the verdict times.
@@ -1397,7 +1516,9 @@ async fn heatmap_compute(
         // To scan we need the actual text — re-pull from crunchr.
         let mut times = Vec::new();
         if let Some(conn) = open_ro(&crunchr_db()) {
-            if let Ok(Some(detail)) = strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id) {
+            if let Ok(Some(detail)) =
+                strivo_plugins::crunchr::db::recording_detail(&conn, &recording_id)
+            {
                 let bs_segs: Vec<strivo_brandsafe::Segment> = detail
                     .segments
                     .iter()
@@ -1461,7 +1582,9 @@ async fn editor_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("editor") { return r; }
+    if let Err(r) = gate_pro("editor") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -1474,11 +1597,7 @@ async fn editor_load(
         Some(e) => e,
         None => {
             let dur = probe_duration(&input).unwrap_or(0.0);
-            strivo_editor::Edl::from_source(
-                &recording_id,
-                &input.to_string_lossy(),
-                dur,
-            )
+            strivo_editor::Edl::from_source(&recording_id, &input.to_string_lossy(), dur)
         }
     };
     Json(json!({
@@ -1510,7 +1629,9 @@ async fn editor_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("editor") { return r; }
+    if let Err(r) = gate_pro("editor") {
+        return r;
+    }
     let mut edl = body;
     edl.recording_id = recording_id.clone();
     edl.compact();
@@ -1536,7 +1657,9 @@ async fn editor_revisions_list(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("editor") { return r; }
+    if let Err(r) = gate_pro("editor") {
+        return r;
+    }
     let store = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open store: {e}")).into_response(),
@@ -1560,7 +1683,9 @@ async fn editor_revisions_restore(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("editor") { return r; }
+    if let Err(r) = gate_pro("editor") {
+        return r;
+    }
     let store = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open store: {e}")).into_response(),
@@ -1593,7 +1718,9 @@ async fn editor_render(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("editor") { return r; }
+    if let Err(r) = gate_pro("editor") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -1610,7 +1737,10 @@ async fn editor_render(
         .parent()
         .map(|p| p.join("edl"))
         .unwrap_or_else(|| std::path::PathBuf::from("./edl"));
-    let safe = recording_id.replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+    let safe = recording_id.replace(
+        |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+        "_",
+    );
     let output = out_dir.join(format!("{safe}.mkv"));
     // Pick up any saved branding overlay; absent or empty spec → passthrough,
     // so the fast `-c copy` concat path stays in play.
@@ -1644,14 +1774,13 @@ async fn editor_render(
 /// `GET /api/v1/plugins/viewguard/trend` — pull every verdict row
 /// from the viewguard DB and run the cross-stream trend analyzer.
 /// Returns a watchlist banded by Critical/Warning/Watch/Clear.
-async fn viewguard_trend(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn viewguard_trend(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("viewguard") { return r; }
+    if let Err(r) = gate_pro("viewguard") {
+        return r;
+    }
     let Some(conn) = viewguard_db().as_deref().and_then(open_ro) else {
         return Json(json!({
             "watchlist": {
@@ -1703,7 +1832,9 @@ struct BrollPayload {
     top_k: usize,
 }
 
-fn default_broll_top_k() -> usize { 12 }
+fn default_broll_top_k() -> usize {
+    12
+}
 
 /// `POST /api/v1/plugins/broll/<recording_id>` — turn a recording's
 /// Crunchr segments into TopicSlices, score them against the supplied
@@ -1717,7 +1848,9 @@ async fn broll_suggest(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("broll") { return r; }
+    if let Err(r) = gate_pro("broll") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
@@ -1763,7 +1896,9 @@ struct ChatDensityPayload {
     bucket_secs: f32,
 }
 
-fn default_bucket_secs_chat() -> f32 { 30.0 }
+fn default_bucket_secs_chat() -> f32 {
+    30.0
+}
 
 /// `POST /api/v1/plugins/chat-density/<recording_id>` — parse an IRC
 /// dump or CSV log, bucket events, and return the density / engagement
@@ -1778,7 +1913,9 @@ async fn chat_density_compute(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("chat_density") { return r; }
+    if let Err(r) = gate_pro("chat_density") {
+        return r;
+    }
     let events = if let Some(csv) = &body.csv {
         strivo_chat_density::parse_csv_log(csv)
     } else if let Some(log) = &body.log {
@@ -1823,7 +1960,9 @@ async fn deadair_detect(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("deadair") { return r; }
+    if let Err(r) = gate_pro("deadair") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -1832,7 +1971,9 @@ async fn deadair_detect(
         return Problem::not_found("recording file missing").into_response();
     }
     let noise_db = q.noise_db.unwrap_or(strivo_deadair::DEFAULT_NOISE_DB);
-    let min_span = q.min_span_secs.unwrap_or(strivo_deadair::DEFAULT_MIN_SPAN_SECS);
+    let min_span = q
+        .min_span_secs
+        .unwrap_or(strivo_deadair::DEFAULT_MIN_SPAN_SECS);
     let trim_threshold = q
         .trim_threshold_secs
         .unwrap_or(strivo_deadair::DEFAULT_TRIM_THRESHOLD_SECS);
@@ -1850,14 +1991,13 @@ async fn deadair_detect(
 /// first) the SPA can join over IRC. YouTube live chat needs an OAuth
 /// flow we haven't built yet, so we surface those rooms tagged
 /// `connectable=false`. Pro-gated.
-async fn chat_rooms(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn chat_rooms(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("chat") { return r; }
+    if let Err(r) = gate_pro("chat") {
+        return r;
+    }
     let channels = match state.ipc.snapshot().await {
         Ok(strivo_core::ipc::ServerMessage::StateSnapshot { channels, .. }) => channels,
         Ok(_) => vec![],
@@ -1915,7 +2055,9 @@ async fn chat_parse(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("chat") { return r; }
+    if let Err(r) = gate_pro("chat") {
+        return r;
+    }
     let mut parsed: Vec<serde_json::Value> = Vec::new();
     let empty_emotes = strivo_chat::EmoteMap::new();
     let mut handle = |line: &str| {
@@ -1963,7 +2105,9 @@ async fn multistream_tiles(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("multistream") { return r; }
+    if let Err(r) = gate_pro("multistream") {
+        return r;
+    }
     let channels = match state.ipc.snapshot().await {
         Ok(strivo_core::ipc::ServerMessage::StateSnapshot { channels, .. }) => channels,
         Ok(_) => vec![],
@@ -1974,13 +2118,21 @@ async fn multistream_tiles(
         .filter(|c| c.is_live)
         .filter_map(|c| {
             let platform = match c.platform {
-                strivo_core::platform::PlatformKind::Twitch => Some(strivo_multistream::Platform::Twitch),
-                strivo_core::platform::PlatformKind::YouTube => Some(strivo_multistream::Platform::YouTube),
+                strivo_core::platform::PlatformKind::Twitch => {
+                    Some(strivo_multistream::Platform::Twitch)
+                }
+                strivo_core::platform::PlatformKind::YouTube => {
+                    Some(strivo_multistream::Platform::YouTube)
+                }
                 strivo_core::platform::PlatformKind::Patreon => None,
             }?;
             Some(strivo_multistream::Stream {
                 id: format!("{:?}:{}", c.platform, c.id),
-                channel_name: if c.display_name.is_empty() { c.name.clone() } else { c.display_name },
+                channel_name: if c.display_name.is_empty() {
+                    c.name.clone()
+                } else {
+                    c.display_name
+                },
                 platform,
                 embed_key: c.name,
                 viewer_count: c.viewer_count.map(|v| v as u32),
@@ -2025,7 +2177,9 @@ pub(super) struct SidechainBody {
     pub persist: bool,
 }
 
-fn default_true_sc() -> bool { true }
+fn default_true_sc() -> bool {
+    true
+}
 
 /// `POST /api/v1/plugins/sidechain/<recording_id>` — translate VAD
 /// voice intervals into a sidechain ducking automation curve and
@@ -2041,13 +2195,12 @@ async fn sidechain_run(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("sidechain") { return r; }
+    if let Err(r) = gate_pro("sidechain") {
+        return r;
+    }
     let knobs = body.knobs.unwrap_or_default();
-    let automation = strivo_sidechain::build_automation(
-        &body.voice_intervals,
-        body.total_duration_sec,
-        &knobs,
-    );
+    let automation =
+        strivo_sidechain::build_automation(&body.voice_intervals, body.total_duration_sec, &knobs);
     let mut persisted = false;
     if body.persist {
         let path = automation_path(&recording_id);
@@ -2097,7 +2250,9 @@ async fn pitch_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("pitch") { return r; }
+    if let Err(r) = gate_pro("pitch") {
+        return r;
+    }
     let pt: strivo_pitch::PitchTime = std::fs::read_to_string(pitch_path(&recording_id))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -2132,7 +2287,9 @@ async fn pitch_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("pitch") { return r; }
+    if let Err(r) = gate_pro("pitch") {
+        return r;
+    }
     let path = pitch_path(&recording_id);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -2179,7 +2336,9 @@ async fn pitch_fit(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("pitch") { return r; }
+    if let Err(r) = gate_pro("pitch") {
+        return r;
+    }
     if body.source_duration_sec <= 0.0 || body.target_duration_sec <= 0.0 {
         return Problem::bad_request("source/target duration must be > 0").into_response();
     }
@@ -2221,11 +2380,14 @@ async fn insert_fx_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insert-fx") { return r; }
-    let chain: strivo_insert_fx::InsertChain = std::fs::read_to_string(insert_fx_path(&recording_id))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    if let Err(r) = gate_pro("insert-fx") {
+        return r;
+    }
+    let chain: strivo_insert_fx::InsertChain =
+        std::fs::read_to_string(insert_fx_path(&recording_id))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
     let filter = chain.to_filter();
     Json(json!({
         "recording_id": recording_id,
@@ -2248,7 +2410,9 @@ async fn insert_fx_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insert-fx") { return r; }
+    if let Err(r) = gate_pro("insert-fx") {
+        return r;
+    }
     let path = insert_fx_path(&recording_id);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -2283,7 +2447,9 @@ async fn insert_fx_preset(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insert-fx") { return r; }
+    if let Err(r) = gate_pro("insert-fx") {
+        return r;
+    }
     let chain = match bus.as_str() {
         "voice" => strivo_insert_fx::InsertChain::voice_bus_default(),
         "game" => strivo_insert_fx::InsertChain::game_bus_default(),
@@ -2343,7 +2509,9 @@ async fn vad_run(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("vad") { return r; }
+    if let Err(r) = gate_pro("vad") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -2352,16 +2520,21 @@ async fn vad_run(
         return Problem::not_found("recording file missing").into_response();
     }
     let window = q.window_sec.unwrap_or(600.0).clamp(10.0, 3600.0);
-    let tmp = std::env::temp_dir().join(format!(
-        "strivo-vad-{}.log",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("strivo-vad-{}.log", uuid::Uuid::new_v4().simple()));
     let filter = format!(
         "aresample=8000,asetnsamples=400:p=0,astats=metadata=1:reset=1,ametadata=print:file={}",
         tmp.display()
     );
     let output = match tokio::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "warning", "-t", &format!("{:.3}", window), "-i"])
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-t",
+            &format!("{:.3}", window),
+            "-i",
+        ])
         .arg(&input)
         .args(["-af", &filter, "-vn", "-ac", "1", "-f", "null", "-"])
         .output()
@@ -2395,10 +2568,16 @@ async fn vad_run(
             let token: String = tail.chars().take_while(|c| !c.is_whitespace()).collect();
             current_t = token.parse().ok();
         }
-        if let Some(rest) = line.trim_start().strip_prefix("lavfi.astats.Overall.RMS_level=") {
+        if let Some(rest) = line
+            .trim_start()
+            .strip_prefix("lavfi.astats.Overall.RMS_level=")
+        {
             if let (Some(t), Ok(db)) = (current_t, rest.trim().parse::<f32>()) {
                 if db.is_finite() {
-                    envelope.push(strivo_vad::EnvelopeFrame { time_sec: t, rms_db: db });
+                    envelope.push(strivo_vad::EnvelopeFrame {
+                        time_sec: t,
+                        rms_db: db,
+                    });
                 }
             }
         }
@@ -2465,10 +2644,16 @@ fn parse_astats_rms(stderr: &str) -> Vec<strivo_beat_detect::OnsetSample> {
             let token: String = tail.chars().take_while(|c| !c.is_whitespace()).collect();
             current_t = token.parse().ok();
         }
-        if let Some(rest) = line.trim_start().strip_prefix("lavfi.astats.Overall.RMS_level=") {
+        if let Some(rest) = line
+            .trim_start()
+            .strip_prefix("lavfi.astats.Overall.RMS_level=")
+        {
             if let (Some(t), Ok(db)) = (current_t, rest.trim().parse::<f32>()) {
                 if db.is_finite() {
-                    out.push(strivo_beat_detect::OnsetSample { time_sec: t, rms_db: db });
+                    out.push(strivo_beat_detect::OnsetSample {
+                        time_sec: t,
+                        rms_db: db,
+                    });
                 }
             }
         }
@@ -2489,7 +2674,9 @@ async fn beat_detect_run(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("beat-detect") { return r; }
+    if let Err(r) = gate_pro("beat-detect") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -2506,10 +2693,7 @@ async fn beat_detect_run(
     // emit RMS every 50 ms via astats. ametadata=print's `file=-` route
     // doesn't flush through the null muxer reliably; write to a temp
     // file and read it back instead.
-    let tmp = std::env::temp_dir().join(format!(
-        "strivo-bd-{}.log",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let tmp = std::env::temp_dir().join(format!("strivo-bd-{}.log", uuid::Uuid::new_v4().simple()));
     // aresample=8000 downsamples to 8 kHz (the envelope doesn't need
     // higher fidelity); asetnsamples=400:p=0 chunks the stream into
     // exact 50 ms frames; astats reset=1 emits per-frame (not
@@ -2520,7 +2704,14 @@ async fn beat_detect_run(
         tmp.display()
     );
     let output = match tokio::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "warning", "-t", &format!("{:.3}", window), "-i"])
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-t",
+            &format!("{:.3}", window),
+            "-i",
+        ])
         .arg(&input)
         .args(["-af", &filter, "-vn", "-ac", "1", "-f", "null", "-"])
         .output()
@@ -2584,8 +2775,12 @@ pub(super) struct ScheduleOptimizerBody {
     pub min_gap_hours: u8,
 }
 
-fn default_top_n() -> usize { 3 }
-fn default_min_gap() -> u8 { 4 }
+fn default_top_n() -> usize {
+    3
+}
+fn default_min_gap() -> u8 {
+    4
+}
 
 /// `POST /api/v1/plugins/schedule-optimizer/<recording_id>` — aggregate
 /// caller-supplied engagement samples and return the top weekly publish
@@ -2600,11 +2795,15 @@ async fn schedule_optimizer_recommend(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("schedule-optimizer") { return r; }
+    if let Err(r) = gate_pro("schedule-optimizer") {
+        return r;
+    }
     let grid = strivo_schedule_optimizer::aggregate(&body.samples);
     let mode = match body.mode.as_deref().unwrap_or("spread") {
         "greedy" => strivo_schedule_optimizer::RankMode::Greedy,
-        _ => strivo_schedule_optimizer::RankMode::Spread { min_gap_hours: body.min_gap_hours },
+        _ => strivo_schedule_optimizer::RankMode::Spread {
+            min_gap_hours: body.min_gap_hours,
+        },
     };
     let picks = strivo_schedule_optimizer::top_slots(&grid, body.top_n, mode);
     Json(json!({
@@ -2627,7 +2826,9 @@ fn scenes_db_path() -> std::path::PathBuf {
 /// component map. Missing files map to JSON null (compose() filters
 /// nulls so the manifest stays tight). Keeps the list in one place so
 /// adding a new plugin's state to a Scene is a one-line change.
-fn read_recording_components(recording_id: &str) -> std::collections::BTreeMap<String, serde_json::Value> {
+fn read_recording_components(
+    recording_id: &str,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
     let mut out = std::collections::BTreeMap::new();
     let load = |p: std::path::PathBuf| -> serde_json::Value {
         std::fs::read_to_string(&p)
@@ -2637,7 +2838,10 @@ fn read_recording_components(recording_id: &str) -> std::collections::BTreeMap<S
     };
     out.insert("branding".into(), load(branding_path(recording_id)));
     out.insert("automation".into(), load(automation_path(recording_id)));
-    out.insert("captions_style".into(), load(captions_style_path(recording_id)));
+    out.insert(
+        "captions_style".into(),
+        load(captions_style_path(recording_id)),
+    );
     // EDL state lives in a SQLite shared by all recordings; pull just this
     // one's row via the existing helper.
     let edl_json = match strivo_editor::store::EdlStore::open(&editor_store_path()) {
@@ -2684,10 +2888,10 @@ fn write_recording_components(
                     Ok(mut edl) => {
                         edl.recording_id = recording_id.to_string();
                         edl.compact();
-                        if let Ok(store) = strivo_editor::store::EdlStore::open(&editor_store_path()) {
-                            store
-                                .save_with_label(&edl, "restored from scene")
-                                .is_ok()
+                        if let Ok(store) =
+                            strivo_editor::store::EdlStore::open(&editor_store_path())
+                        {
+                            store.save_with_label(&edl, "restored from scene").is_ok()
                         } else {
                             false
                         }
@@ -2696,7 +2900,7 @@ fn write_recording_components(
                 }
             }
             _ => false, // Unknown component — preserve forward-compat by
-                       // listing it as skipped rather than crashing.
+                        // listing it as skipped rather than crashing.
         };
         if ok {
             restored.push(name.to_string());
@@ -2724,7 +2928,9 @@ async fn scenes_list(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("scenes") { return r; }
+    if let Err(r) = gate_pro("scenes") {
+        return r;
+    }
     let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
@@ -2744,10 +2950,18 @@ async fn scenes_capture(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("scenes") { return r; }
+    if let Err(r) = gate_pro("scenes") {
+        return r;
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let comps = read_recording_components(&recording_id);
-    let manifest = strivo_scenes::compose(&id, body.name, &recording_id, comps, body.thumbnail_data_url);
+    let manifest = strivo_scenes::compose(
+        &id,
+        body.name,
+        &recording_id,
+        comps,
+        body.thumbnail_data_url,
+    );
     let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
@@ -2777,7 +2991,9 @@ async fn scenes_restore(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("scenes") { return r; }
+    if let Err(r) = gate_pro("scenes") {
+        return r;
+    }
     let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
@@ -2807,7 +3023,9 @@ async fn scenes_delete(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("scenes") { return r; }
+    if let Err(r) = gate_pro("scenes") {
+        return r;
+    }
     let store = match strivo_scenes::SceneStore::open(&scenes_db_path()) {
         Ok(s) => s,
         Err(e) => return Problem::internal(format!("open: {e}")).into_response(),
@@ -2833,11 +3051,14 @@ async fn captions_style_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("captions") { return r; }
-    let style: strivo_captions::AssStyle = std::fs::read_to_string(captions_style_path(&recording_id))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    if let Err(r) = gate_pro("captions") {
+        return r;
+    }
+    let style: strivo_captions::AssStyle =
+        std::fs::read_to_string(captions_style_path(&recording_id))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
     Json(json!({ "recording_id": recording_id, "style": style })).into_response()
 }
 
@@ -2852,7 +3073,9 @@ async fn captions_style_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("captions") { return r; }
+    if let Err(r) = gate_pro("captions") {
+        return r;
+    }
     let path = captions_style_path(&recording_id);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -2888,13 +3111,14 @@ async fn automation_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("automation") { return r; }
+    if let Err(r) = gate_pro("automation") {
+        return r;
+    }
     let path = automation_path(&recording_id);
-    let automation: strivo_automation::VolumeAutomation =
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+    let automation: strivo_automation::VolumeAutomation = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     let asendcmd = automation.to_asendcmd(0.05);
     let filter = automation.build_audio_filter(0.05);
     Json(json!({
@@ -2918,7 +3142,9 @@ async fn automation_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("automation") { return r; }
+    if let Err(r) = gate_pro("automation") {
+        return r;
+    }
     let path = automation_path(&recording_id);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -2969,7 +3195,9 @@ async fn structure_classify(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("structure") { return r; }
+    if let Err(r) = gate_pro("structure") {
+        return r;
+    }
     let inputs = strivo_structure::StructureInputs {
         total_duration_sec: body.total_duration_sec,
         chapters: body.chapters,
@@ -2979,10 +3207,13 @@ async fn structure_classify(
     let knobs = body.knobs.unwrap_or_default();
     let segments = strivo_structure::classify(&inputs, &knobs);
     let totals: std::collections::HashMap<String, f32> =
-        segments.iter().fold(std::collections::HashMap::new(), |mut acc, s| {
-            *acc.entry(format!("{:?}", s.kind).to_lowercase()).or_insert(0.0) += s.duration();
-            acc
-        });
+        segments
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut acc, s| {
+                *acc.entry(format!("{:?}", s.kind).to_lowercase())
+                    .or_insert(0.0) += s.duration();
+                acc
+            });
     Json(json!({
         "recording_id": recording_id,
         "segments": segments,
@@ -3024,7 +3255,9 @@ async fn loudness_measure(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("loudness") { return r; }
+    if let Err(r) = gate_pro("loudness") {
+        return r;
+    }
     let input = match resolve_recording_path(&recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
@@ -3048,7 +3281,9 @@ async fn loudness_measure(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let pass1 = match strivo_loudness::parse_pass1(&stderr) {
         Some(p) => p,
-        None => return Problem::internal("loudnorm: pass-1 JSON not found in stderr").into_response(),
+        None => {
+            return Problem::internal("loudnorm: pass-1 JSON not found in stderr").into_response()
+        }
     };
     let delta = strivo_loudness::delta_from_target(target, &pass1);
     let pass2 = strivo_loudness::pass2_filter(target, &pass1);
@@ -3081,7 +3316,9 @@ async fn branding_load(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("branding") { return r; }
+    if let Err(r) = gate_pro("branding") {
+        return r;
+    }
     let path = branding_path(&recording_id);
     let spec: strivo_branding::BrandingSpec = match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
@@ -3109,7 +3346,9 @@ async fn branding_save(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("branding") { return r; }
+    if let Err(r) = gate_pro("branding") {
+        return r;
+    }
     let path = branding_path(&recording_id);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -3152,6 +3391,10 @@ fn count(conn: &Connection, sql: &str) -> i64 {
 /// Returns Err(402) when `name` is a Pro plugin and this machine is not
 /// entitled. Free plugins always Ok. The check is centralised here so
 /// every data route shares the same gate without forgetting one.
+// The Err is an axum `Response` by design (it's `?`-propagated straight into
+// the handler's return); boxing it to satisfy `result_large_err` would only
+// add an indirection at every `gate_pro(name)?` call site.
+#[allow(clippy::result_large_err)]
 fn gate_pro(name: &str) -> Result<(), axum::response::Response> {
     if strivo_core::licence::gate::is_entitled(name) {
         return Ok(());
@@ -3310,11 +3553,16 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
 
 // ── Crunchr ──────────────────────────────────────────────────────────
 
-async fn crunchr_recordings(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+async fn crunchr_recordings(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("crunchr") { return r; }
+    if let Err(r) = gate_pro("crunchr") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "recordings": [] })).into_response();
     };
@@ -3348,7 +3596,9 @@ async fn crunchr_recording(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("crunchr") { return r; }
+    if let Err(r) = gate_pro("crunchr") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
@@ -3399,7 +3649,9 @@ async fn crunchr_search(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("crunchr") { return r; }
+    if let Err(r) = gate_pro("crunchr") {
+        return r;
+    }
     let query = q.q.trim();
     if query.is_empty() {
         return Json(json!({ "results": [] })).into_response();
@@ -3437,7 +3689,9 @@ async fn archiver_channels(headers: HeaderMap, State(state): State<AppState>) ->
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("archiver") { return r; }
+    if let Err(r) = gate_pro("archiver") {
+        return r;
+    }
     let Some(conn) = open_ro(&archiver_db()) else {
         return Json(json!({ "available": false, "channels": [] })).into_response();
     };
@@ -3472,7 +3726,9 @@ async fn archiver_videos(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("archiver") { return r; }
+    if let Err(r) = gate_pro("archiver") {
+        return r;
+    }
     let Some(conn) = open_ro(&archiver_db()) else {
         return Json(json!({ "available": false, "videos": [] })).into_response();
     };
@@ -3499,11 +3755,16 @@ async fn archiver_videos(
 
 // ── Viewguard ────────────────────────────────────────────────────────
 
-async fn viewguard_verdicts(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+async fn viewguard_verdicts(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("viewguard") { return r; }
+    if let Err(r) = gate_pro("viewguard") {
+        return r;
+    }
     let Some(conn) = viewguard_db().as_deref().and_then(open_ro) else {
         return Json(json!({ "available": false, "verdicts": [] })).into_response();
     };
@@ -3512,8 +3773,8 @@ async fn viewguard_verdicts(headers: HeaderMap, State(state): State<AppState>) -
             let items: Vec<Value> = verdicts
                 .into_iter()
                 .map(|v| {
-                    let contributors: Value = serde_json::from_str(&v.contributors_json)
-                        .unwrap_or(Value::Null);
+                    let contributors: Value =
+                        serde_json::from_str(&v.contributors_json).unwrap_or(Value::Null);
                     json!({
                         "channel_id": v.channel_id,
                         "stream_started_at": v.stream_started_at.to_rfc3339(),
@@ -3538,7 +3799,9 @@ async fn viewguard_samples(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("viewguard") { return r; }
+    if let Err(r) = gate_pro("viewguard") {
+        return r;
+    }
     let Some(conn) = viewguard_db().as_deref().and_then(open_ro) else {
         return Json(json!({ "available": false, "samples": [] })).into_response();
     };
@@ -3577,7 +3840,9 @@ async fn insights_words(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "words": [] })).into_response();
     };
@@ -3585,15 +3850,16 @@ async fn insights_words(
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let result = if q.scope.as_deref() == Some("recording") {
         match q.recording.as_deref() {
-            Some(rec) => {
-                strivo_plugins::insights::frequency::top_words_for_recording(
-                    &conn,
-                    rec,
-                    limit,
-                    include_stopwords,
-                )
+            Some(rec) => strivo_plugins::insights::frequency::top_words_for_recording(
+                &conn,
+                rec,
+                limit,
+                include_stopwords,
+            ),
+            None => {
+                return Problem::bad_request("recording scope needs ?recording=<id>")
+                    .into_response()
             }
-            None => return Problem::bad_request("recording scope needs ?recording=<id>").into_response(),
         }
     } else {
         strivo_plugins::insights::frequency::top_words_global(&conn, limit, include_stopwords)
@@ -3614,13 +3880,15 @@ async fn insights_topics(headers: HeaderMap, State(state): State<AppState>) -> i
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Json(json!({ "available": false, "topics": [] })).into_response();
     };
     match strivo_plugins::insights::topics::cross_recording_topics(&conn) {
         Ok(mut rows) => {
-            rows.sort_by(|a, b| b.count.cmp(&a.count));
+            rows.sort_by_key(|t| std::cmp::Reverse(t.count));
             let items: Vec<Value> = rows
                 .into_iter()
                 .map(|t| {
@@ -3646,9 +3914,12 @@ async fn insights_speakers(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
-        return Json(json!({ "available": false, "speakers": [], "sentiment": null })).into_response();
+        return Json(json!({ "available": false, "speakers": [], "sentiment": null }))
+            .into_response();
     };
     let airtime = strivo_plugins::insights::speakers::airtime_for_recording(&conn, &id);
     let sentiment = strivo_plugins::insights::speakers::sentiment_for_recording(&conn, &id);
@@ -3697,7 +3968,9 @@ async fn insights_export(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    if let Err(r) = gate_pro("insights") { return r; }
+    if let Err(r) = gate_pro("insights") {
+        return r;
+    }
     let Some(conn) = open_ro(&crunchr_db()) else {
         return Problem::not_found("crunchr has no data yet").into_response();
     };
@@ -3766,7 +4039,9 @@ fn fmt_vtt_time(sec: f64) -> String {
 /// Escape `<` / `>` / `&` for embedding in a VTT cue body. `<v Name>` is a
 /// real VTT voice tag and must NOT be escaped — we emit that ourselves.
 fn vtt_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// `GET /api/v1/recordings/{id}/captions.vtt` — Crunchr's transcript segments
@@ -3819,15 +4094,24 @@ async fn recording_captions(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/plugins", get(index))
-        .route("/api/v1/plugins/crunchr/recordings", get(crunchr_recordings))
-        .route("/api/v1/plugins/crunchr/recordings/{id}", get(crunchr_recording))
+        .route(
+            "/api/v1/plugins/crunchr/recordings",
+            get(crunchr_recordings),
+        )
+        .route(
+            "/api/v1/plugins/crunchr/recordings/{id}",
+            get(crunchr_recording),
+        )
         .route("/api/v1/plugins/crunchr/search", get(crunchr_search))
         .route("/api/v1/plugins/archiver/channels", get(archiver_channels))
         .route(
             "/api/v1/plugins/archiver/channels/{channel_id}/videos",
             get(archiver_videos),
         )
-        .route("/api/v1/plugins/viewguard/verdicts", get(viewguard_verdicts))
+        .route(
+            "/api/v1/plugins/viewguard/verdicts",
+            get(viewguard_verdicts),
+        )
         .route(
             "/api/v1/plugins/viewguard/channels/{channel_id}/samples",
             get(viewguard_samples),
@@ -3839,53 +4123,143 @@ pub fn router() -> Router<AppState> {
             get(insights_speakers),
         )
         .route("/api/v1/plugins/insights/export", get(insights_export))
-        .route("/api/v1/recordings/{id}/captions.vtt", get(recording_captions))
-        .route("/api/v1/plugins/chapters/{id}", axum::routing::post(chapters_generate))
-        .route("/api/v1/plugins/cuepoints/{id}", axum::routing::post(cuepoints_generate))
-        .route("/api/v1/plugins/clipper/{id}/analyze", axum::routing::post(clipper_analyze))
-        .route("/api/v1/plugins/clipper/{id}/extract", axum::routing::post(clipper_extract))
-        .route("/api/v1/plugins/clipper/{id}/clips", get(clipper_list_clips))
-        .route("/api/v1/plugins/thumbnails/{id}", axum::routing::post(thumbnails_generate))
-        .route("/api/v1/plugins/thumbnails/{id}/{stem}", get(thumbnails_list))
-        .route("/api/v1/plugins/thumbnails/file", get(thumbnails_serve_file))
+        .route(
+            "/api/v1/recordings/{id}/captions.vtt",
+            get(recording_captions),
+        )
+        .route(
+            "/api/v1/plugins/chapters/{id}",
+            axum::routing::post(chapters_generate),
+        )
+        .route(
+            "/api/v1/plugins/cuepoints/{id}",
+            axum::routing::post(cuepoints_generate),
+        )
+        .route(
+            "/api/v1/plugins/clipper/{id}/analyze",
+            axum::routing::post(clipper_analyze),
+        )
+        .route(
+            "/api/v1/plugins/clipper/{id}/extract",
+            axum::routing::post(clipper_extract),
+        )
+        .route(
+            "/api/v1/plugins/clipper/{id}/clips",
+            get(clipper_list_clips),
+        )
+        .route(
+            "/api/v1/plugins/thumbnails/{id}",
+            axum::routing::post(thumbnails_generate),
+        )
+        .route(
+            "/api/v1/plugins/thumbnails/{id}/{stem}",
+            get(thumbnails_list),
+        )
+        .route(
+            "/api/v1/plugins/thumbnails/file",
+            get(thumbnails_serve_file),
+        )
         .route("/api/v1/plugins/insights/compare", get(insights_compare))
-        .route("/api/v1/plugins/insights/retention/{id}", get(insights_retention))
+        .route(
+            "/api/v1/plugins/insights/retention/{id}",
+            get(insights_retention),
+        )
         .route("/api/v1/plugins/captions/{id}", get(captions_export))
-        .route("/api/v1/plugins/captions/{id}/style", get(captions_style_load).post(captions_style_save))
+        .route(
+            "/api/v1/plugins/captions/{id}/style",
+            get(captions_style_load).post(captions_style_save),
+        )
         .route("/api/v1/plugins/multitrack/{id}", get(multitrack_list))
-        .route("/api/v1/plugins/multitrack/{id}/extract", axum::routing::post(multitrack_extract))
+        .route(
+            "/api/v1/plugins/multitrack/{id}/extract",
+            axum::routing::post(multitrack_extract),
+        )
         .route("/api/v1/plugins/brandsafe/{id}", get(brandsafe_scan))
-        .route("/api/v1/plugins/reuse/{id}/generate", axum::routing::post(reuse_generate))
+        .route(
+            "/api/v1/plugins/reuse/{id}/generate",
+            axum::routing::post(reuse_generate),
+        )
         .route("/api/v1/plugins/reuse/{id}", get(reuse_list))
         .route("/api/v1/plugins/casebook/{id}", get(casebook_generate))
         .route("/api/v1/plugins/heatmap/{id}", get(heatmap_compute))
-        .route("/api/v1/plugins/editor/{id}", get(editor_load).post(editor_save))
-        .route("/api/v1/plugins/editor/{id}/render", axum::routing::post(editor_render))
-        .route("/api/v1/plugins/editor/{id}/revisions", get(editor_revisions_list))
+        .route(
+            "/api/v1/plugins/editor/{id}",
+            get(editor_load).post(editor_save),
+        )
+        .route(
+            "/api/v1/plugins/editor/{id}/render",
+            axum::routing::post(editor_render),
+        )
+        .route(
+            "/api/v1/plugins/editor/{id}/revisions",
+            get(editor_revisions_list),
+        )
         .route(
             "/api/v1/plugins/editor/{id}/revisions/{rev_id}/restore",
             axum::routing::post(editor_revisions_restore),
         )
         .route("/api/v1/plugins/viewguard/trend", get(viewguard_trend))
-        .route("/api/v1/plugins/broll/{id}", axum::routing::post(broll_suggest))
-        .route("/api/v1/plugins/chat-density/{id}", axum::routing::post(chat_density_compute))
-        .route("/api/v1/plugins/deadair/{id}", axum::routing::post(deadair_detect))
-        .route("/api/v1/plugins/branding/{id}", get(branding_load).post(branding_save))
+        .route(
+            "/api/v1/plugins/broll/{id}",
+            axum::routing::post(broll_suggest),
+        )
+        .route(
+            "/api/v1/plugins/chat-density/{id}",
+            axum::routing::post(chat_density_compute),
+        )
+        .route(
+            "/api/v1/plugins/deadair/{id}",
+            axum::routing::post(deadair_detect),
+        )
+        .route(
+            "/api/v1/plugins/branding/{id}",
+            get(branding_load).post(branding_save),
+        )
         .route("/api/v1/plugins/multistream/tiles", get(multistream_tiles))
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
-        .route("/api/v1/plugins/chat/parse", axum::routing::post(chat_parse))
+        .route(
+            "/api/v1/plugins/chat/parse",
+            axum::routing::post(chat_parse),
+        )
         .route("/api/v1/chat/send", axum::routing::post(chat_send_message))
         .route("/api/v1/dataviz/run", axum::routing::post(dataviz_run))
-        .route("/api/v1/plugins/loudness/{id}", axum::routing::post(loudness_measure))
-        .route("/api/v1/plugins/structure/{id}", axum::routing::post(structure_classify))
-        .route("/api/v1/plugins/automation/{id}", get(automation_load).post(automation_save))
-        .route("/api/v1/plugins/scenes/{id}", get(scenes_list).post(scenes_capture))
-        .route("/api/v1/plugins/scenes/{id}/{scene_id}/restore", axum::routing::post(scenes_restore))
-        .route("/api/v1/plugins/scenes/{id}/{scene_id}", axum::routing::delete(scenes_delete))
-        .route("/api/v1/plugins/schedule-optimizer/{id}", axum::routing::post(schedule_optimizer_recommend))
-        .route("/api/v1/plugins/beat-detect/{id}", axum::routing::post(beat_detect_run))
+        .route(
+            "/api/v1/plugins/loudness/{id}",
+            axum::routing::post(loudness_measure),
+        )
+        .route(
+            "/api/v1/plugins/structure/{id}",
+            axum::routing::post(structure_classify),
+        )
+        .route(
+            "/api/v1/plugins/automation/{id}",
+            get(automation_load).post(automation_save),
+        )
+        .route(
+            "/api/v1/plugins/scenes/{id}",
+            get(scenes_list).post(scenes_capture),
+        )
+        .route(
+            "/api/v1/plugins/scenes/{id}/{scene_id}/restore",
+            axum::routing::post(scenes_restore),
+        )
+        .route(
+            "/api/v1/plugins/scenes/{id}/{scene_id}",
+            axum::routing::delete(scenes_delete),
+        )
+        .route(
+            "/api/v1/plugins/schedule-optimizer/{id}",
+            axum::routing::post(schedule_optimizer_recommend),
+        )
+        .route(
+            "/api/v1/plugins/beat-detect/{id}",
+            axum::routing::post(beat_detect_run),
+        )
         .route("/api/v1/plugins/vad/{id}", axum::routing::post(vad_run))
-        .route("/api/v1/plugins/sidechain/{id}", axum::routing::post(sidechain_run))
+        .route(
+            "/api/v1/plugins/sidechain/{id}",
+            axum::routing::post(sidechain_run),
+        )
         .route(
             "/api/v1/plugins/insert-fx/{id}",
             get(insert_fx_load).post(insert_fx_save),
@@ -3980,8 +4354,12 @@ async fn chat_send_message(
     use tokio::io::AsyncWriteExt;
     let (rx, mut tx) = tokio::io::split(irc);
     drop(rx); // read half unused — we don't ack
-    // PASS / NICK auth then PRIVMSG.
-    let pass = if token.starts_with("oauth:") { token.clone() } else { format!("oauth:{token}") };
+              // PASS / NICK auth then PRIVMSG.
+    let pass = if token.starts_with("oauth:") {
+        token.clone()
+    } else {
+        format!("oauth:{token}")
+    };
     let lines = [
         format!("PASS {pass}\r\n"),
         format!("NICK {}\r\n", login.to_ascii_lowercase()),
@@ -3998,17 +4376,27 @@ async fn chat_send_message(
 }
 
 fn plugin_storage_dir(name: &str) -> Option<std::path::PathBuf> {
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
-    Some(strivo_core::config::AppConfig::data_dir().join("plugins").join(name))
+    Some(
+        strivo_core::config::AppConfig::data_dir()
+            .join("plugins")
+            .join(name),
+    )
 }
 
 /// Walk a directory and return (total_bytes, file_count). Symlinks
 /// are not followed. Missing dir = (0, 0).
 fn plugin_storage_walk(dir: &std::path::Path) -> (u64, u64) {
     fn inner(dir: &std::path::Path, bytes: &mut u64, files: &mut u64) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return; };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in rd.flatten() {
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_file() {
@@ -4036,7 +4424,8 @@ async fn plugin_storage_size(
         return Problem::unauthorized().into_response();
     }
     let Some(dir) = plugin_storage_dir(&name) else {
-        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore").into_response();
+        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore")
+            .into_response();
     };
     let (bytes, file_count) = plugin_storage_walk(&dir);
     Json(json!({
@@ -4060,7 +4449,8 @@ async fn plugin_storage_clear(
         return Problem::unauthorized().into_response();
     }
     let Some(dir) = plugin_storage_dir(&name) else {
-        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore").into_response();
+        return Problem::bad_request("plugin name must be alphanumeric / dash / underscore")
+            .into_response();
     };
     if !dir.exists() {
         return Json(json!({

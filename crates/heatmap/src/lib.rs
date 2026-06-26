@@ -13,11 +13,10 @@
 //!   * `talk`         — words per second within the bucket
 //!   * `action`       — cuepoint count within the bucket
 //!   * `highlight`    — sum of clipper highlight scores landing in
-//!                      the bucket
+//!     the bucket
 //!   * `brandsafe`    — per-bucket count of brand-safety verdicts;
-//!                      this is a *negative* signal that subtracts
-//!                      from the fused retention so the editor sees
-//!                      the dip where a slur lands.
+//!     this is a *negative* signal that subtracts from the fused
+//!     retention so the editor sees the dip where a slur lands.
 //!
 //! Fused = clamp(0.40·talk + 0.30·action + 0.30·highlight − 0.50·brandsafe, 0, 1)
 //! then 3-bucket moving-average smoothed so single dead/loud buckets
@@ -83,12 +82,13 @@ pub fn compute_heatmap(inp: &HeatmapInputs) -> Vec<HeatBucket> {
         let wps = (s.word_count as f32) / span;
         let lo = (s.start_sec / bucket_secs).floor() as usize;
         let hi = ((s.end_sec / bucket_secs).ceil() as usize).min(n);
-        for b in lo..hi {
+        for (offset, slot) in talk[lo..hi].iter_mut().enumerate() {
+            let b = lo + offset;
             let b_lo = b as f32 * bucket_secs;
             let b_hi = b_lo + bucket_secs;
             let overlap = (s.end_sec.min(b_hi) - s.start_sec.max(b_lo)).max(0.0);
             if overlap > 0.0 {
-                talk[b] += wps * overlap / bucket_secs;
+                *slot += wps * overlap / bucket_secs;
             }
         }
     }
@@ -142,8 +142,7 @@ pub fn compute_heatmap(inp: &HeatmapInputs) -> Vec<HeatBucket> {
     // Fuse, then smooth.
     let raw_fused: Vec<f32> = (0..n)
         .map(|i| {
-            let raw = 0.40 * talk[i] + 0.30 * action[i] + 0.30 * highlight[i]
-                - 0.50 * brandsafe[i];
+            let raw = 0.40 * talk[i] + 0.30 * action[i] + 0.30 * highlight[i] - 0.50 * brandsafe[i];
             raw.clamp(0.0, 1.0)
         })
         .collect();
@@ -192,7 +191,10 @@ mod tests {
         }
     }
     fn ev(time: f32, score: f32) -> ScoredEvent {
-        ScoredEvent { time_sec: time, score }
+        ScoredEvent {
+            time_sec: time,
+            score,
+        }
     }
 
     #[test]
@@ -248,11 +250,7 @@ mod tests {
     fn brandsafe_subtracts_from_fused() {
         // Talk is uniform; brandsafe lands in bucket 1 → bucket 1
         // should fuse lower than bucket 0 or 2.
-        let segs = [
-            ts(0.0, 30.0, 30),
-            ts(30.0, 60.0, 30),
-            ts(60.0, 90.0, 30),
-        ];
+        let segs = [ts(0.0, 30.0, 30), ts(30.0, 60.0, 30), ts(60.0, 90.0, 30)];
         let bs = [40.0_f32]; // bucket 1
         let inp = HeatmapInputs {
             segments: &segs,
@@ -295,10 +293,7 @@ mod tests {
     fn smoothing_pulls_isolated_bucket_off_zero() {
         // Bucket 0 has talk, bucket 1 has nothing, bucket 2 has talk.
         // Bucket 1's fused should be lifted off zero by smoothing.
-        let segs = [
-            ts(0.0, 30.0, 60),
-            ts(60.0, 90.0, 60),
-        ];
+        let segs = [ts(0.0, 30.0, 60), ts(60.0, 90.0, 60)];
         let inp = HeatmapInputs {
             segments: &segs,
             cuepoint_times: &[],
@@ -309,15 +304,39 @@ mod tests {
         };
         let buckets = compute_heatmap(&inp);
         assert_eq!(buckets.len(), 3);
-        assert!(buckets[1].fused > 0.0, "middle should be smoothed > 0, got {buckets:?}");
+        assert!(
+            buckets[1].fused > 0.0,
+            "middle should be smoothed > 0, got {buckets:?}"
+        );
     }
 
     #[test]
     fn top_k_returns_highest_fused_first() {
         let buckets = vec![
-            HeatBucket { bucket_start: 0.0, talk: 0.1, action: 0.0, highlight: 0.0, brandsafe: 0.0, fused: 0.1 },
-            HeatBucket { bucket_start: 30.0, talk: 0.0, action: 0.0, highlight: 0.0, brandsafe: 0.0, fused: 0.9 },
-            HeatBucket { bucket_start: 60.0, talk: 0.0, action: 0.0, highlight: 0.0, brandsafe: 0.0, fused: 0.5 },
+            HeatBucket {
+                bucket_start: 0.0,
+                talk: 0.1,
+                action: 0.0,
+                highlight: 0.0,
+                brandsafe: 0.0,
+                fused: 0.1,
+            },
+            HeatBucket {
+                bucket_start: 30.0,
+                talk: 0.0,
+                action: 0.0,
+                highlight: 0.0,
+                brandsafe: 0.0,
+                fused: 0.9,
+            },
+            HeatBucket {
+                bucket_start: 60.0,
+                talk: 0.0,
+                action: 0.0,
+                highlight: 0.0,
+                brandsafe: 0.0,
+                fused: 0.5,
+            },
         ];
         let top = top_k_buckets(&buckets, 2);
         assert_eq!(top.len(), 2);
@@ -327,7 +346,14 @@ mod tests {
 
     #[test]
     fn top_k_zero_returns_empty() {
-        let buckets = vec![HeatBucket { bucket_start: 0.0, talk: 0.0, action: 0.0, highlight: 0.0, brandsafe: 0.0, fused: 1.0 }];
+        let buckets = vec![HeatBucket {
+            bucket_start: 0.0,
+            talk: 0.0,
+            action: 0.0,
+            highlight: 0.0,
+            brandsafe: 0.0,
+            fused: 1.0,
+        }];
         assert!(top_k_buckets(&buckets, 0).is_empty());
     }
 
@@ -377,7 +403,8 @@ mod tests {
         assert!(
             bucket_with_hl.fused >= bucket_no_hl.fused,
             "with-highlight {:?} should >= no-highlight {:?}",
-            bucket_with_hl, bucket_no_hl
+            bucket_with_hl,
+            bucket_no_hl
         );
     }
 }

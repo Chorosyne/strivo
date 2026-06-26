@@ -7,7 +7,7 @@
 //! key on a content hash and skip the re-run when nothing changed.
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 use crate::Chapter;
 
@@ -55,10 +55,9 @@ impl ChaptersStore {
         let row = stmt
             .query_row([recording_id], |r| r.get::<_, String>(0))
             .optional()?;
-        Ok(row
-            .map(|json| serde_json::from_str(&json))
+        row.map(|json| serde_json::from_str(&json))
             .transpose()
-            .context("parse cached chapters")?)
+            .context("parse cached chapters")
     }
 }
 

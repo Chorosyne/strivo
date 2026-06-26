@@ -89,7 +89,7 @@ fn leading_digit(mut v: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewguard::stats::{BIN_SECS, ChannelStats};
+    use crate::viewguard::stats::{ChannelStats, BIN_SECS};
     use chrono::{DateTime, Utc};
 
     fn t(s: i64) -> DateTime<Utc> {
@@ -125,15 +125,19 @@ mod tests {
     fn benford_distributed_does_not_fire() {
         // Mix of values roughly following Benford: many 1xxx, fewer 9xxx.
         let mut vs = Vec::new();
-        for _ in 0..90 { vs.push(1234); }
-        for _ in 0..50 { vs.push(2345); }
-        for _ in 0..38 { vs.push(3456); }
-        for _ in 0..30 { vs.push(4567); }
-        for _ in 0..24 { vs.push(5678); }
-        for _ in 0..20 { vs.push(6789); }
-        for _ in 0..17 { vs.push(7890); }
-        for _ in 0..16 { vs.push(8901); }
-        for _ in 0..15 { vs.push(9012); }
+        for (val, count) in [
+            (1234, 90),
+            (2345, 50),
+            (3456, 38),
+            (4567, 30),
+            (5678, 24),
+            (6789, 20),
+            (7890, 17),
+            (8901, 16),
+            (9012, 15),
+        ] {
+            vs.extend(std::iter::repeat(val).take(count));
+        }
         // duplicates to hit MIN_SAMPLES
         vs.extend(vs.clone());
         let s = stats_from(&vs);

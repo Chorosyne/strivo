@@ -29,7 +29,12 @@ impl ThumbnailsStore {
         Ok(Self { conn })
     }
 
-    pub fn save(&self, recording_id: &str, stem: &str, candidates: &[ThumbnailCandidate]) -> Result<()> {
+    pub fn save(
+        &self,
+        recording_id: &str,
+        stem: &str,
+        candidates: &[ThumbnailCandidate],
+    ) -> Result<()> {
         let json = serde_json::to_string(candidates)?;
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
@@ -49,9 +54,8 @@ impl ThumbnailsStore {
         let row = stmt
             .query_row(params![recording_id, stem], |r| r.get::<_, String>(0))
             .optional()?;
-        Ok(row
-            .map(|json| serde_json::from_str(&json))
+        row.map(|json| serde_json::from_str(&json))
             .transpose()
-            .context("parse cached thumbnails")?)
+            .context("parse cached thumbnails")
     }
 }

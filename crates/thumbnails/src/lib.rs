@@ -36,17 +36,13 @@ pub mod store;
 /// Where on the screen the streamer's facecam usually sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FacecamCorner {
     TopLeft,
+    #[default]
     TopRight,
     BottomLeft,
     BottomRight,
-}
-
-impl Default for FacecamCorner {
-    fn default() -> Self {
-        Self::TopRight
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -214,7 +210,9 @@ pub fn generate_candidates(
         let (bytes, variance, raw) = score_frame(&out)?;
         let crop_path = if let Some(corner) = opts.facecam {
             let crop = pick_facecam_crop(source_resolution.0, source_resolution.1, corner);
-            let crop_out = opts.out_dir.join(format!("{}_{:03}_facecam.jpg", opts.stem, i));
+            let crop_out = opts
+                .out_dir
+                .join(format!("{}_{:03}_facecam.jpg", opts.stem, i));
             extract_frame_cropped(input, t, &crop_out, crop)?;
             Some(crop_out.to_string_lossy().to_string())
         } else {
@@ -235,7 +233,10 @@ pub fn generate_candidates(
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    Ok(GenerateResult { recording_id: recording_id.to_string(), candidates })
+    Ok(GenerateResult {
+        recording_id: recording_id.to_string(),
+        candidates,
+    })
 }
 
 /// Map raw scores into [0,1] across the set so the SPA can render a

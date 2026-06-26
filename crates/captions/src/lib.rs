@@ -57,10 +57,7 @@ impl Translator for IdentityTranslator {
 /// Apply a translator across a segment list. Failures on individual
 /// segments are surfaced — the caller decides whether to retry or
 /// continue with a partial result.
-pub fn apply_translation(
-    segments: &[Segment],
-    t: &dyn Translator,
-) -> anyhow::Result<Vec<Segment>> {
+pub fn apply_translation(segments: &[Segment], t: &dyn Translator) -> anyhow::Result<Vec<Segment>> {
     let mut out = Vec::with_capacity(segments.len());
     for s in segments {
         out.push(Segment {
@@ -211,11 +208,7 @@ fn fmt_ass_time(sec: f32) -> String {
 /// for each segment is built from the matching `KaraokeSegment` if its
 /// start/end roughly aligns (within 0.05s). Cues with no karaoke fall
 /// back to the segment's plain text.
-pub fn to_ass(
-    segments: &[Segment],
-    style: &AssStyle,
-    karaoke: &[KaraokeSegment],
-) -> String {
+pub fn to_ass(segments: &[Segment], style: &AssStyle, karaoke: &[KaraokeSegment]) -> String {
     let mut out = String::new();
     out.push_str("[Script Info]\n");
     out.push_str(&format!("Title: {}\n", ass_escape(&style.title)));
@@ -236,7 +229,9 @@ pub fn to_ass(
         marginv = style.margin_v_px,
     ));
     out.push_str("[Events]\n");
-    out.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    out.push_str(
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+    );
     // Build a fast lookup so we can match karaoke entries by their
     // (rounded) start time without an O(n*m) scan.
     let kar_by_start: std::collections::HashMap<u32, &KaraokeSegment> = karaoke
@@ -245,9 +240,9 @@ pub fn to_ass(
         .collect();
     for s in segments {
         let key = (s.start_sec * 100.0).round() as u32;
-        let kar = kar_by_start.get(&key).filter(|k| {
-            (k.end_sec - s.end_sec).abs() < 0.05
-        });
+        let kar = kar_by_start
+            .get(&key)
+            .filter(|k| (k.end_sec - s.end_sec).abs() < 0.05);
         let speaker_override = match &s.speaker {
             Some(spk) => style
                 .speaker_colors
@@ -286,7 +281,9 @@ fn karaoke_text(seg: &KaraokeSegment, color_prefix: &str) -> String {
 /// parsing: `\N` is the line-break sequence (we keep newlines literal
 /// by replacing them), and `{` opens override blocks.
 fn ass_escape(s: &str) -> String {
-    s.replace('\n', "\\N").replace('{', "\\{").replace('}', "\\}")
+    s.replace('\n', "\\N")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
 }
 
 /// Plain-text export — drops timestamps + tags, useful for show-notes
@@ -320,9 +317,15 @@ mod tests {
 
     struct UpperTranslator;
     impl Translator for UpperTranslator {
-        fn source_lang(&self) -> &str { "en" }
-        fn target_lang(&self) -> &str { "en-shout" }
-        fn translate(&self, text: &str) -> anyhow::Result<String> { Ok(text.to_uppercase()) }
+        fn source_lang(&self) -> &str {
+            "en"
+        }
+        fn target_lang(&self) -> &str {
+            "en-shout"
+        }
+        fn translate(&self, text: &str) -> anyhow::Result<String> {
+            Ok(text.to_uppercase())
+        }
     }
 
     #[test]
@@ -406,20 +409,27 @@ mod tests {
             start_sec: start,
             end_sec: end,
             speaker: spk.map(|s| s.into()),
-            words: words.iter().map(|(t, s, e)| WordTiming {
-                text: (*t).into(), start_sec: *s, end_sec: *e,
-            }).collect(),
+            words: words
+                .iter()
+                .map(|(t, s, e)| WordTiming {
+                    text: (*t).into(),
+                    start_sec: *s,
+                    end_sec: *e,
+                })
+                .collect(),
         }
     }
 
     #[test]
     fn ass_header_carries_style_knobs() {
-        let mut style = AssStyle::default();
-        style.font = "Helvetica".into();
-        style.font_size = 72;
-        style.outline_px = 3.0;
-        style.shadow_px = 2.0;
-        style.margin_v_px = 120;
+        let style = AssStyle {
+            font: "Helvetica".into(),
+            font_size: 72,
+            outline_px: 3.0,
+            shadow_px: 2.0,
+            margin_v_px: 120,
+            ..Default::default()
+        };
         let s = to_ass(&[], &style, &[]);
         assert!(s.contains("Title: StriVo styled captions"));
         assert!(s.contains("Helvetica,72,"));
@@ -447,7 +457,12 @@ mod tests {
     #[test]
     fn ass_karaoke_emits_per_word_k_tags() {
         let segs = vec![seg(0.0, 2.0, "hello world", None)];
-        let k = vec![kar(0.0, 2.0, None, &[("hello", 0.0, 0.5), ("world", 0.5, 2.0)])];
+        let k = vec![kar(
+            0.0,
+            2.0,
+            None,
+            &[("hello", 0.0, 0.5), ("world", 0.5, 2.0)],
+        )];
         let s = to_ass(&segs, &AssStyle::default(), &k);
         // hello = 50cs, world = 150cs.
         assert!(s.contains(r"{\k50}hello"));
@@ -487,7 +502,12 @@ mod tests {
         let mut style = AssStyle::default();
         style.speaker_colors.insert("Bob".into(), "0080FF".into());
         let segs = vec![seg(0.0, 1.0, "go go", Some("Bob"))];
-        let k = vec![kar(0.0, 1.0, Some("Bob"), &[("go", 0.0, 0.5), ("go", 0.5, 1.0)])];
+        let k = vec![kar(
+            0.0,
+            1.0,
+            Some("Bob"),
+            &[("go", 0.0, 0.5), ("go", 0.5, 1.0)],
+        )];
         let s = to_ass(&segs, &style, &k);
         assert!(s.contains(r"{\c&H000080FF&}{\k50}go {\k50}go"));
     }

@@ -36,10 +36,7 @@ impl Detector for SpikeShape {
         }
 
         // Per-bin deltas (signed).
-        let deltas: Vec<i64> = vals
-            .windows(2)
-            .map(|w| w[1] as i64 - w[0] as i64)
-            .collect();
+        let deltas: Vec<i64> = vals.windows(2).map(|w| w[1] as i64 - w[0] as i64).collect();
         if deltas.is_empty() {
             return None;
         }
@@ -56,7 +53,7 @@ impl Detector for SpikeShape {
             .enumerate()
             .max_by_key(|(_, d)| d.abs())
             .unwrap();
-        let abs_max = recent_max.abs() as u32;
+        let abs_max = recent_max.unsigned_abs() as u32;
         if abs_max < MIN_ABS_JUMP {
             return None;
         }
@@ -104,7 +101,7 @@ impl Detector for SpikeShape {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewguard::stats::{BIN_SECS, ChannelStats};
+    use crate::viewguard::stats::{ChannelStats, BIN_SECS};
     use chrono::{DateTime, Utc};
 
     fn t(s: i64) -> DateTime<Utc> {

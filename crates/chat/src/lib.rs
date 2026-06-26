@@ -100,7 +100,9 @@ pub fn parse_twitch_irc(line: &str) -> Option<ChatMessage> {
 fn parse_irc_tags(raw: &str) -> TwitchTags {
     let mut out = TwitchTags::default();
     for pair in raw.split(';') {
-        let Some((k, v)) = pair.split_once('=') else { continue };
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
         match k {
             "id" if !v.is_empty() => out.id = Some(v.to_string()),
             "color" if !v.is_empty() => out.color = Some(v.to_string()),
@@ -143,7 +145,10 @@ fn unescape_irc_tag(s: &str) -> String {
 
 /// `\x01ACTION text\x01` → `(text, true)`. Otherwise `(s, false)`.
 fn strip_irc_action(s: &str) -> (&str, bool) {
-    let s = s.strip_prefix('\u{0001}').and_then(|t| t.strip_suffix('\u{0001}')).unwrap_or(s);
+    let s = s
+        .strip_prefix('\u{0001}')
+        .and_then(|t| t.strip_suffix('\u{0001}'))
+        .unwrap_or(s);
     if let Some(rest) = s.strip_prefix("ACTION ") {
         (rest, true)
     } else {
@@ -182,12 +187,24 @@ pub fn parse_twitch_emotes(raw: &str) -> Vec<EmoteRange> {
         return out;
     }
     for group in raw.split('/') {
-        let Some((id, runs)) = group.split_once(':') else { continue };
+        let Some((id, runs)) = group.split_once(':') else {
+            continue;
+        };
         for run in runs.split(',') {
-            let Some((start, end)) = run.split_once('-') else { continue };
-            let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) else { continue };
-            if end < start { continue }
-            out.push(EmoteRange { id: id.to_string(), start, end });
+            let Some((start, end)) = run.split_once('-') else {
+                continue;
+            };
+            let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) else {
+                continue;
+            };
+            if end < start {
+                continue;
+            }
+            out.push(EmoteRange {
+                id: id.to_string(),
+                start,
+                end,
+            });
         }
     }
     out.sort_by_key(|r| r.start);
@@ -280,17 +297,30 @@ pub fn tokenize_text(text: &str, emotes: &EmoteMap) -> Vec<Token> {
 
 fn classify_word(word: &str, emotes: &EmoteMap) -> Token {
     if let Some(rest) = word.strip_prefix('@') {
-        if rest.chars().next().map_or(false, |c| c.is_ascii_alphanumeric() || c == '_') {
-            return Token::Mention { user: rest.trim_end_matches([',', '.', '!', '?']).to_string() };
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Token::Mention {
+                user: rest.trim_end_matches([',', '.', '!', '?']).to_string(),
+            };
         }
     }
     if word.starts_with("http://") || word.starts_with("https://") {
-        return Token::Link { url: word.to_string() };
+        return Token::Link {
+            url: word.to_string(),
+        };
     }
     if let Some(url) = emotes.get(word) {
-        return Token::Emote { name: word.to_string(), url: url.clone() };
+        return Token::Emote {
+            name: word.to_string(),
+            url: url.clone(),
+        };
     }
-    Token::Text { text: word.to_string() }
+    Token::Text {
+        text: word.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,7 +378,8 @@ fn mentions_user(text: &str, user: &str) -> bool {
     let target = user.trim_start_matches('@');
     text.split_whitespace().any(|w| {
         let w = w.trim_end_matches([',', '.', '!', '?']);
-        w.strip_prefix('@').map_or(false, |u| u.eq_ignore_ascii_case(target))
+        w.strip_prefix('@')
+            .is_some_and(|u| u.eq_ignore_ascii_case(target))
     })
 }
 
@@ -421,7 +452,11 @@ mod tests {
     use super::*;
 
     fn priv_line(tags: &str, nick: &str, channel: &str, text: &str) -> String {
-        let tag_part = if tags.is_empty() { String::new() } else { format!("@{tags} ") };
+        let tag_part = if tags.is_empty() {
+            String::new()
+        } else {
+            format!("@{tags} ")
+        };
         format!("{tag_part}:{nick}!{nick}@{nick}.tmi.twitch.tv PRIVMSG #{channel} :{text}")
     }
 
@@ -475,12 +510,7 @@ mod tests {
     #[test]
     fn display_name_escape_handles_space() {
         // `\s` decodes to ' ' per IRCv3 tags spec.
-        let line = priv_line(
-            "display-name=Alice\\sB.",
-            "alice",
-            "cohh",
-            "hi",
-        );
+        let line = priv_line("display-name=Alice\\sB.", "alice", "cohh", "hi");
         let m = parse_twitch_irc(&line).unwrap();
         assert_eq!(m.sender, "Alice B.");
     }
@@ -501,7 +531,10 @@ mod tests {
     #[test]
     fn tokenise_extracts_mention() {
         let toks = tokenize_text("hey @Alice nice play", &EmoteMap::new());
-        let m = toks.iter().find(|t| matches!(t, Token::Mention { .. })).unwrap();
+        let m = toks
+            .iter()
+            .find(|t| matches!(t, Token::Mention { .. }))
+            .unwrap();
         assert!(matches!(m, Token::Mention { user } if user == "Alice"));
     }
 
@@ -513,7 +546,10 @@ mod tests {
 
     #[test]
     fn tokenise_recognises_emote_from_map() {
-        let toks = tokenize_text("Kappa rocks", &emotes_with("Kappa", "https://cdn/emote/Kappa.png"));
+        let toks = tokenize_text(
+            "Kappa rocks",
+            &emotes_with("Kappa", "https://cdn/emote/Kappa.png"),
+        );
         assert!(matches!(&toks[0], Token::Emote { name, .. } if name == "Kappa"));
         assert!(matches!(&toks[1], Token::Text { text } if text == "rocks"));
     }
@@ -521,7 +557,10 @@ mod tests {
     #[test]
     fn tokenise_recognises_https_link() {
         let toks = tokenize_text("look https://example.com pog", &EmoteMap::new());
-        let l = toks.iter().find(|t| matches!(t, Token::Link { .. })).unwrap();
+        let l = toks
+            .iter()
+            .find(|t| matches!(t, Token::Link { .. }))
+            .unwrap();
         assert!(matches!(l, Token::Link { url } if url == "https://example.com"));
     }
 
@@ -544,21 +583,36 @@ mod tests {
     #[test]
     fn filter_keyword_in_admits_substring_case_insensitive() {
         let msgs = vec![msg("a", "Hello there", false), msg("b", "goodbye", false)];
-        let kept = apply_filters(&msgs, &[Filter::KeywordIn { needle: "HELLO".into() }]);
+        let kept = apply_filters(
+            &msgs,
+            &[Filter::KeywordIn {
+                needle: "HELLO".into(),
+            }],
+        );
         assert_eq!(kept, vec![0]);
     }
 
     #[test]
     fn filter_keyword_out_excludes_match() {
         let msgs = vec![msg("a", "hello there", false), msg("b", "goodbye", false)];
-        let kept = apply_filters(&msgs, &[Filter::KeywordOut { needle: "bye".into() }]);
+        let kept = apply_filters(
+            &msgs,
+            &[Filter::KeywordOut {
+                needle: "bye".into(),
+            }],
+        );
         assert_eq!(kept, vec![0]);
     }
 
     #[test]
     fn filter_from_user_is_case_insensitive() {
         let msgs = vec![msg("Alice", "hi", false), msg("bob", "hi", false)];
-        let kept = apply_filters(&msgs, &[Filter::FromUser { user: "alice".into() }]);
+        let kept = apply_filters(
+            &msgs,
+            &[Filter::FromUser {
+                user: "alice".into(),
+            }],
+        );
         assert_eq!(kept, vec![0]);
     }
 
@@ -568,7 +622,12 @@ mod tests {
             msg("a", "hi @alice nice", false),
             msg("b", "good play", false),
         ];
-        let kept = apply_filters(&msgs, &[Filter::MentionsUser { user: "alice".into() }]);
+        let kept = apply_filters(
+            &msgs,
+            &[Filter::MentionsUser {
+                user: "alice".into(),
+            }],
+        );
         assert_eq!(kept, vec![0]);
     }
 
@@ -599,8 +658,12 @@ mod tests {
         let kept = apply_filters(
             &msgs,
             &[
-                Filter::FromUser { user: "alice".into() },
-                Filter::KeywordIn { needle: "hello".into() },
+                Filter::FromUser {
+                    user: "alice".into(),
+                },
+                Filter::KeywordIn {
+                    needle: "hello".into(),
+                },
                 Filter::NoLinks,
             ],
         );
@@ -660,7 +723,14 @@ mod tests {
     #[test]
     fn parse_emotes_handles_single_run() {
         let v = parse_twitch_emotes("25:0-4");
-        assert_eq!(v, vec![EmoteRange { id: "25".into(), start: 0, end: 4 }]);
+        assert_eq!(
+            v,
+            vec![EmoteRange {
+                id: "25".into(),
+                start: 0,
+                end: 4
+            }]
+        );
     }
 
     #[test]
@@ -669,9 +739,21 @@ mod tests {
         assert_eq!(
             v,
             vec![
-                EmoteRange { id: "25".into(), start: 0, end: 4 },
-                EmoteRange { id: "25".into(), start: 6, end: 10 },
-                EmoteRange { id: "1902".into(), start: 12, end: 17 },
+                EmoteRange {
+                    id: "25".into(),
+                    start: 0,
+                    end: 4
+                },
+                EmoteRange {
+                    id: "25".into(),
+                    start: 6,
+                    end: 10
+                },
+                EmoteRange {
+                    id: "1902".into(),
+                    start: 12,
+                    end: 17
+                },
             ]
         );
     }
@@ -702,7 +784,11 @@ mod tests {
         let toks = tokenize_text_with_ranges(
             "hey Kappa nice",
             &EmoteMap::new(),
-            &[EmoteRange { id: "25".into(), start: 4, end: 8 }],
+            &[EmoteRange {
+                id: "25".into(),
+                start: 4,
+                end: 8,
+            }],
         );
         // 3 tokens: "hey", emote "Kappa", "nice"
         assert_eq!(toks.len(), 3);
@@ -722,7 +808,11 @@ mod tests {
         let toks = tokenize_text_with_ranges(
             "Kappa hello",
             &EmoteMap::new(),
-            &[EmoteRange { id: "25".into(), start: 0, end: 4 }],
+            &[EmoteRange {
+                id: "25".into(),
+                start: 0,
+                end: 4,
+            }],
         );
         assert!(matches!(&toks[0], Token::Emote { name, .. } if name == "Kappa"));
         assert!(matches!(&toks[1], Token::Text { text } if text == "hello"));
@@ -735,12 +825,18 @@ mod tests {
         let toks = tokenize_text_with_ranges(
             "Kappa PogChamp",
             &m,
-            &[EmoteRange { id: "25".into(), start: 0, end: 4 }],
+            &[EmoteRange {
+                id: "25".into(),
+                start: 0,
+                end: 4,
+            }],
         );
         // 2 tokens — Twitch emote then name-mapped emote
         assert_eq!(toks.len(), 2);
         assert!(matches!(&toks[0], Token::Emote { name, .. } if name == "Kappa"));
-        assert!(matches!(&toks[1], Token::Emote { name, url } if name == "PogChamp" && url == "https://cdn/p.png"));
+        assert!(
+            matches!(&toks[1], Token::Emote { name, url } if name == "PogChamp" && url == "https://cdn/p.png")
+        );
     }
 
     #[test]

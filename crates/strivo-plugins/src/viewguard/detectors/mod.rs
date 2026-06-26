@@ -59,12 +59,9 @@ pub trait Detector {
 /// Run every M1 detector and collect non-None results.
 pub fn run_all(stats: &ChannelStats) -> Vec<SignalScore> {
     let detectors: [Box<dyn Detector>; 3] = [
-        Box::new(spike::SpikeShape::default()),
-        Box::new(plateau::PlateauVariance::default()),
-        Box::new(benford::BenfordDigits::default()),
+        Box::new(spike::SpikeShape),
+        Box::new(plateau::PlateauVariance),
+        Box::new(benford::BenfordDigits),
     ];
-    detectors
-        .iter()
-        .filter_map(|d| d.evaluate(stats))
-        .collect()
+    detectors.iter().filter_map(|d| d.evaluate(stats)).collect()
 }

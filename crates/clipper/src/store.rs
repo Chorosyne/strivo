@@ -73,10 +73,9 @@ impl ClipperStore {
                 r.get::<_, String>(0)
             })
             .optional()?;
-        Ok(row
-            .map(|json| serde_json::from_str(&json))
+        row.map(|json| serde_json::from_str(&json))
             .transpose()
-            .context("parse cached highlights")?)
+            .context("parse cached highlights")
     }
 
     pub fn save_clip(&self, clip: &ClipResult) -> Result<()> {

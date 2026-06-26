@@ -111,7 +111,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
         format_clock(inputs.duration_sec),
         inputs.started_at.as_deref().unwrap_or("—"),
     );
-    sections.push(Section { heading: "Overview".into(), body: overview });
+    sections.push(Section {
+        heading: "Overview".into(),
+        body: overview,
+    });
 
     if !inputs.summary.is_empty() {
         sections.push(Section {
@@ -128,7 +131,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
             .map(|t| format!("- {t}"))
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(Section { heading: "Topics".into(), body });
+        sections.push(Section {
+            heading: "Topics".into(),
+            body,
+        });
     }
 
     if !inputs.chapters.is_empty() {
@@ -138,7 +144,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
             .map(|c| format!("- {} — {}", format_clock(c.start_sec), c.title))
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(Section { heading: "Chapters".into(), body });
+        sections.push(Section {
+            heading: "Chapters".into(),
+            body,
+        });
     }
 
     if !inputs.highlights.is_empty() {
@@ -155,7 +164,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(Section { heading: "Top clip candidates".into(), body });
+        sections.push(Section {
+            heading: "Top clip candidates".into(),
+            body,
+        });
     }
 
     if let Some(score) = inputs.viewbot_score {
@@ -179,7 +191,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
             "- **Critical:** {}\n- **High:** {}\n- **Medium:** {}\n- **Low:** {}",
             bs.critical, bs.high, bs.medium, bs.low
         );
-        sections.push(Section { heading: "Brand-safety verdicts".into(), body });
+        sections.push(Section {
+            heading: "Brand-safety verdicts".into(),
+            body,
+        });
     } else {
         sections.push(Section {
             heading: "Brand-safety verdicts".into(),
@@ -195,7 +210,10 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
             .map(|w| format!("- `{}` × {}", w.word, w.count))
             .collect::<Vec<_>>()
             .join("\n");
-        sections.push(Section { heading: "Top words".into(), body });
+        sections.push(Section {
+            heading: "Top words".into(),
+            body,
+        });
     }
 
     let suggested_titles = suggest_titles(inputs);
@@ -214,12 +232,7 @@ pub fn compose_report(inputs: &CasebookInputs) -> CasebookReport {
 /// Heuristic title suggestions. Pulls top-3 topics, casefolds, joins
 /// with separators that read well on social platforms.
 pub fn suggest_titles(inputs: &CasebookInputs) -> Vec<String> {
-    let mut topics_or_words: Vec<String> = inputs
-        .topics
-        .iter()
-        .take(3)
-        .cloned()
-        .collect();
+    let mut topics_or_words: Vec<String> = inputs.topics.iter().take(3).cloned().collect();
     if topics_or_words.len() < 3 {
         for w in inputs.top_words.iter().take(3 - topics_or_words.len()) {
             topics_or_words.push(w.word.clone());
@@ -237,7 +250,11 @@ pub fn suggest_titles(inputs: &CasebookInputs) -> Vec<String> {
         format!("{} (full stream VOD)", joined),
     ];
     if !inputs.highlights.is_empty() {
-        out.push(format!("Top {} moments from {}", inputs.highlights.len(), joined));
+        out.push(format!(
+            "Top {} moments from {}",
+            inputs.highlights.len(),
+            joined
+        ));
     }
     out
 }
@@ -297,19 +314,42 @@ mod tests {
             summary: "World-record attempt across all bosses.".into(),
             topics: vec!["Diablo".into(), "Speedrun".into(), "Hardcore".into()],
             top_words: vec![
-                WordCount { word: "diablo".into(), count: 92 },
-                WordCount { word: "boss".into(), count: 41 },
+                WordCount {
+                    word: "diablo".into(),
+                    count: 92,
+                },
+                WordCount {
+                    word: "boss".into(),
+                    count: 41,
+                },
             ],
             chapters: vec![
-                Chapter { start_sec: 0.0, title: "Intro".into() },
-                Chapter { start_sec: 1800.0, title: "Diablo".into() },
+                Chapter {
+                    start_sec: 0.0,
+                    title: "Intro".into(),
+                },
+                Chapter {
+                    start_sec: 1800.0,
+                    title: "Diablo".into(),
+                },
             ],
             highlights: vec![
-                Highlight { time_sec: 600.0, score: 0.92 },
-                Highlight { time_sec: 4500.0, score: 0.74 },
+                Highlight {
+                    time_sec: 600.0,
+                    score: 0.92,
+                },
+                Highlight {
+                    time_sec: 4500.0,
+                    score: 0.74,
+                },
             ],
             viewbot_score: Some(0.15),
-            brandsafe_counts: BrandsafeCounts { critical: 0, high: 0, medium: 1, low: 2 },
+            brandsafe_counts: BrandsafeCounts {
+                critical: 0,
+                high: 0,
+                medium: 1,
+                low: 2,
+            },
         }
     }
 
@@ -324,10 +364,19 @@ mod tests {
         let r = compose_report(&base_inputs());
         let headings: Vec<&str> = r.sections.iter().map(|s| s.heading.as_str()).collect();
         for needed in [
-            "Overview", "Summary", "Topics", "Chapters", "Top clip candidates",
-            "Viewbot integrity", "Brand-safety verdicts", "Top words",
+            "Overview",
+            "Summary",
+            "Topics",
+            "Chapters",
+            "Top clip candidates",
+            "Viewbot integrity",
+            "Brand-safety verdicts",
+            "Top words",
         ] {
-            assert!(headings.contains(&needed), "missing section: {needed} — got {headings:?}");
+            assert!(
+                headings.contains(&needed),
+                "missing section: {needed} — got {headings:?}"
+            );
         }
     }
 
@@ -340,26 +389,42 @@ mod tests {
 
     #[test]
     fn viewbot_high_score_emits_alarm() {
-        let mut inp = CasebookInputs::default();
-        inp.viewbot_score = Some(0.85);
+        let inp = CasebookInputs {
+            viewbot_score: Some(0.85),
+            ..Default::default()
+        };
         let r = compose_report(&inp);
-        let section = r.sections.iter().find(|s| s.heading == "Viewbot integrity").unwrap();
+        let section = r
+            .sections
+            .iter()
+            .find(|s| s.heading == "Viewbot integrity")
+            .unwrap();
         assert!(section.body.contains("High viewbot risk"));
     }
 
     #[test]
     fn viewbot_low_score_emits_clear() {
-        let mut inp = CasebookInputs::default();
-        inp.viewbot_score = Some(0.05);
+        let inp = CasebookInputs {
+            viewbot_score: Some(0.05),
+            ..Default::default()
+        };
         let r = compose_report(&inp);
-        let section = r.sections.iter().find(|s| s.heading == "Viewbot integrity").unwrap();
+        let section = r
+            .sections
+            .iter()
+            .find(|s| s.heading == "Viewbot integrity")
+            .unwrap();
         assert!(section.body.contains("Viewbot signal low"));
     }
 
     #[test]
     fn brandsafe_no_counts_emits_clean_marker() {
         let r = compose_report(&CasebookInputs::default());
-        let section = r.sections.iter().find(|s| s.heading == "Brand-safety verdicts").unwrap();
+        let section = r
+            .sections
+            .iter()
+            .find(|s| s.heading == "Brand-safety verdicts")
+            .unwrap();
         assert!(section.body.contains("No risks flagged"));
     }
 
@@ -373,12 +438,23 @@ mod tests {
 
     #[test]
     fn suggested_titles_fall_back_to_top_words() {
-        let mut inp = CasebookInputs::default();
-        inp.top_words = vec![
-            WordCount { word: "alpha".into(), count: 5 },
-            WordCount { word: "beta".into(), count: 4 },
-            WordCount { word: "gamma".into(), count: 3 },
-        ];
+        let inp = CasebookInputs {
+            top_words: vec![
+                WordCount {
+                    word: "alpha".into(),
+                    count: 5,
+                },
+                WordCount {
+                    word: "beta".into(),
+                    count: 4,
+                },
+                WordCount {
+                    word: "gamma".into(),
+                    count: 3,
+                },
+            ],
+            ..Default::default()
+        };
         let titles = suggest_titles(&inp);
         assert!(!titles.is_empty());
         let joined = titles.join(" ");
@@ -408,12 +484,21 @@ mod tests {
 
     #[test]
     fn highlights_capped_to_ten_lines() {
-        let mut inp = CasebookInputs::default();
-        inp.highlights = (0..50)
-            .map(|i| Highlight { time_sec: i as f32 * 10.0, score: 0.5 })
-            .collect();
+        let inp = CasebookInputs {
+            highlights: (0..50)
+                .map(|i| Highlight {
+                    time_sec: i as f32 * 10.0,
+                    score: 0.5,
+                })
+                .collect(),
+            ..Default::default()
+        };
         let r = compose_report(&inp);
-        let section = r.sections.iter().find(|s| s.heading == "Top clip candidates").unwrap();
+        let section = r
+            .sections
+            .iter()
+            .find(|s| s.heading == "Top clip candidates")
+            .unwrap();
         let line_count = section.body.lines().count();
         assert!(line_count <= 10, "got {line_count}");
     }

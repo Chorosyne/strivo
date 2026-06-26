@@ -97,8 +97,8 @@ pub struct ClassifierKnobs {
 impl Default for ClassifierKnobs {
     fn default() -> Self {
         Self {
-            intro_window_sec: 180.0,    // first 3 minutes
-            outro_window_sec: 120.0,    // last 2 minutes
+            intro_window_sec: 180.0, // first 3 minutes
+            outro_window_sec: 120.0, // last 2 minutes
             break_chat_mpm: 8.0,
             gameplay_chat_mpm: 30.0,
             min_break_sec: 90.0,
@@ -160,7 +160,8 @@ pub fn classify(inputs: &StructureInputs, knobs: &ClassifierKnobs) -> Vec<Segmen
             // mean the broadcaster is actively on-screen (gameplay /
             // demo with audio off / silent solo run). Don't tag those as
             // Break.
-            let scene_busy = midspan_scene_rate(&inputs.scene_cuts_sec, inside_lo, inside_hi) >= 3.0;
+            let scene_busy =
+                midspan_scene_rate(&inputs.scene_cuts_sec, inside_lo, inside_hi) >= 3.0;
             if b.rate_mpm <= knobs.break_chat_mpm && !scene_busy {
                 run_start = run_start.or(Some(inside_lo));
                 run_end = inside_hi;
@@ -188,7 +189,11 @@ pub fn classify(inputs: &StructureInputs, knobs: &ClassifierKnobs) -> Vec<Segmen
     }
     // Merge anchors + breaks then tile gaps with Gameplay / Content.
     anchors.extend(breaks);
-    anchors.sort_by(|a, b| a.start_sec.partial_cmp(&b.start_sec).unwrap_or(std::cmp::Ordering::Equal));
+    anchors.sort_by(|a, b| {
+        a.start_sec
+            .partial_cmp(&b.start_sec)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut out: Vec<Segment> = Vec::new();
     let mut cursor = 0.0f32;
@@ -198,23 +203,45 @@ pub fn classify(inputs: &StructureInputs, knobs: &ClassifierKnobs) -> Vec<Segmen
             // else generic Content. Use the cuepoint density as a
             // tiebreaker so "talking with steady scene rate" still
             // reads as gameplay-paced.
-            let kind = if midspan_is_busy(&inputs.chat_buckets, &inputs.scene_cuts_sec, knobs.gameplay_chat_mpm, cursor, seg.start_sec) {
+            let kind = if midspan_is_busy(
+                &inputs.chat_buckets,
+                &inputs.scene_cuts_sec,
+                knobs.gameplay_chat_mpm,
+                cursor,
+                seg.start_sec,
+            ) {
                 SectionKind::Gameplay
             } else {
                 SectionKind::Content
             };
-            out.push(Segment { kind, start_sec: cursor, end_sec: seg.start_sec, label: None });
+            out.push(Segment {
+                kind,
+                start_sec: cursor,
+                end_sec: seg.start_sec,
+                label: None,
+            });
         }
         cursor = seg.end_sec.max(cursor);
         out.push(seg);
     }
     if cursor < total {
-        let kind = if midspan_is_busy(&inputs.chat_buckets, &inputs.scene_cuts_sec, knobs.gameplay_chat_mpm, cursor, total) {
+        let kind = if midspan_is_busy(
+            &inputs.chat_buckets,
+            &inputs.scene_cuts_sec,
+            knobs.gameplay_chat_mpm,
+            cursor,
+            total,
+        ) {
             SectionKind::Gameplay
         } else {
             SectionKind::Content
         };
-        out.push(Segment { kind, start_sec: cursor, end_sec: total, label: None });
+        out.push(Segment {
+            kind,
+            start_sec: cursor,
+            end_sec: total,
+            label: None,
+        });
     }
 
     // Step 2: enrich gameplay/content labels using chapter titles when
@@ -223,7 +250,11 @@ pub fn classify(inputs: &StructureInputs, knobs: &ClassifierKnobs) -> Vec<Segmen
         if seg.label.is_some() {
             continue;
         }
-        if let Some(ch) = inputs.chapters.iter().find(|c| c.start_sec <= seg.start_sec + 0.5 && c.end_sec >= seg.end_sec - 0.5) {
+        if let Some(ch) = inputs
+            .chapters
+            .iter()
+            .find(|c| c.start_sec <= seg.start_sec + 0.5 && c.end_sec >= seg.end_sec - 0.5)
+        {
             seg.label = Some(ch.title.clone());
         }
     }
@@ -240,7 +271,13 @@ fn midspan_scene_rate(scenes: &[f32], lo: f32, hi: f32) -> f32 {
     (count / span) * 60.0
 }
 
-fn midspan_is_busy(buckets: &[ChatBucket], scenes: &[f32], gameplay_mpm: f32, lo: f32, hi: f32) -> bool {
+fn midspan_is_busy(
+    buckets: &[ChatBucket],
+    scenes: &[f32],
+    gameplay_mpm: f32,
+    lo: f32,
+    hi: f32,
+) -> bool {
     let span = (hi - lo).max(0.001);
     let avg_chat = if buckets.is_empty() {
         0.0
@@ -270,7 +307,11 @@ mod tests {
     use super::*;
 
     fn bucket(s: f32, e: f32, mpm: f32) -> ChatBucket {
-        ChatBucket { start_sec: s, end_sec: e, rate_mpm: mpm }
+        ChatBucket {
+            start_sec: s,
+            end_sec: e,
+            rate_mpm: mpm,
+        }
     }
 
     #[test]
@@ -281,7 +322,10 @@ mod tests {
 
     #[test]
     fn very_short_capture_collapses_to_intro_only() {
-        let inputs = StructureInputs { total_duration_sec: 60.0, ..Default::default() };
+        let inputs = StructureInputs {
+            total_duration_sec: 60.0,
+            ..Default::default()
+        };
         let out = classify(&inputs, &ClassifierKnobs::default());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].kind, SectionKind::Intro);
@@ -291,7 +335,7 @@ mod tests {
     #[test]
     fn long_broadcast_gets_intro_outro_and_middle() {
         let inputs = StructureInputs {
-            total_duration_sec: 3600.0, // 1 hour
+            total_duration_sec: 3600.0,                      // 1 hour
             chat_buckets: vec![bucket(200.0, 3400.0, 40.0)], // busy middle
             ..Default::default()
         };
@@ -368,7 +412,10 @@ mod tests {
             ..Default::default()
         };
         let out = classify(&inputs, &ClassifierKnobs::default());
-        let gameplay = out.iter().find(|s| s.kind == SectionKind::Gameplay).unwrap();
+        let gameplay = out
+            .iter()
+            .find(|s| s.kind == SectionKind::Gameplay)
+            .unwrap();
         assert_eq!(gameplay.label.as_deref(), Some("Boss fight"));
     }
 
@@ -392,7 +439,9 @@ mod tests {
             total_duration_sec: 1800.0,
             chat_buckets: vec![bucket(180.0, 1680.0, 5.0)], // low chat
             // 10 cuts in a 1500-sec span → ~0.4/min — NOT busy.
-            scene_cuts_sec: vec![200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0],
+            scene_cuts_sec: vec![
+                200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0,
+            ],
             ..Default::default()
         };
         let out = classify(&inputs, &ClassifierKnobs::default());
@@ -414,7 +463,10 @@ mod tests {
     fn outro_slot_skipped_when_broadcast_too_short_for_both_windows() {
         // 4-minute broadcast — intro alone covers 3 min; remaining 60s
         // is shorter than the outro window's 120s anchor.
-        let inputs = StructureInputs { total_duration_sec: 240.0, ..Default::default() };
+        let inputs = StructureInputs {
+            total_duration_sec: 240.0,
+            ..Default::default()
+        };
         let out = classify(&inputs, &ClassifierKnobs::default());
         assert!(out.iter().any(|s| s.kind == SectionKind::Intro));
         assert!(!out.iter().any(|s| s.kind == SectionKind::Outro));
@@ -424,9 +476,14 @@ mod tests {
 
     #[test]
     fn knobs_override_widens_intro_window() {
-        let mut knobs = ClassifierKnobs::default();
-        knobs.intro_window_sec = 600.0;
-        let inputs = StructureInputs { total_duration_sec: 3600.0, ..Default::default() };
+        let knobs = ClassifierKnobs {
+            intro_window_sec: 600.0,
+            ..Default::default()
+        };
+        let inputs = StructureInputs {
+            total_duration_sec: 3600.0,
+            ..Default::default()
+        };
         let out = classify(&inputs, &knobs);
         assert_eq!(out[0].kind, SectionKind::Intro);
         assert_eq!(out[0].end_sec, 600.0);
@@ -436,7 +493,11 @@ mod tests {
     fn json_roundtrip_preserves_inputs_and_segments() {
         let inputs = StructureInputs {
             total_duration_sec: 1800.0,
-            chapters: vec![ChapterSpan { title: "x".into(), start_sec: 10.0, end_sec: 20.0 }],
+            chapters: vec![ChapterSpan {
+                title: "x".into(),
+                start_sec: 10.0,
+                end_sec: 20.0,
+            }],
             chat_buckets: vec![bucket(0.0, 100.0, 25.0)],
             scene_cuts_sec: vec![5.0, 15.0, 25.0],
         };

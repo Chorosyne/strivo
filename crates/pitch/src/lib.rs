@@ -243,15 +243,19 @@ mod tests {
 
     #[test]
     fn output_duration_handles_zero_tempo() {
-        let mut p = PitchTime::default();
-        p.tempo = 0.0;
+        let p = PitchTime {
+            tempo: 0.0,
+            ..Default::default()
+        };
         assert_eq!(p.output_duration_sec(100.0), 100.0);
     }
 
     #[test]
     fn pitch_clamps_in_filter_string() {
-        let mut p = PitchTime::default();
-        p.pitch = 100.0;
+        let mut p = PitchTime {
+            pitch: 100.0,
+            ..Default::default()
+        };
         assert!(p.to_filter().contains("pitch=4.0"));
         p.pitch = 0.001;
         assert!(p.to_filter().contains("pitch=0.25"));

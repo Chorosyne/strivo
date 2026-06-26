@@ -85,10 +85,9 @@ impl EdlStore {
         let row = stmt
             .query_row([recording_id], |r| r.get::<_, String>(0))
             .optional()?;
-        Ok(row
-            .map(|json| serde_json::from_str(&json))
+        row.map(|json| serde_json::from_str(&json))
             .transpose()
-            .context("parse cached EDL")?)
+            .context("parse cached EDL")
     }
 
     pub fn clear(&self, recording_id: &str) -> Result<()> {
@@ -166,7 +165,9 @@ mod tests {
             recording_id: rec.into(),
             cuts: (0..n)
                 .map(|i| Cut {
-                    kind: CutKind::Source { source_path: "/tmp/x.mkv".into() },
+                    kind: CutKind::Source {
+                        source_path: "/tmp/x.mkv".into(),
+                    },
                     start_sec: i as f32 * 10.0,
                     end_sec: i as f32 * 10.0 + 5.0,
                     fade_in_sec: 0.0,
@@ -204,7 +205,9 @@ mod tests {
     fn limit_clamps_returned_rows() {
         let (store, _d) = temp_store();
         for i in 0..7 {
-            store.save_with_label(&sample_edl("r", i + 1), &format!("v{i}")).unwrap();
+            store
+                .save_with_label(&sample_edl("r", i + 1), &format!("v{i}"))
+                .unwrap();
         }
         let revs = store.list_revisions("r", 3).unwrap();
         assert_eq!(revs.len(), 3);

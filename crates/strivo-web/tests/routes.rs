@@ -71,8 +71,7 @@ async fn body_to_bytes_helper_compiles() {
 fn channel_export_json_roundtrip() {
     use strivo_core::config::{AppConfig, AutoRecordEntry, RecordingFormat};
 
-    let mut cfg = AppConfig::default();
-    cfg.auto_record_channels = vec![
+    let auto_record_channels = vec![
         AutoRecordEntry {
             platform: "Twitch".into(),
             channel_id: "12345".into(),
@@ -91,6 +90,10 @@ fn channel_export_json_roundtrip() {
             profile: None,
         },
     ];
+    let cfg = AppConfig {
+        auto_record_channels,
+        ..Default::default()
+    };
 
     // Serialise export shape.
     let export = serde_json::json!({
@@ -125,14 +128,17 @@ fn channel_import_version_validation() {
 fn import_channels_merge_logic() {
     use strivo_core::config::{AppConfig, AutoRecordEntry};
 
-    let mut cfg = AppConfig::default();
-    cfg.auto_record_channels = vec![AutoRecordEntry {
+    let auto_record_channels = vec![AutoRecordEntry {
         platform: "Twitch".into(),
         channel_id: "existing".into(),
         channel_name: "Existing Channel".into(),
         format: None,
         profile: None,
     }];
+    let mut cfg = AppConfig {
+        auto_record_channels,
+        ..Default::default()
+    };
 
     // Incoming export: one new channel + one existing one (update only format).
     let incoming: Vec<AutoRecordEntry> = vec![
@@ -174,9 +180,20 @@ fn import_channels_merge_logic() {
     assert_eq!(updated, 1, "one existing channel should be updated");
     assert_eq!(cfg.auto_record_channels.len(), 2);
     // channel_name must be preserved from the existing record (not clobbered).
-    let existing = cfg.auto_record_channels.iter().find(|c| c.channel_id == "existing").unwrap();
-    assert_eq!(existing.channel_name, "Existing Channel", "channel_name must not be clobbered by import");
-    assert_eq!(existing.profile.as_deref(), Some("hd"), "profile updated from import");
+    let existing = cfg
+        .auto_record_channels
+        .iter()
+        .find(|c| c.channel_id == "existing")
+        .unwrap();
+    assert_eq!(
+        existing.channel_name, "Existing Channel",
+        "channel_name must not be clobbered by import"
+    );
+    assert_eq!(
+        existing.profile.as_deref(),
+        Some("hd"),
+        "profile updated from import"
+    );
 }
 
 // ── Quality-tier → format selector (task 1) ───────────────────────────

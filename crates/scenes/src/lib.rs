@@ -57,7 +57,11 @@ impl SceneManifest {
             .values()
             .map(|v| serde_json::to_string(v).map(|s| s.len()).unwrap_or(0))
             .sum::<usize>()
-            + self.thumbnail_data_url.as_deref().map(str::len).unwrap_or(0)
+            + self
+                .thumbnail_data_url
+                .as_deref()
+                .map(str::len)
+                .unwrap_or(0)
     }
 }
 
@@ -104,10 +108,7 @@ pub fn compose(
 /// deterministic restore order — useful when one plugin depends on
 /// another's state being written first (e.g. EDL before render).
 pub fn decompose(manifest: &SceneManifest) -> impl Iterator<Item = (&str, &serde_json::Value)> {
-    manifest
-        .components
-        .iter()
-        .map(|(k, v)| (k.as_str(), v))
+    manifest.components.iter().map(|(k, v)| (k.as_str(), v))
 }
 
 /// SQLite-backed scene index. One table, two columns: rowid (auto)
@@ -207,20 +208,17 @@ impl SceneStore {
         let row = stmt
             .query_row(params![recording_id, id], |r| r.get::<_, String>(0))
             .optional()?;
-        Ok(row
-            .map(|s| serde_json::from_str(&s))
+        row.map(|s| serde_json::from_str(&s))
             .transpose()
-            .context("decode manifest")?)
+            .context("decode manifest")
     }
 
     /// Delete a scene. Idempotent — deleting a missing id is fine.
     pub fn delete(&self, recording_id: &str, id: &str) -> Result<bool> {
-        let n = self
-            .conn
-            .execute(
-                "DELETE FROM scenes WHERE recording_id = ?1 AND id = ?2",
-                params![recording_id, id],
-            )?;
+        let n = self.conn.execute(
+            "DELETE FROM scenes WHERE recording_id = ?1 AND id = ?2",
+            params![recording_id, id],
+        )?;
         Ok(n > 0)
     }
 }
@@ -288,9 +286,7 @@ mod tests {
     #[test]
     fn save_and_load_roundtrip_preserves_components() {
         let (store, _d) = temp_store();
-        let m = manifest_with(&[
-            ("editor", json!({ "cuts": [{"start": 0, "end": 60}] })),
-        ]);
+        let m = manifest_with(&[("editor", json!({ "cuts": [{"start": 0, "end": 60}] }))]);
         store.save(&m).unwrap();
         let back = store.load("rec1", "s1").unwrap().unwrap();
         assert_eq!(back.id, m.id);
@@ -366,7 +362,8 @@ mod tests {
         let mut m = manifest_with(&[("editor", json!({ "cuts": [] }))]);
         store.save(&m).unwrap();
         m.name = "Renamed".into();
-        m.components.insert("branding".into(), json!({ "watermark": null }));
+        m.components
+            .insert("branding".into(), json!({ "watermark": null }));
         store.save(&m).unwrap();
         let back = store.load("rec1", &m.id).unwrap().unwrap();
         assert_eq!(back.name, "Renamed");
@@ -383,6 +380,9 @@ mod tests {
         ]);
         store.save(&m).unwrap();
         let list = store.list("rec1", 10).unwrap();
-        assert_eq!(list[0].component_keys, vec!["editor", "loudness", "structure"]);
+        assert_eq!(
+            list[0].component_keys,
+            vec!["editor", "loudness", "structure"]
+        );
     }
 }

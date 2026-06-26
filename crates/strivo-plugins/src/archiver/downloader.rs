@@ -4,7 +4,7 @@ use std::process::Stdio;
 use anyhow::Result;
 
 /// Options passed to the yt-dlp invocation. Centralizes the rate-limit
-/// + per-job knobs so the call site doesn't grow another positional
+/// and per-job knobs so the call site doesn't grow another positional
 /// argument per option.
 #[derive(Debug, Clone, Default)]
 pub struct DownloadOpts<'a> {

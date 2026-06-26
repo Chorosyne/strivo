@@ -55,9 +55,8 @@ impl CuepointsStore {
                 r.get::<_, String>(0)
             })
             .optional()?;
-        Ok(row
-            .map(|json| serde_json::from_str(&json))
+        row.map(|json| serde_json::from_str(&json))
             .transpose()
-            .context("parse cached cuepoints")?)
+            .context("parse cached cuepoints")
     }
 }

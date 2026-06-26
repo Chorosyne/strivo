@@ -221,7 +221,10 @@ mod tests {
     use super::*;
 
     fn frame(t: f32, db: f32) -> EnvelopeFrame {
-        EnvelopeFrame { time_sec: t, rms_db: db }
+        EnvelopeFrame {
+            time_sec: t,
+            rms_db: db,
+        }
     }
 
     /// Build a synthetic envelope: alternating speech / silence blocks.
@@ -260,7 +263,11 @@ mod tests {
         assert_eq!(out.len(), 1);
         let iv = &out[0];
         // Pre-roll pads the start back to ~0.925; post-roll extends end.
-        assert!(iv.start_sec < 1.0 && iv.start_sec >= 0.9, "start={}", iv.start_sec);
+        assert!(
+            iv.start_sec < 1.0 && iv.start_sec >= 0.9,
+            "start={}",
+            iv.start_sec
+        );
         assert!(iv.end_sec > 3.0 && iv.end_sec <= 3.5, "end={}", iv.end_sec);
         assert!(iv.mean_db < -15.0 && iv.mean_db > -25.0);
     }
@@ -277,13 +284,16 @@ mod tests {
     #[test]
     fn breath_between_words_keeps_gate_open() {
         // 2s speech · 0.2s breath (silence, < min_close=400ms) · 2s speech.
-        let env = synth(&[
-            (1.0, -50.0),
-            (2.0, -20.0),
-            (0.2, -50.0),
-            (2.0, -20.0),
-            (1.0, -50.0),
-        ], 0.05);
+        let env = synth(
+            &[
+                (1.0, -50.0),
+                (2.0, -20.0),
+                (0.2, -50.0),
+                (2.0, -20.0),
+                (1.0, -50.0),
+            ],
+            0.05,
+        );
         let out = detect_voice(&env, &GateKnobs::default());
         // Should collapse to ONE long interval, not two.
         assert_eq!(out.len(), 1);
@@ -294,13 +304,16 @@ mod tests {
     #[test]
     fn long_pause_closes_gate_into_two_intervals() {
         // 2s speech · 0.6s silence (> min_close=400ms) · 2s speech.
-        let env = synth(&[
-            (1.0, -50.0),
-            (2.0, -20.0),
-            (0.6, -50.0),
-            (2.0, -20.0),
-            (1.0, -50.0),
-        ], 0.05);
+        let env = synth(
+            &[
+                (1.0, -50.0),
+                (2.0, -20.0),
+                (0.6, -50.0),
+                (2.0, -20.0),
+                (1.0, -50.0),
+            ],
+            0.05,
+        );
         let out = detect_voice(&env, &GateKnobs::default());
         assert_eq!(out.len(), 2);
     }
@@ -316,8 +329,10 @@ mod tests {
 
     #[test]
     fn pad_widens_interval_edges_by_pre_and_post_roll() {
-        let mut knobs = GateKnobs::default();
-        knobs.pad_sec = 0.2;
+        let knobs = GateKnobs {
+            pad_sec: 0.2,
+            ..Default::default()
+        };
         let env = synth(&[(1.0, -50.0), (2.0, -20.0), (2.0, -50.0)], 0.05);
         let out = detect_voice(&env, &knobs);
         assert_eq!(out.len(), 1);
@@ -340,8 +355,16 @@ mod tests {
     #[test]
     fn tightening_recommendations_rolls_up_gaps_between_intervals() {
         let intervals = vec![
-            VoiceInterval { start_sec: 5.0,  end_sec: 10.0, mean_db: -20.0 },
-            VoiceInterval { start_sec: 15.0, end_sec: 25.0, mean_db: -20.0 },
+            VoiceInterval {
+                start_sec: 5.0,
+                end_sec: 10.0,
+                mean_db: -20.0,
+            },
+            VoiceInterval {
+                start_sec: 15.0,
+                end_sec: 25.0,
+                mean_db: -20.0,
+            },
         ];
         let gaps = tightening_recommendations(&intervals, 30.0, 1.0);
         // 3 gaps: 0..5, 10..15, 25..30.
@@ -357,8 +380,16 @@ mod tests {
     #[test]
     fn tightening_recommendations_skips_short_gaps() {
         let intervals = vec![
-            VoiceInterval { start_sec: 5.0, end_sec: 10.0, mean_db: -20.0 },
-            VoiceInterval { start_sec: 10.5, end_sec: 15.0, mean_db: -20.0 },
+            VoiceInterval {
+                start_sec: 5.0,
+                end_sec: 10.0,
+                mean_db: -20.0,
+            },
+            VoiceInterval {
+                start_sec: 10.5,
+                end_sec: 15.0,
+                mean_db: -20.0,
+            },
         ];
         // min_keep=1.0 — the 0.5s gap between intervals is preserved.
         let gaps = tightening_recommendations(&intervals, 20.0, 1.0);

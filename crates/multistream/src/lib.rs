@@ -125,14 +125,20 @@ pub fn compute_tiles(
             }
             out
         }
-        LayoutMode::Grid { cols, rows } => grid_tiles(streams, container_w, container_h, *cols, *rows),
+        LayoutMode::Grid { cols, rows } => {
+            grid_tiles(streams, container_w, container_h, *cols, *rows)
+        }
         LayoutMode::Auto => {
             let (cols, rows) = best_grid(streams.len() as u32, container_w, container_h);
             grid_tiles(streams, container_w, container_h, cols, rows)
         }
         LayoutMode::Quadrant => grid_tiles(streams, container_w, container_h, 2, 2),
-        LayoutMode::Highlight { stream_id } => highlight_tiles(streams, container_w, container_h, stream_id),
-        LayoutMode::Theatre { stream_id } => theatre_tiles(streams, container_w, container_h, stream_id),
+        LayoutMode::Highlight { stream_id } => {
+            highlight_tiles(streams, container_w, container_h, stream_id)
+        }
+        LayoutMode::Theatre { stream_id } => {
+            theatre_tiles(streams, container_w, container_h, stream_id)
+        }
     }
 }
 
@@ -145,7 +151,10 @@ fn pick_hero<'a>(streams: &'a [Stream], hero_id: &str) -> Option<(&'a Stream, Ve
     let hero = if hero_id.is_empty() {
         &streams[0]
     } else {
-        streams.iter().find(|s| s.id == hero_id).unwrap_or(&streams[0])
+        streams
+            .iter()
+            .find(|s| s.id == hero_id)
+            .unwrap_or(&streams[0])
     };
     let rest: Vec<&Stream> = streams.iter().filter(|s| s.id != hero.id).collect();
     Some((hero, rest))
@@ -250,7 +259,7 @@ fn best_grid(n: u32, cw: u32, ch: u32) -> (u32, u32) {
     let target_ratio = cw as f64 / ch.max(1) as f64;
     let mut best: Option<(u32, u32, u64, f64)> = None;
     for cols in 1..=n {
-        let rows = (n + cols - 1) / cols;
+        let rows = n.div_ceil(cols);
         let tw = cw / cols;
         let th = ch / rows;
         let area = constrained_area(tw, th);
@@ -324,7 +333,10 @@ pub fn embed_url(stream: &Stream, host: &str) -> String {
 
 fn is_bare_ipv4(host: &str) -> bool {
     let parts: Vec<&str> = host.split('.').collect();
-    parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Tiny ASCII-safe URL encoder for the handful of chars that appear in
@@ -390,7 +402,12 @@ mod tests {
 
     #[test]
     fn four_streams_become_2x2() {
-        let tiles = compute_tiles(&[s("a"), s("b"), s("c"), s("d")], 1920, 1080, &LayoutMode::Auto);
+        let tiles = compute_tiles(
+            &[s("a"), s("b"), s("c"), s("d")],
+            1920,
+            1080,
+            &LayoutMode::Auto,
+        );
         assert_eq!(tiles.len(), 4);
         assert_eq!(tiles[0].w, 960);
         assert_eq!(tiles[0].h, 540);
@@ -430,7 +447,9 @@ mod tests {
             &[s("a"), s("b"), s("c")],
             1920,
             1080,
-            &LayoutMode::Focus { stream_id: "b".into() },
+            &LayoutMode::Focus {
+                stream_id: "b".into(),
+            },
         );
         assert_eq!(tiles.len(), 1);
         assert_eq!(tiles[0].stream_id, "b");
@@ -443,7 +462,9 @@ mod tests {
             &[s("a")],
             1920,
             1080,
-            &LayoutMode::Focus { stream_id: "zzz".into() },
+            &LayoutMode::Focus {
+                stream_id: "zzz".into(),
+            },
         );
         assert!(tiles.is_empty());
     }
@@ -454,7 +475,10 @@ mod tests {
             &[s("a"), s("b"), s("c")],
             1920,
             1080,
-            &LayoutMode::PiP { main: "a".into(), side: "b".into() },
+            &LayoutMode::PiP {
+                main: "a".into(),
+                side: "b".into(),
+            },
         );
         assert_eq!(tiles.len(), 2);
         // Main fills container; side floats top-right with z=1
@@ -474,7 +498,10 @@ mod tests {
             &[s("a")],
             1920,
             1080,
-            &LayoutMode::PiP { main: "a".into(), side: "missing".into() },
+            &LayoutMode::PiP {
+                main: "a".into(),
+                side: "missing".into(),
+            },
         );
         assert_eq!(tiles.len(), 1);
     }
@@ -485,7 +512,10 @@ mod tests {
             &[s("a")],
             1920,
             1080,
-            &LayoutMode::PiP { main: "missing".into(), side: "a".into() },
+            &LayoutMode::PiP {
+                main: "missing".into(),
+                side: "a".into(),
+            },
         );
         assert!(tiles.is_empty());
     }
@@ -504,10 +534,7 @@ mod tests {
     #[test]
     fn twitch_embed_url_rewrites_bare_ip_to_nip_io() {
         let url = embed_url(&s("Cohh"), "192.168.8.203:8181");
-        assert!(
-            url.ends_with("parent=192-168-8-203.nip.io"),
-            "got {url}"
-        );
+        assert!(url.ends_with("parent=192-168-8-203.nip.io"), "got {url}");
     }
 
     #[test]
@@ -564,11 +591,20 @@ mod tests {
         for mode in [
             LayoutMode::Auto,
             LayoutMode::Grid { cols: 3, rows: 2 },
-            LayoutMode::Focus { stream_id: "x".into() },
-            LayoutMode::PiP { main: "a".into(), side: "b".into() },
+            LayoutMode::Focus {
+                stream_id: "x".into(),
+            },
+            LayoutMode::PiP {
+                main: "a".into(),
+                side: "b".into(),
+            },
             LayoutMode::Quadrant,
-            LayoutMode::Highlight { stream_id: "x".into() },
-            LayoutMode::Theatre { stream_id: "x".into() },
+            LayoutMode::Highlight {
+                stream_id: "x".into(),
+            },
+            LayoutMode::Theatre {
+                stream_id: "x".into(),
+            },
         ] {
             let s = serde_json::to_string(&mode).unwrap();
             let back: LayoutMode = serde_json::from_str(&s).unwrap();
@@ -578,12 +614,7 @@ mod tests {
 
     #[test]
     fn quadrant_places_three_streams_in_first_three_slots() {
-        let tiles = compute_tiles(
-            &[s("a"), s("b"), s("c")],
-            1920,
-            1080,
-            &LayoutMode::Quadrant,
-        );
+        let tiles = compute_tiles(&[s("a"), s("b"), s("c")], 1920, 1080, &LayoutMode::Quadrant);
         assert_eq!(tiles.len(), 3);
         assert_eq!(tiles[0].w, 960);
         assert_eq!(tiles[0].h, 540);
@@ -606,7 +637,9 @@ mod tests {
             &[s("a"), s("b"), s("c")],
             1000,
             500,
-            &LayoutMode::Highlight { stream_id: "a".into() },
+            &LayoutMode::Highlight {
+                stream_id: "a".into(),
+            },
         );
         assert_eq!(tiles.len(), 3);
         assert_eq!(tiles[0].x, 0);
@@ -627,7 +660,9 @@ mod tests {
             &[s("a"), s("b")],
             1000,
             500,
-            &LayoutMode::Highlight { stream_id: "".into() },
+            &LayoutMode::Highlight {
+                stream_id: "".into(),
+            },
         );
         assert_eq!(tiles[0].stream_id, "a");
     }
@@ -638,7 +673,9 @@ mod tests {
             &[s("a")],
             1000,
             500,
-            &LayoutMode::Highlight { stream_id: "a".into() },
+            &LayoutMode::Highlight {
+                stream_id: "a".into(),
+            },
         );
         // Hero takes 60% even when alone — leaves blank right column so
         // the layout doesn't suddenly fill the screen when a side stream
@@ -653,7 +690,9 @@ mod tests {
             &[s("a"), s("b"), s("c"), s("d")],
             1000,
             500,
-            &LayoutMode::Theatre { stream_id: "a".into() },
+            &LayoutMode::Theatre {
+                stream_id: "a".into(),
+            },
         );
         assert_eq!(tiles.len(), 4);
         // Hero: full width × 400 (80% of 500)
@@ -672,7 +711,9 @@ mod tests {
             &[s("a"), s("b")],
             1000,
             500,
-            &LayoutMode::Theatre { stream_id: "ghost".into() },
+            &LayoutMode::Theatre {
+                stream_id: "ghost".into(),
+            },
         );
         assert_eq!(tiles[0].stream_id, "a");
     }

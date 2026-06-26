@@ -78,7 +78,8 @@ pub fn detect_onsets(samples: &[OnsetSample], knobs: &OnsetKnobs) -> Vec<Onset> 
     let window_frames = ((knobs.window_sec / frame_dt).ceil() as usize).max(3);
     let mut out: Vec<Onset> = Vec::new();
     let mut last_onset = f32::NEG_INFINITY;
-    let mut buf: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(window_frames);
+    let mut buf: std::collections::VecDeque<f32> =
+        std::collections::VecDeque::with_capacity(window_frames);
     let mut sum = 0.0f32;
     for i in 0..samples.len() {
         let s = samples[i];
@@ -154,11 +155,8 @@ pub fn estimate_bpm(
     // Smooth with a 3-bin moving average so 119.7 BPM aggregates with
     // 120 and 120.3 instead of splitting the vote.
     let smoothed = smooth3(&bins);
-    let mut indexed: Vec<(usize, f32)> = smoothed
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| (i, v))
-        .collect();
+    let mut indexed: Vec<(usize, f32)> =
+        smoothed.iter().enumerate().map(|(i, &v)| (i, v)).collect();
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     indexed
         .into_iter()
@@ -173,12 +171,12 @@ pub fn estimate_bpm(
 
 fn smooth3(bins: &[f32]) -> Vec<f32> {
     let mut out = vec![0.0; bins.len()];
-    for i in 0..bins.len() {
+    for (i, slot) in out.iter_mut().enumerate() {
         let lo = i.saturating_sub(1);
         let hi = (i + 1).min(bins.len() - 1);
         let span = (hi - lo + 1) as f32;
         let sum: f32 = bins[lo..=hi].iter().sum();
-        out[i] = sum / span;
+        *slot = sum / span;
     }
     out
 }
@@ -210,7 +208,12 @@ mod tests {
 
     /// Build a synthetic envelope with regular peaks at `bpm`. Frame
     /// rate matches what the host's astats default emits (50 ms).
-    fn synth_envelope(bpm: f32, duration_sec: f32, peak_db: f32, floor_db: f32) -> Vec<OnsetSample> {
+    fn synth_envelope(
+        bpm: f32,
+        duration_sec: f32,
+        peak_db: f32,
+        floor_db: f32,
+    ) -> Vec<OnsetSample> {
         let frame_dt = 0.05;
         let mut out = Vec::new();
         let beat = 60.0 / bpm;
@@ -228,7 +231,10 @@ mod tests {
             } else {
                 floor_db
             };
-            out.push(OnsetSample { time_sec: t, rms_db: db });
+            out.push(OnsetSample {
+                time_sec: t,
+                rms_db: db,
+            });
             t += frame_dt;
         }
         out
@@ -265,7 +271,10 @@ mod tests {
     #[test]
     fn flat_envelope_yields_no_onsets() {
         let env: Vec<_> = (0..200)
-            .map(|i| OnsetSample { time_sec: i as f32 * 0.05, rms_db: -20.0 })
+            .map(|i| OnsetSample {
+                time_sec: i as f32 * 0.05,
+                rms_db: -20.0,
+            })
             .collect();
         let onsets = detect_onsets(&env, &OnsetKnobs::default());
         assert!(onsets.is_empty());
@@ -274,7 +283,10 @@ mod tests {
     #[test]
     fn min_gap_blocks_double_counting() {
         let mut env: Vec<_> = (0..200)
-            .map(|i| OnsetSample { time_sec: i as f32 * 0.05, rms_db: -40.0 })
+            .map(|i| OnsetSample {
+                time_sec: i as f32 * 0.05,
+                rms_db: -40.0,
+            })
             .collect();
         // Two adjacent peaks at 1.00 and 1.05 — gap = 50 ms, default
         // min_gap = 100 ms, so the second should be vetoed.
@@ -301,8 +313,14 @@ mod tests {
     #[test]
     fn estimate_bpm_returns_empty_for_few_onsets() {
         let onsets = vec![
-            Onset { time_sec: 0.0, strength: 1.0 },
-            Onset { time_sec: 0.5, strength: 1.0 },
+            Onset {
+                time_sec: 0.0,
+                strength: 1.0,
+            },
+            Onset {
+                time_sec: 0.5,
+                strength: 1.0,
+            },
         ];
         assert!(estimate_bpm(&onsets, 60.0, 200.0, 3).is_empty());
     }
@@ -312,13 +330,34 @@ mod tests {
         // 4 strong hits at 60 BPM (i.e. 1 sec apart) + 3 weak fillers
         // at 120 BPM. Half-time vote keeps 60 as the winner.
         let onsets = vec![
-            Onset { time_sec: 0.0, strength: 5.0 },
-            Onset { time_sec: 0.5, strength: 0.2 },
-            Onset { time_sec: 1.0, strength: 5.0 },
-            Onset { time_sec: 1.5, strength: 0.2 },
-            Onset { time_sec: 2.0, strength: 5.0 },
-            Onset { time_sec: 2.5, strength: 0.2 },
-            Onset { time_sec: 3.0, strength: 5.0 },
+            Onset {
+                time_sec: 0.0,
+                strength: 5.0,
+            },
+            Onset {
+                time_sec: 0.5,
+                strength: 0.2,
+            },
+            Onset {
+                time_sec: 1.0,
+                strength: 5.0,
+            },
+            Onset {
+                time_sec: 1.5,
+                strength: 0.2,
+            },
+            Onset {
+                time_sec: 2.0,
+                strength: 5.0,
+            },
+            Onset {
+                time_sec: 2.5,
+                strength: 0.2,
+            },
+            Onset {
+                time_sec: 3.0,
+                strength: 5.0,
+            },
         ];
         let cands = estimate_bpm(&onsets, 30.0, 200.0, 3);
         let top = cands[0];
@@ -334,9 +373,18 @@ mod tests {
         let bpm = 120.0;
         // True beats at 0.0, 0.5, 1.0, … but onsets jittered by ±20ms.
         let onsets = vec![
-            Onset { time_sec: 0.02, strength: 1.0 },
-            Onset { time_sec: 0.48, strength: 1.0 },
-            Onset { time_sec: 1.01, strength: 1.0 },
+            Onset {
+                time_sec: 0.02,
+                strength: 1.0,
+            },
+            Onset {
+                time_sec: 0.48,
+                strength: 1.0,
+            },
+            Onset {
+                time_sec: 1.01,
+                strength: 1.0,
+            },
         ];
         let grid = align_to_grid(&onsets, bpm, 0.0);
         assert_eq!(grid.len(), 3);
@@ -349,9 +397,18 @@ mod tests {
     #[test]
     fn align_to_grid_dedups_close_snaps() {
         let onsets = vec![
-            Onset { time_sec: 0.04, strength: 1.0 },
-            Onset { time_sec: 0.02, strength: 1.0 },
-            Onset { time_sec: 0.5, strength: 1.0 },
+            Onset {
+                time_sec: 0.04,
+                strength: 1.0,
+            },
+            Onset {
+                time_sec: 0.02,
+                strength: 1.0,
+            },
+            Onset {
+                time_sec: 0.5,
+                strength: 1.0,
+            },
         ];
         let grid = align_to_grid(&onsets, 120.0, 0.0);
         assert_eq!(grid.len(), 2);
@@ -359,7 +416,10 @@ mod tests {
 
     #[test]
     fn json_roundtrip_preserves_tempo_candidate() {
-        let c = TempoCandidate { bpm: 120.0, confidence: 0.81 };
+        let c = TempoCandidate {
+            bpm: 120.0,
+            confidence: 0.81,
+        };
         let s = serde_json::to_string(&c).unwrap();
         let back: TempoCandidate = serde_json::from_str(&s).unwrap();
         assert_eq!(back.bpm, 120.0);
@@ -368,7 +428,10 @@ mod tests {
 
     #[test]
     fn detect_onsets_handles_single_sample() {
-        let s = vec![OnsetSample { time_sec: 0.0, rms_db: -10.0 }];
+        let s = vec![OnsetSample {
+            time_sec: 0.0,
+            rms_db: -10.0,
+        }];
         let onsets = detect_onsets(&s, &OnsetKnobs::default());
         assert!(onsets.is_empty());
     }

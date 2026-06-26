@@ -134,7 +134,11 @@ pub fn top_slots(grid: &Grid7x24, n: usize, mode: RankMode) -> Vec<RecommendedSl
         b.mean_score
             .partial_cmp(&a.mean_score)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
             .then(a.day_of_week.cmp(&b.day_of_week))
             .then(a.hour_of_day.cmp(&b.hour_of_day))
     });
@@ -161,7 +165,9 @@ pub fn top_slots(grid: &Grid7x24, n: usize, mode: RankMode) -> Vec<RecommendedSl
             // padding from the candidate list. Quiet over-correctness.
             if picked.len() < n {
                 for slot in top_slots(grid, n * 4, RankMode::Greedy) {
-                    if picked.iter().any(|p| p.day_of_week == slot.day_of_week && p.hour_of_day == slot.hour_of_day) {
+                    if picked.iter().any(|p| {
+                        p.day_of_week == slot.day_of_week && p.hour_of_day == slot.hour_of_day
+                    }) {
                         continue;
                     }
                     picked.push(slot);
@@ -201,7 +207,6 @@ fn window_stats(grid: &Grid7x24, day: u8, hour: u8) -> (f32, f32) {
     (consistency, coverage)
 }
 
-
 /// Average sample count across non-empty slots. Used to anchor the
 /// confidence calculation so an isolated single-sample slot can't beat
 /// a steady multi-sample plateau.
@@ -216,7 +221,11 @@ fn grand_mean_count(grid: &Grid7x24) -> (f32, u32) {
             }
         }
     }
-    if buckets == 0 { (0.0, 0) } else { (total as f32 / buckets as f32, buckets) }
+    if buckets == 0 {
+        (0.0, 0)
+    } else {
+        (total as f32 / buckets as f32, buckets)
+    }
 }
 
 fn confidence_for(slot_count: u32, grand_mean_count: f32, coverage: f32) -> f32 {
@@ -234,7 +243,7 @@ fn confidence_for(slot_count: u32, grand_mean_count: f32, coverage: f32) -> f32 
 }
 
 fn hour_distance(a: u8, b: u8) -> u8 {
-    let diff = if a > b { a - b } else { b - a };
+    let diff = a.abs_diff(b);
     diff.min(24 - diff)
 }
 
@@ -243,7 +252,11 @@ mod tests {
     use super::*;
 
     fn s(day: u8, hour: u8, score: f32) -> EngagementSample {
-        EngagementSample { day_of_week: day, hour_of_day: hour, score }
+        EngagementSample {
+            day_of_week: day,
+            hour_of_day: hour,
+            score,
+        }
     }
 
     #[test]
@@ -260,11 +273,7 @@ mod tests {
 
     #[test]
     fn aggregate_computes_running_mean() {
-        let samples = vec![
-            s(2, 18, 40.0),
-            s(2, 18, 60.0),
-            s(2, 18, 80.0),
-        ];
+        let samples = vec![s(2, 18, 40.0), s(2, 18, 60.0), s(2, 18, 80.0)];
         let g = aggregate(&samples);
         let slot = g.buckets[2][18];
         assert_eq!(slot.count, 3);
@@ -278,7 +287,9 @@ mod tests {
         // Only the (1, 1) sample landed.
         let mut total = 0u32;
         for row in &g.buckets {
-            for s in row { total += s.count; }
+            for s in row {
+                total += s.count;
+            }
         }
         assert_eq!(total, 1);
     }
@@ -286,9 +297,18 @@ mod tests {
     #[test]
     fn top_slots_greedy_returns_top_n_by_mean() {
         let mut grid = Grid7x24::new();
-        grid.buckets[1][12] = SlotStats { mean: 50.0, count: 4 };
-        grid.buckets[2][18] = SlotStats { mean: 80.0, count: 5 };
-        grid.buckets[3][20] = SlotStats { mean: 65.0, count: 3 };
+        grid.buckets[1][12] = SlotStats {
+            mean: 50.0,
+            count: 4,
+        };
+        grid.buckets[2][18] = SlotStats {
+            mean: 80.0,
+            count: 5,
+        };
+        grid.buckets[3][20] = SlotStats {
+            mean: 65.0,
+            count: 3,
+        };
         let picks = top_slots(&grid, 2, RankMode::Greedy);
         assert_eq!(picks.len(), 2);
         assert_eq!(picks[0].day_of_week, 2);
@@ -299,9 +319,18 @@ mod tests {
     #[test]
     fn top_slots_tie_breaks_by_day_then_hour() {
         let mut grid = Grid7x24::new();
-        grid.buckets[5][14] = SlotStats { mean: 70.0, count: 3 };
-        grid.buckets[2][10] = SlotStats { mean: 70.0, count: 3 };
-        grid.buckets[2][20] = SlotStats { mean: 70.0, count: 3 };
+        grid.buckets[5][14] = SlotStats {
+            mean: 70.0,
+            count: 3,
+        };
+        grid.buckets[2][10] = SlotStats {
+            mean: 70.0,
+            count: 3,
+        };
+        grid.buckets[2][20] = SlotStats {
+            mean: 70.0,
+            count: 3,
+        };
         let picks = top_slots(&grid, 3, RankMode::Greedy);
         // Same mean + same count → tie-break to ascending (day, hour).
         assert_eq!(picks[0].day_of_week, 2);
@@ -315,10 +344,22 @@ mod tests {
     fn spread_mode_avoids_adjacent_picks_in_same_day() {
         let mut grid = Grid7x24::new();
         // Three close-together strong slots on Friday + one on Monday.
-        grid.buckets[4][14] = SlotStats { mean: 90.0, count: 5 };
-        grid.buckets[4][15] = SlotStats { mean: 88.0, count: 5 };
-        grid.buckets[4][16] = SlotStats { mean: 86.0, count: 5 };
-        grid.buckets[0][10] = SlotStats { mean: 70.0, count: 5 };
+        grid.buckets[4][14] = SlotStats {
+            mean: 90.0,
+            count: 5,
+        };
+        grid.buckets[4][15] = SlotStats {
+            mean: 88.0,
+            count: 5,
+        };
+        grid.buckets[4][16] = SlotStats {
+            mean: 86.0,
+            count: 5,
+        };
+        grid.buckets[0][10] = SlotStats {
+            mean: 70.0,
+            count: 5,
+        };
         let picks = top_slots(&grid, 3, RankMode::Spread { min_gap_hours: 3 });
         assert_eq!(picks.len(), 3);
         // First pick is the top scorer, but Spread should fall back to
@@ -336,8 +377,14 @@ mod tests {
     #[test]
     fn spread_mode_falls_back_to_greedy_when_insufficient_distinct_picks() {
         let mut grid = Grid7x24::new();
-        grid.buckets[4][14] = SlotStats { mean: 90.0, count: 5 };
-        grid.buckets[4][15] = SlotStats { mean: 88.0, count: 5 };
+        grid.buckets[4][14] = SlotStats {
+            mean: 90.0,
+            count: 5,
+        };
+        grid.buckets[4][15] = SlotStats {
+            mean: 88.0,
+            count: 5,
+        };
         // Only two non-empty slots; spread with min_gap=6 would
         // normally pick only one — fallback returns both.
         let picks = top_slots(&grid, 2, RankMode::Spread { min_gap_hours: 6 });
@@ -348,32 +395,62 @@ mod tests {
     fn plateau_outscores_isolated_spike_on_coverage_and_confidence() {
         let mut grid = Grid7x24::new();
         // Steady plateau: Friday 14-16 all at 70.
-        grid.buckets[4][14] = SlotStats { mean: 70.0, count: 8 };
-        grid.buckets[4][15] = SlotStats { mean: 72.0, count: 8 };
-        grid.buckets[4][16] = SlotStats { mean: 70.0, count: 8 };
+        grid.buckets[4][14] = SlotStats {
+            mean: 70.0,
+            count: 8,
+        };
+        grid.buckets[4][15] = SlotStats {
+            mean: 72.0,
+            count: 8,
+        };
+        grid.buckets[4][16] = SlotStats {
+            mean: 70.0,
+            count: 8,
+        };
         // Isolated spike Tuesday 03h at 75.
-        grid.buckets[1][3] = SlotStats { mean: 75.0, count: 8 };
+        grid.buckets[1][3] = SlotStats {
+            mean: 75.0,
+            count: 8,
+        };
         let picks = top_slots(&grid, 4, RankMode::Greedy);
-        let tuesday_3 = picks.iter().find(|p| p.day_of_week == 1 && p.hour_of_day == 3).unwrap();
-        let friday_15 = picks.iter().find(|p| p.day_of_week == 4 && p.hour_of_day == 15).unwrap();
+        let tuesday_3 = picks
+            .iter()
+            .find(|p| p.day_of_week == 1 && p.hour_of_day == 3)
+            .unwrap();
+        let friday_15 = picks
+            .iter()
+            .find(|p| p.day_of_week == 4 && p.hour_of_day == 15)
+            .unwrap();
         // Friday's neighbours are non-empty → coverage 3/9 vs Tuesday's
         // 1/9. The coverage signal flows into confidence so the plateau
         // ranks higher despite Tuesday's spike having a marginally
         // higher raw mean.
-        assert!(friday_15.window_coverage > tuesday_3.window_coverage,
+        assert!(
+            friday_15.window_coverage > tuesday_3.window_coverage,
             "friday coverage {} > tuesday coverage {}",
-            friday_15.window_coverage, tuesday_3.window_coverage);
-        assert!(friday_15.confidence > tuesday_3.confidence,
+            friday_15.window_coverage,
+            tuesday_3.window_coverage
+        );
+        assert!(
+            friday_15.confidence > tuesday_3.confidence,
             "friday confidence {} > tuesday confidence {}",
-            friday_15.confidence, tuesday_3.confidence);
+            friday_15.confidence,
+            tuesday_3.confidence
+        );
     }
 
     #[test]
     fn window_wraps_across_day_and_hour_boundaries() {
         let mut grid = Grid7x24::new();
         // Sunday 23h + Monday 00h are adjacent in the wrap.
-        grid.buckets[6][23] = SlotStats { mean: 80.0, count: 4 };
-        grid.buckets[0][0] = SlotStats { mean: 60.0, count: 4 };
+        grid.buckets[6][23] = SlotStats {
+            mean: 80.0,
+            count: 4,
+        };
+        grid.buckets[0][0] = SlotStats {
+            mean: 60.0,
+            count: 4,
+        };
         let (cons, _) = window_stats(&grid, 6, 23);
         // Should include the Monday 00h slot — both non-empty slots
         // average to 70.
@@ -390,7 +467,10 @@ mod tests {
     #[test]
     fn slots_with_zero_count_are_skipped_from_rankings() {
         let mut grid = Grid7x24::new();
-        grid.buckets[2][18] = SlotStats { mean: 80.0, count: 3 };
+        grid.buckets[2][18] = SlotStats {
+            mean: 80.0,
+            count: 3,
+        };
         // Everything else stays count=0.
         let picks = top_slots(&grid, 10, RankMode::Greedy);
         assert_eq!(picks.len(), 1);

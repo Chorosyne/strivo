@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use strivo_plugins::archiver::db as adb;
 use strivo_plugins::crunchr::db as cdb;
 use strivo_plugins::insights::frequency;
-use strivo_plugins::viewguard::store::{self, ViewguardStore, VerdictRow};
+use strivo_plugins::viewguard::store::{self, VerdictRow, ViewguardStore};
 
 #[test]
 fn crunchr_list_and_detail() {
@@ -20,8 +20,8 @@ fn crunchr_list_and_detail() {
     let conn = cdb::open_and_init(&dir.path().join("crunchr.db")).unwrap();
 
     let vid = cdb::insert_video(&conn, "rec-1", "Chan", "Title", "/tmp/a.mkv").unwrap();
-    let segs: Vec<(usize, f64, f64, &str, Option<&str>, Option<f64>)> =
-        vec![(0, 0.0, 2.0, "hello there", Some("Alice"), None)];
+    // Types inferred from `insert_segments`' signature; only `None` needs a hint.
+    let segs = vec![(0, 0.0, 2.0, "hello there", Some("Alice"), None::<f64>)];
     cdb::insert_segments(&conn, vid, &segs).unwrap();
     conn.execute(
         "INSERT INTO video_analysis (video_id, summary, topics, sentiment) \
@@ -69,10 +69,23 @@ fn archiver_channels_and_videos() {
     let dir = tempfile::tempdir().unwrap();
     let conn = adb::open_and_init(&dir.path().join("archiver.db")).unwrap();
 
-    let cid = adb::upsert_channel(&conn, "Alpha", "https://t/alpha", "Twitch", "/arc/alpha").unwrap();
+    let cid =
+        adb::upsert_channel(&conn, "Alpha", "https://t/alpha", "Twitch", "/arc/alpha").unwrap();
     let vids = vec![
-        ("v1".to_string(), "One".to_string(), "20260101".to_string(), Some(60.0), None),
-        ("v2".to_string(), "Two".to_string(), "20260102".to_string(), None, None),
+        (
+            "v1".to_string(),
+            "One".to_string(),
+            "20260101".to_string(),
+            Some(60.0),
+            None,
+        ),
+        (
+            "v2".to_string(),
+            "Two".to_string(),
+            "20260102".to_string(),
+            None,
+            None,
+        ),
     ];
     adb::insert_videos(&conn, cid, &vids).unwrap();
     adb::mark_downloaded(&conn, cid, "v1").unwrap();
@@ -104,17 +117,19 @@ fn viewguard_verdicts_and_samples_read_only() {
         })
         .unwrap();
         for i in 0..4 {
-            s.insert_sample("c1", "twitch", now + chrono::Duration::minutes(i), (i * 5) as u32)
-                .unwrap();
+            s.insert_sample(
+                "c1",
+                "twitch",
+                now + chrono::Duration::minutes(i),
+                (i * 5) as u32,
+            )
+            .unwrap();
         }
     }
 
     // The web layer opens the same file read-only.
-    let conn = Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .unwrap();
+    let conn =
+        Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let verdicts = store::all_verdicts(&conn).unwrap();
     assert_eq!(verdicts.len(), 1);
     assert_eq!(verdicts[0].band, "fraudulent");
