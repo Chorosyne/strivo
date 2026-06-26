@@ -666,6 +666,11 @@ pub struct NotificationsConfig {
     /// default because most users don't track it manually.
     #[serde(default)]
     pub on_vod_ready: bool,
+    /// Outbound webhook — POST JSON on notification-worthy events.
+    /// Off by default; set `[notifications.webhook] enabled = true` and
+    /// `url = "https://…"` to opt in.
+    #[serde(default)]
+    pub webhook: WebhookConfig,
 }
 
 fn default_true() -> bool { true }
@@ -678,8 +683,29 @@ impl Default for NotificationsConfig {
             on_recording_finished: true,
             on_recording_failed: true,
             on_vod_ready: false,
+            webhook: WebhookConfig::default(),
         }
     }
+}
+
+/// Outbound webhook configuration (`[notifications.webhook]`).
+///
+/// When enabled, the daemon POSTs a JSON payload to `url` for each
+/// notification-worthy `DaemonEvent` (channel live, recording finished /
+/// failed, generic `Notification`). The payload shape mirrors streamerREC's
+/// webhook contract so existing Make/n8n/Zapier integrations work without
+/// adapter changes. Failures are logged and swallowed — the event loop is
+/// never blocked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    /// Whether outbound webhooks are enabled. Off by default to avoid
+    /// silent firing when `url` is accidentally set.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Full HTTPS (or HTTP) URL to POST events to. Required when
+    /// `enabled = true`; ignored otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Per-plugin enable flag. Defaults to true so a missing entry preserves

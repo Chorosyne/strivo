@@ -236,29 +236,60 @@ impl ChannelMonitor {
     }
 
     async fn poll_all(&mut self) -> Result<()> {
+        // Phase 1 — fan out per-platform channel + live-status fetches
+        // concurrently. Previously these ran in series: a slow YouTube call
+        // (quota / SSL handshake) blocked Twitch live-detection for the full
+        // duration. Now each platform's two network round-trips run as
+        // independent async tasks; the loop below waits for all of them at
+        // once via `join_all`.
+        //
+        // State mutations (prev_live, auto_recorded, last_live) happen in
+        // Phase 2 so they remain single-threaded.
+        type PlatformFetch = (
+            PlatformKind,
+            Result<Vec<ChannelEntry>>,          // fetch_followed_channels
+            Option<Result<Vec<ChannelEntry>>>,  // check_live_status (None on fetch failure)
+        );
+
+        let futs: Vec<_> = self
+            .platforms
+            .iter()
+            .map(|platform| {
+                let platform = platform.clone();
+                async move {
+                    let (kind, channels_result) = {
+                        let plat = platform.read().await;
+                        let kind = plat.kind();
+                        let result = plat.fetch_followed_channels().await;
+                        (kind, result)
+                    };
+                    let live_result: Option<Result<Vec<ChannelEntry>>> = match &channels_result {
+                        Ok(channels) => {
+                            let ids: Vec<String> =
+                                channels.iter().map(|c| c.id.clone()).collect();
+                            let plat = platform.read().await;
+                            Some(plat.check_live_status(&ids).await)
+                        }
+                        Err(_) => None,
+                    };
+                    (kind, channels_result, live_result)
+                }
+            })
+            .collect();
+
+        let platform_results: Vec<PlatformFetch> =
+            futures_util::future::join_all(futs).await;
+
+        // Phase 2 — process each platform's results sequentially.
+        // Ordering is stable (collect() preserves insertion order) so the
+        // emitted ChannelsUpdated list is deterministic across polls.
         let mut all_channels: Vec<ChannelEntry> = Vec::new();
 
-        for platform in &self.platforms {
-            // Clone necessary data before releasing the lock to avoid holding
-            // it across network calls
-            let (kind, channels_result) = {
-                let plat = platform.read().await;
-                let kind = plat.kind();
-                let result = plat.fetch_followed_channels().await;
-                (kind, result)
-            };
-
+        for (kind, channels_result, live_result) in platform_results {
             match channels_result {
                 Ok(mut channels) => {
-                    // Check live status without holding the platform lock
-                    let ids: Vec<String> = channels.iter().map(|c| c.id.clone()).collect();
-                    let live_result = {
-                        let plat = platform.read().await;
-                        plat.check_live_status(&ids).await
-                    };
-
                     match live_result {
-                        Ok(live_channels) => {
+                        Some(Ok(live_channels)) => {
                             let live_map: HashMap<String, ChannelEntry> = live_channels
                                 .into_iter()
                                 .map(|c| (c.id.clone(), c))
@@ -273,24 +304,27 @@ impl ChannelMonitor {
                                     ch.started_at = live.started_at;
                                     ch.thumbnail_url = live.thumbnail_url.clone();
                                 }
-
-                                // Check auto-record from the channel data directly
-                                // (reflects fresh config state from TUI saves)
-                                ch.auto_record = self.config.auto_record_channels.iter().any(|a| {
-                                    a.channel_id == ch.id && a.platform == kind.to_string()
-                                });
-
-                                // Track/stamp last-seen-live for the offline
-                                // "last live: N ago" label.
-                                if ch.is_live {
-                                    self.last_live.insert(ch.id.clone(), chrono::Utc::now());
-                                }
-                                ch.last_live_at = self.last_live.get(&ch.id).copied();
                             }
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             tracing::warn!("{kind}: live status check failed: {e}");
                         }
+                        None => {}
+                    }
+
+                    for ch in &mut channels {
+                        // Check auto-record from the channel data directly
+                        // (reflects fresh config state from TUI saves)
+                        ch.auto_record = self.config.auto_record_channels.iter().any(|a| {
+                            a.channel_id == ch.id && a.platform == kind.to_string()
+                        });
+
+                        // Track/stamp last-seen-live for the offline
+                        // "last live: N ago" label.
+                        if ch.is_live {
+                            self.last_live.insert(ch.id.clone(), chrono::Utc::now());
+                        }
+                        ch.last_live_at = self.last_live.get(&ch.id).copied();
                     }
 
                     // Detect went-live / went-offline transitions
@@ -310,8 +344,6 @@ impl ChannelMonitor {
                                 // Cookies + transcode policy resolved
                                 // inside `intents::start_recording` via
                                 // `FromConfig` + `effective_transcode`.
-                                // The old `get_cookies_path` helper is
-                                // now redundant on this path.
                                 let spec = crate::intents::StartSpec {
                                     channel_id: ch.id.clone(),
                                     channel_name: ch.name.clone(),

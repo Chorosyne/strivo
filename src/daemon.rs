@@ -698,6 +698,10 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                     // long before any dispatcher existed; this is it.
                     dispatch_desktop_notification(&config.notifications, de);
 
+                    // Outbound webhook — fire-and-forget POST on a spawned
+                    // task; never blocks the event loop.
+                    crate::webhook::dispatch_webhook(&config.notifications, de);
+
                     // Auto VOD backfill: when a Twitch live recording
                     // ends cleanly, schedule a delayed download of the
                     // archive VOD so we get the first ~5 minutes the
@@ -1180,10 +1184,8 @@ fn process_daemon_plugin_actions(
     }
 }
 
-/// Persist a recording's lifecycle for crash-recovery. Best-effort — a sqlite
-/// hiccup never breaks the live event flow.
-/// Fire a desktop banner for notification-worthy daemon events, honouring
-/// the per-event [`NotificationsConfig`](crate::config::NotificationsConfig)
+/// Fire a desktop banner for notification-worthy daemon events, honouring the
+/// per-event [`NotificationsConfig`](crate::config::NotificationsConfig)
 /// flags. `notify-rust`'s `show()` can block on the platform notification
 /// bus, so it runs on a blocking thread; failures (e.g. no D-Bus session on
 /// a headless host) are swallowed.
@@ -1234,6 +1236,8 @@ fn dispatch_desktop_notification(cfg: &crate::config::NotificationsConfig, event
     });
 }
 
+/// Persist a recording's lifecycle for crash-recovery. Best-effort — a sqlite
+/// hiccup never breaks the live event flow.
 async fn persist_event(
     db: &crate::recording::persist::PersistDb,
     event: &DaemonEvent,
