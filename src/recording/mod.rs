@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::config::{AppConfig, RecordingFormat, ResolvedFormat};
+use crate::config::{AppConfig, QualityTier, RecordingFormat, ResolvedFormat};
 use crate::events::DaemonEvent;
 use crate::platform::PlatformKind;
 use crate::recording::ffmpeg::{FfmpegBuilder, FfmpegProcess};
@@ -94,6 +94,29 @@ pub fn resolve_format(
     };
 
     RecordingFormat::resolved(channel_override, &effective_global)
+}
+
+/// Resolve the effective `QualityTier` for a recording, if one is set.
+///
+/// Walks: channel auto-record entry → capture profile → `quality_tier`.
+/// Returns `None` when no profile is attached or the profile has no tier,
+/// which preserves the pre-tier `"best"` fallback behaviour.
+fn resolve_quality_tier(
+    config: &AppConfig,
+    channel_id: &str,
+    platform: PlatformKind,
+) -> Option<QualityTier> {
+    let platform_str = platform.to_string();
+    let entry = config
+        .auto_record_channels
+        .iter()
+        .find(|c| c.channel_id == channel_id && c.platform == platform_str)?;
+    let profile_name = entry.profile.as_ref()?;
+    let profile = config
+        .capture_profiles
+        .iter()
+        .find(|p| &p.name == profile_name)?;
+    profile.quality_tier.clone()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -615,6 +638,8 @@ pub async fn run_manager(
                             let twitch_live_from_start = config.recording.twitch_live_from_start;
                             let twitch_id = channel_id.clone();
                             let rewind_cache = rewind_forbidden.clone();
+                            let quality_tier =
+                                resolve_quality_tier(&config, &channel_id, platform);
                             tokio::spawn(async move {
                                 // Twitch rewind eligibility: opt-in via config, only
                                 // when the user asked for from-start, and only when
@@ -688,7 +713,7 @@ pub async fn run_manager(
                                 let stream_url = if let Some(u) = resolved_url {
                                     u
                                 } else {
-                                    match resolver::resolve_stream_url(platform, &channel_name, cookies_path.as_deref()).await {
+                                    match resolver::resolve_stream_url(platform, &channel_name, cookies_path.as_deref(), quality_tier.as_ref()).await {
                                         Ok(info) => info.url,
                                         Err(e) => {
                                             let _ = rtx.send((job_id, Err(format!("Resolve failed: {e}"))));
@@ -918,6 +943,8 @@ pub async fn run_manager(
                                     let jid = *id;
                                     let retry_cookies = rec.cookies_path.clone();
                                     let retry_fmt = resolve_format(&config, &job.channel_id, job.platform);
+                                    let retry_quality_tier =
+                                        resolve_quality_tier(&config, &job.channel_id, job.platform);
                                     let maybe_watch_url = rec.from_start_watch_url.clone();
                                     tokio::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
@@ -939,7 +966,10 @@ pub async fn run_manager(
                                                 job.platform,
                                                 &job.channel_name,
                                                 retry_cookies.as_deref(),
-                                            ).await {
+                                                retry_quality_tier.as_ref(),
+                                            )
+                                            .await
+                                            {
                                                 Ok(info) => {
                                                     match FfmpegBuilder::new(info.url, job.output_path)
                                                         .transcode(job.transcode)

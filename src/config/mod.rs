@@ -546,6 +546,28 @@ pub enum QualityTier {
     AudioOnly,
 }
 
+/// Streamlink quality selection: stream quality argument plus optional stream
+/// sorting excludes ceiling and codec unlock flag.
+///
+/// Returned by [`QualityTier::streamlink_selection`]; applied by the resolver
+/// when building the streamlink command line for a Twitch live stream.
+#[derive(Debug, Clone)]
+pub struct StreamlinkSelection {
+    /// Streamlink stream quality argument. May be a comma-separated fallback
+    /// list (e.g. `"best,best-unfiltered"`), tried left-to-right by streamlink
+    /// until one of the named qualities is available.
+    pub stream: &'static str,
+    /// When set, passed as `--stream-sorting-excludes <value>` to cap the
+    /// maximum stream quality that `best` will resolve to. Streams ranked above
+    /// this threshold are skipped during sorting; the `best-unfiltered` fallback
+    /// in the stream arg bypasses the filter if no streams remain after exclusion.
+    pub sorting_excludes: Option<&'static str>,
+    /// When true, add `--twitch-supported-codecs=h264,h265,av1` so Twitch's
+    /// optional h265/av1 streams are visible to streamlink alongside h264.
+    /// Only set for tiers where higher-quality codecs matter (Best, P1080).
+    pub extended_codecs: bool,
+}
+
 impl QualityTier {
     /// Translate to the yt-dlp `-f` format selector string.
     pub fn format_selector(&self) -> &'static str {
@@ -555,6 +577,67 @@ impl QualityTier {
             QualityTier::P720 => "bestvideo[height<=720]+bestaudio/best[height<=720]",
             QualityTier::P480 => "bestvideo[height<=480]+bestaudio/best[height<=480]",
             QualityTier::AudioOnly => "bestaudio/best",
+        }
+    }
+
+    /// Translate to a streamlink quality selection.
+    ///
+    /// Streamlink uses named quality levels and an optional sort-excludes
+    /// ceiling rather than yt-dlp `-f` selectors. The mapping mirrors the
+    /// yt-dlp `[height<=N]` semantics already used by [`format_selector`]:
+    ///
+    /// * `Best`      → `"best"`, no ceiling, extended codecs enabled.
+    /// * `P1080`     → `"best,best-unfiltered"`, ceiling `>1080p60`, extended codecs.
+    /// * `P720`      → `"best,best-unfiltered"`, ceiling `>720p60`.
+    /// * `P480`      → `"best,best-unfiltered"`, ceiling `>480p`.
+    /// * `AudioOnly` → `"audio_only,worst"`, no ceiling.
+    ///
+    /// The `"best,best-unfiltered"` pattern means: pick the best stream that
+    /// isn't excluded by the ceiling; if the exclude filter leaves nothing
+    /// (unusual stream list), fall back to `best-unfiltered` which ignores
+    /// the sort-excludes entirely. This prevents a silent no-stream error on
+    /// channels with non-standard quality names.
+    pub fn streamlink_selection(&self) -> StreamlinkSelection {
+        match self {
+            QualityTier::Best => StreamlinkSelection {
+                stream: "best",
+                sorting_excludes: None,
+                // Unlock h265/av1 Twitch streams for maximum-quality captures.
+                extended_codecs: true,
+            },
+            QualityTier::P1080 => StreamlinkSelection {
+                // Twitch's 60fps variant ("1080p60") ranks above the 30fps
+                // "1080p" name in streamlink's sort order. The ceiling must be
+                // set to the 60fps name so both 1080p and 1080p60 are kept
+                // while anything hypothetically above 1080p60 is excluded.
+                // In practice nothing is above 1080p60, so this is a safety cap.
+                stream: "best,best-unfiltered",
+                sorting_excludes: Some(">1080p60"),
+                // Twitch's h265/av1 encodes (where available) are most
+                // beneficial at 1080p60; unlock them here.
+                extended_codecs: true,
+            },
+            QualityTier::P720 => StreamlinkSelection {
+                // "720p60" ranks above "720p"; ceiling at >720p60 keeps both
+                // 720p variants in scope and excludes 1080p and above.
+                stream: "best,best-unfiltered",
+                sorting_excludes: Some(">720p60"),
+                extended_codecs: false,
+            },
+            QualityTier::P480 => StreamlinkSelection {
+                // 480p is typically 30fps only on Twitch (no "480p60" variant).
+                stream: "best,best-unfiltered",
+                sorting_excludes: Some(">480p"),
+                extended_codecs: false,
+            },
+            QualityTier::AudioOnly => StreamlinkSelection {
+                // "audio_only" is Twitch's dedicated audio-only track.
+                // Fall back to "worst" (lowest-bitrate video stream) for
+                // platforms or streams that don't advertise audio_only.
+                stream: "audio_only,worst",
+                sorting_excludes: None,
+                extended_codecs: false,
+            },
         }
     }
 
@@ -1099,6 +1182,46 @@ mod quality_tier_tests {
         assert!(QualityTier::AudioOnly.is_audio_only());
         assert!(!QualityTier::Best.is_audio_only());
         assert!(!QualityTier::P1080.is_audio_only());
+    }
+
+    #[test]
+    fn streamlink_selection_best() {
+        let sel = QualityTier::Best.streamlink_selection();
+        assert_eq!(sel.stream, "best");
+        assert!(sel.sorting_excludes.is_none());
+        assert!(sel.extended_codecs, "Best should unlock extended codecs");
+    }
+
+    #[test]
+    fn streamlink_selection_1080p() {
+        let sel = QualityTier::P1080.streamlink_selection();
+        assert_eq!(sel.stream, "best,best-unfiltered");
+        assert_eq!(sel.sorting_excludes, Some(">1080p60"));
+        assert!(sel.extended_codecs, "P1080 should unlock extended codecs");
+    }
+
+    #[test]
+    fn streamlink_selection_720p() {
+        let sel = QualityTier::P720.streamlink_selection();
+        assert_eq!(sel.stream, "best,best-unfiltered");
+        assert_eq!(sel.sorting_excludes, Some(">720p60"));
+        assert!(!sel.extended_codecs);
+    }
+
+    #[test]
+    fn streamlink_selection_480p() {
+        let sel = QualityTier::P480.streamlink_selection();
+        assert_eq!(sel.stream, "best,best-unfiltered");
+        assert_eq!(sel.sorting_excludes, Some(">480p"));
+        assert!(!sel.extended_codecs);
+    }
+
+    #[test]
+    fn streamlink_selection_audio_only() {
+        let sel = QualityTier::AudioOnly.streamlink_selection();
+        assert_eq!(sel.stream, "audio_only,worst");
+        assert!(sel.sorting_excludes.is_none());
+        assert!(!sel.extended_codecs);
     }
 
     #[test]
