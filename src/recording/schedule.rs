@@ -39,7 +39,11 @@ impl ScheduleState {
             std::fs::create_dir_all(parent).ok();
         }
         if let Ok(contents) = serde_json::to_string_pretty(self) {
-            if let Err(e) = std::fs::write(&path, contents) {
+            // tmp+rename so a crash mid-write can't corrupt the dedup state
+            // (a corrupt file would re-fire already-started schedule windows).
+            let tmp = path.with_extension("json.tmp");
+            let write = std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, &path));
+            if let Err(e) = write {
                 tracing::warn!("Failed to persist schedule state: {e}");
             }
         }
