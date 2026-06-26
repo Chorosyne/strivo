@@ -11000,14 +11000,10 @@ async function renderSchedule() {
     (c) => c.platform === "YouTube",
   );
 
-  // Build option lists for per-channel format/profile overrides (Task 4).
+  // Capture profiles drive the per-channel override selects + tier badges
+  // below; the option lists are built per-row (with the current value
+  // pre-selected) inside the map.
   const captureProfiles = (settings.capture_profiles || []);
-  const containerOptions = ["", "mkv", "mp4", "ts"]
-    .map((c) => `<option value="${htmlEscape(c)}">${htmlEscape(c || "(default)")}</option>`)
-    .join("");
-  const profileOptions = ["", ...captureProfiles.map((p) => p.name)]
-    .map((p) => `<option value="${htmlEscape(p)}">${htmlEscape(p || "(default)")}</option>`)
-    .join("");
 
   // Quality-tier lookup map from capture profiles (Task 1).
   const profileTierMap = new Map(captureProfiles.map((p) => [p.name, p.quality_tier || ""]));
