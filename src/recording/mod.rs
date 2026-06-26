@@ -82,6 +82,12 @@ pub enum RecordingCommand {
     },
 }
 
+/// Recordings that have not grown in bytes for this long are considered stalled.
+/// A stalled ffmpeg/yt-dlp process stays `Recording` forever without this guard.
+/// Value is intentionally a const (not a config field) — 2 min is a safe global
+/// minimum; a per-channel override would belong to the monitor layer.
+const STALL_TIMEOUT_SECS: u64 = 120;
+
 /// Unified recorder process — either FFmpeg or yt-dlp
 enum RecorderProcess {
     Ffmpeg(FfmpegProcess),
@@ -138,6 +144,16 @@ struct ActiveRecording {
     /// orchestrator merges them back into the base path via mkvmerge
     /// (M5.5).
     segments: Vec<PathBuf>,
+    /// Stall detection: bytes observed on the previous poll tick.
+    last_bytes: u64,
+    /// Stall detection: wall-clock instant when `bytes_written` last grew.
+    /// Reset each time the state transitions to `Recording` so a slow
+    /// resolve phase does not eat into the stall budget.
+    last_growth_at: std::time::Instant,
+    /// For YouTube `--live-from-start` recordings, the resolved
+    /// `watch?v=…` URL to pass to `YtDlpProcess` on gap-resume retries.
+    /// `None` for FFmpeg-driven captures (Twitch, plain YouTube, etc.).
+    from_start_watch_url: Option<String>,
 }
 
 /// Run the post-completion pipeline for one recording: optional segment
@@ -251,11 +267,18 @@ fn finalize_completion(
         if needs_remux && warn.is_none() {
             match remux::normalise_container(&base).await {
                 Ok(remux::Outcome::Remuxed { kept_original }) => {
-                    tracing::info!(
-                        job_id = %job_id,
-                        kept = %kept_original.display(),
-                        "container remuxed to Matroska (was MPEG-TS)"
-                    );
+                    if let Some(orig) = kept_original {
+                        tracing::info!(
+                            job_id = %job_id,
+                            kept = %orig.display(),
+                            "container remuxed to Matroska (was MPEG-TS); .orig safety copy kept"
+                        );
+                    } else {
+                        tracing::info!(
+                            job_id = %job_id,
+                            "container remuxed to Matroska (was MPEG-TS); .orig cleaned up"
+                        );
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -292,14 +315,18 @@ pub async fn run_manager(
     > = std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     const REWIND_FORBIDDEN_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
 
-    // Channel for spawned resolve tasks to send back results
-    // Second tuple slot = optional rename of the recording's output_path.
+    // Channel for spawned resolve tasks to send back results.
+    // Tuple layout: (job_id, Result<(process, renamed_path, watch_url), err>)
+    //   - renamed_path: YT-5 path rename when title was resolved.
+    //   - watch_url: for YouTube --live-from-start jobs, the resolved
+    //     `watch?v=…` URL so gap-resume retries can re-spawn YtDlpProcess
+    //     instead of falling back to FFmpeg (Task 2 / M5.5 yt-dlp retry).
     // YT-5: the YouTube from-start spawn resolves the broadcast title in
     // the same round-trip it resolves the video id, and rebuilds the
     // filename so a fresh-start auto-record no longer lands as
     // `UCxxxx_2026-…_stream.mkv`. Other call sites pass None.
     let (resolve_tx, mut resolve_rx) =
-        mpsc::unbounded_channel::<(Uuid, Result<(RecorderProcess, Option<PathBuf>), String>)>();
+        mpsc::unbounded_channel::<(Uuid, Result<(RecorderProcess, Option<PathBuf>, Option<String>), String>)>();
 
     loop {
         tokio::select! {
@@ -316,6 +343,26 @@ pub async fn run_manager(
                                 format!("Already recording {channel_name}")
                             ));
                             continue;
+                        }
+
+                        // Enforce max_concurrent_recordings for ALL start paths
+                        // (manual IPC, schedule, and auto-record). The monitor
+                        // also checks at auto-record trigger time, but manual
+                        // starts bypass the monitor entirely.  0 = unlimited.
+                        let cap = config.monitor_limits.max_concurrent_recordings;
+                        if cap > 0 {
+                            let active_count = active.values()
+                                .filter(|r| !matches!(r.job.state, RecordingState::Finished | RecordingState::Failed))
+                                .count();
+                            if active_count >= cap as usize {
+                                let _ = event_tx.send(DaemonEvent::Notification {
+                                    title: "Recording limit reached".to_string(),
+                                    body: format!(
+                                        "Cannot start {channel_name}: {cap} concurrent recording cap is active"
+                                    ),
+                                });
+                                continue;
+                            }
                         }
 
                         // YT-1 — human-readable channel slug for the
@@ -354,6 +401,9 @@ pub async fn run_manager(
                             retry_count: 0,
                             cookies_path: cookies_path.clone(),
                             segments: vec![output_path.clone()],
+                            last_bytes: 0,
+                            last_growth_at: std::time::Instant::now(),
+                            from_start_watch_url: None,
                         });
 
                         let resolved_format = resolve_format(&config, &channel_id, platform);
@@ -460,9 +510,13 @@ pub async fn run_manager(
                                         } else {
                                             None
                                         };
+                                        // Carry the resolved watch URL so
+                                        // gap-resume retries can re-spawn
+                                        // YtDlpProcess instead of falling
+                                        // back to FFmpeg (yt-dlp retry fix).
                                         let _ = rtx.send((
                                             job_id,
-                                            Ok((RecorderProcess::YtDlp(process), rename)),
+                                            Ok((RecorderProcess::YtDlp(process), rename, Some(watch_url))),
                                         ));
                                     }
                                     Err(e) => {
@@ -577,7 +631,7 @@ pub async fn run_manager(
                                     .build()
                                 {
                                     Ok(process) => {
-                                        let _ = rtx.send((job_id, Ok((RecorderProcess::Ffmpeg(process), None))));
+                                        let _ = rtx.send((job_id, Ok((RecorderProcess::Ffmpeg(process), None, None))));
                                     }
                                     Err(e) => {
                                         let _ = rtx.send((job_id, Err(format!("FFmpeg failed: {e}"))));
@@ -653,6 +707,9 @@ pub async fn run_manager(
                             retry_count: 0,
                             cookies_path: cookies_path.clone(),
                             segments: vec![output_path.clone()],
+                            last_bytes: 0,
+                            last_growth_at: std::time::Instant::now(),
+                            from_start_watch_url: None,
                         });
 
                         let rtx = resolve_tx.clone();
@@ -660,7 +717,7 @@ pub async fn run_manager(
                         tokio::spawn(async move {
                             match YtDlpProcess::with_options(&url, output_path, cookies_path.as_deref(), Some(&fmt), false) {
                                 Ok(process) => {
-                                    let _ = rtx.send((job_id, Ok((RecorderProcess::YtDlp(process), None))));
+                                    let _ = rtx.send((job_id, Ok((RecorderProcess::YtDlp(process), None, None))));
                                 }
                                 Err(e) => {
                                     let _ = rtx.send((job_id, Err(format!("yt-dlp VOD download failed: {e}"))));
@@ -673,7 +730,7 @@ pub async fn run_manager(
             Some((job_id, result)) = resolve_rx.recv() => {
                 if let Some(rec) = active.get_mut(&job_id) {
                     match result {
-                        Ok((process, renamed_path)) => {
+                        Ok((process, renamed_path, watch_url)) => {
                             if let Some(new_path) = renamed_path {
                                 rec.job.output_path = new_path.clone();
                                 // segments[0] is the base path other code derives
@@ -683,9 +740,17 @@ pub async fn run_manager(
                                     rec.segments[0] = new_path;
                                 }
                             }
+                            // Remember the watch URL for yt-dlp retries.
+                            if watch_url.is_some() {
+                                rec.from_start_watch_url = watch_url;
+                            }
                             rec.process = Some(process);
                             rec.job.state = RecordingState::Recording;
                             rec.job.started_at = chrono::Utc::now();
+                            // Reset stall clock so the resolve phase doesn't
+                            // eat into the 2-minute stall budget.
+                            rec.last_bytes = 0;
+                            rec.last_growth_at = std::time::Instant::now();
                             let _ = event_tx.send(DaemonEvent::RecordingStarted { job: rec.job.clone() });
                         }
                         Err(e) => {
@@ -721,6 +786,13 @@ pub async fn run_manager(
                         rec.job.bytes_written = proc.file_size();
                         rec.job.duration_secs = (chrono::Utc::now() - rec.job.started_at)
                             .num_seconds() as f64;
+                        // Stall detection: advance the growth clock whenever
+                        // new bytes arrive so the threshold starts from the
+                        // last genuine write activity.
+                        if rec.job.bytes_written > rec.last_bytes {
+                            rec.last_bytes = rec.job.bytes_written;
+                            rec.last_growth_at = std::time::Instant::now();
+                        }
                         let dp = proc.download_progress();
 
                         let _ = event_tx.send(DaemonEvent::RecordingProgress {
@@ -759,31 +831,51 @@ pub async fn run_manager(
                                     rec.segments.push(segment_path.clone());
                                     rec.job.output_path = segment_path;
 
-                                    // Re-resolve and restart
+                                    // Re-resolve and restart.
+                                    // For YouTube --live-from-start jobs the
+                                    // original process was YtDlp; re-spawn it
+                                    // with the same watch URL instead of
+                                    // resolving via streamlink + FFmpeg.
                                     let rtx = resolve_tx.clone();
                                     let job = rec.job.clone();
                                     let jid = *id;
                                     let retry_cookies = rec.cookies_path.clone();
                                     let retry_fmt = resolve_format(&config, &job.channel_id, job.platform);
+                                    let maybe_watch_url = rec.from_start_watch_url.clone();
                                     tokio::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-                                        match resolver::resolve_stream_url(
-                                            job.platform,
-                                            &job.channel_name,
-                                            retry_cookies.as_deref(),
-                                        ).await {
-                                            Ok(info) => {
-                                                match FfmpegBuilder::new(info.url, job.output_path)
-                                                    .transcode(job.transcode)
-                                                    .format(retry_fmt)
-                                                    .build()
-                                                {
-                                                    Ok(p) => { let _ = rtx.send((jid, Ok((RecorderProcess::Ffmpeg(p), None)))); }
-                                                    Err(e) => { let _ = rtx.send((jid, Err(format!("{e}")))); }
-                                                }
+                                        if let Some(watch_url) = maybe_watch_url {
+                                            // yt-dlp from-start retry: re-spawn
+                                            // with the same resolved watch URL.
+                                            match YtDlpProcess::with_options(
+                                                &watch_url,
+                                                job.output_path,
+                                                retry_cookies.as_deref(),
+                                                Some(&retry_fmt),
+                                                true,
+                                            ) {
+                                                Ok(p) => { let _ = rtx.send((jid, Ok((RecorderProcess::YtDlp(p), None, Some(watch_url))))); }
+                                                Err(e) => { let _ = rtx.send((jid, Err(format!("{e}")))); }
                                             }
-                                            Err(e) => {
-                                                let _ = rtx.send((jid, Err(format!("{e}"))));
+                                        } else {
+                                            match resolver::resolve_stream_url(
+                                                job.platform,
+                                                &job.channel_name,
+                                                retry_cookies.as_deref(),
+                                            ).await {
+                                                Ok(info) => {
+                                                    match FfmpegBuilder::new(info.url, job.output_path)
+                                                        .transcode(job.transcode)
+                                                        .format(retry_fmt)
+                                                        .build()
+                                                    {
+                                                        Ok(p) => { let _ = rtx.send((jid, Ok((RecorderProcess::Ffmpeg(p), None, None)))); }
+                                                        Err(e) => { let _ = rtx.send((jid, Err(format!("{e}")))); }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = rtx.send((jid, Err(format!("{e}"))));
+                                                }
                                             }
                                         }
                                     });
@@ -817,7 +909,37 @@ pub async fn run_manager(
                                     finished.push((*id, RecordingState::Failed, Some(error_msg)));
                                 }
                             }
-                            Ok(None) => {} // still running
+                            Ok(None) => {
+                                // Process is still alive — check for a stall.
+                                // A stall means no new bytes for STALL_TIMEOUT_SECS;
+                                // a frozen ffmpeg/yt-dlp would otherwise stay
+                                // `Recording` forever.  Stopping here lets the
+                                // gap-resume retry path kick in (or finalize if
+                                // retries are exhausted).
+                                let stalled = rec.last_growth_at.elapsed().as_secs()
+                                    >= STALL_TIMEOUT_SECS;
+                                if stalled {
+                                    tracing::warn!(
+                                        job_id = %id,
+                                        channel = %rec.job.channel_name,
+                                        bytes = rec.job.bytes_written,
+                                        stall_secs = STALL_TIMEOUT_SECS,
+                                        "recorder stall detected — no new bytes; stopping for retry/finalize"
+                                    );
+                                    let _ = event_tx.send(DaemonEvent::Notification {
+                                        title: format!("Recording stalled: {}", rec.job.channel_name),
+                                        body: format!(
+                                            "No new data for {STALL_TIMEOUT_SECS}s — stopping to retry"
+                                        ),
+                                    });
+                                    // Stop the process; the non-zero exit will
+                                    // trigger the gap-resume retry path (or
+                                    // finalize as Failed after max retries).
+                                    if let Some(ref mut p) = rec.process {
+                                        p.stop().await.ok();
+                                    }
+                                }
+                            }
                             Err(e) => {
                                 tracing::error!("Failed to check recorder status: {e}");
                             }
