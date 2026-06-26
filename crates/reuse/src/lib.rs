@@ -287,19 +287,17 @@ pub fn hashtags_for(format: Format, top_words: &[String], topics: &[String]) -> 
         tags.push(format!("#{p}"));
     }
     let mut seen = std::collections::HashSet::new();
-    let push_tag = |s: &str, tags: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
-        let cleaned: String = s
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .collect();
-        if cleaned.len() < 3 {
-            return;
-        }
-        let lower = cleaned.to_lowercase();
-        if seen.insert(lower) {
-            tags.push(format!("#{}", title_case(&cleaned)));
-        }
-    };
+    let push_tag =
+        |s: &str, tags: &mut Vec<String>, seen: &mut std::collections::HashSet<String>| {
+            let cleaned: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            if cleaned.len() < 3 {
+                return;
+            }
+            let lower = cleaned.to_lowercase();
+            if seen.insert(lower) {
+                tags.push(format!("#{}", title_case(&cleaned)));
+            }
+        };
     let cap = match format {
         Format::YouTubeShort | Format::TikTok => 10,
         Format::YouTubeLong => 8,
@@ -365,7 +363,10 @@ mod tests {
     #[test]
     fn shorts_and_tiktok_cap_duration_to_60s() {
         let drafts = generate_drafts(&rec(7200.0), &inputs());
-        let short = drafts.iter().find(|d| d.format == Format::YouTubeShort).unwrap();
+        let short = drafts
+            .iter()
+            .find(|d| d.format == Format::YouTubeShort)
+            .unwrap();
         let tt = drafts.iter().find(|d| d.format == Format::TikTok).unwrap();
         assert_eq!(short.duration_sec, 60.0);
         assert_eq!(tt.duration_sec, 60.0);
@@ -374,7 +375,10 @@ mod tests {
     #[test]
     fn shorts_keeps_top_3_clip_starts() {
         let drafts = generate_drafts(&rec(7200.0), &inputs());
-        let short = drafts.iter().find(|d| d.format == Format::YouTubeShort).unwrap();
+        let short = drafts
+            .iter()
+            .find(|d| d.format == Format::YouTubeShort)
+            .unwrap();
         assert_eq!(short.clip_starts.len(), 3);
         assert_eq!(short.clip_starts, vec![120.0, 800.0, 1500.0]);
     }
@@ -382,7 +386,10 @@ mod tests {
     #[test]
     fn long_form_keeps_full_duration() {
         let drafts = generate_drafts(&rec(7200.0), &inputs());
-        let long = drafts.iter().find(|d| d.format == Format::YouTubeLong).unwrap();
+        let long = drafts
+            .iter()
+            .find(|d| d.format == Format::YouTubeLong)
+            .unwrap();
         assert_eq!(long.duration_sec, 7200.0);
         assert!(long.clip_starts.is_empty());
     }
@@ -392,7 +399,10 @@ mod tests {
         let mut r = rec(60.0);
         r.title = "x".repeat(120);
         let drafts = generate_drafts(&r, &inputs());
-        let short = drafts.iter().find(|d| d.format == Format::YouTubeShort).unwrap();
+        let short = drafts
+            .iter()
+            .find(|d| d.format == Format::YouTubeShort)
+            .unwrap();
         assert!(short.title.len() <= 70);
         assert!(short.title.ends_with("..."));
     }
@@ -433,7 +443,10 @@ mod tests {
     #[test]
     fn description_for_youtube_long_includes_chapters_block() {
         let drafts = generate_drafts(&rec(7200.0), &inputs());
-        let long = drafts.iter().find(|d| d.format == Format::YouTubeLong).unwrap();
+        let long = drafts
+            .iter()
+            .find(|d| d.format == Format::YouTubeLong)
+            .unwrap();
         assert!(long.description.contains("Chapters:"));
         assert!(long.description.contains("00:00 Intro"));
     }

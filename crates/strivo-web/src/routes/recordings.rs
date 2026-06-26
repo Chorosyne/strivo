@@ -18,8 +18,8 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
-use tokio::io::AsyncSeekExt;
 use strivo_core::ipc::ServerMessage;
+use tokio::io::AsyncSeekExt;
 use uuid::Uuid;
 
 use crate::server::AppState;
@@ -46,7 +46,9 @@ fn contain_in_root(
     let real_root = root
         .canonicalize()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let real = candidate.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
+    let real = candidate
+        .canonicalize()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
     if real.starts_with(&real_root) {
         Ok(real)
     } else {
@@ -287,7 +289,10 @@ async fn download(
             .parse()
             .unwrap_or_else(|_| header::HeaderValue::from_static("inline")),
     );
-    h.insert(header::ACCEPT_RANGES, header::HeaderValue::from_static("bytes"));
+    h.insert(
+        header::ACCEPT_RANGES,
+        header::HeaderValue::from_static("bytes"),
+    );
     if let Ok(v) = header::HeaderValue::from_str(&slice_len.to_string()) {
         h.insert(header::CONTENT_LENGTH, v);
     }
@@ -316,7 +321,8 @@ mod tests {
     use std::fs;
 
     fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("strivo-contain-{}-{}", std::process::id(), tag));
+        let dir =
+            std::env::temp_dir().join(format!("strivo-contain-{}-{}", std::process::id(), tag));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -351,7 +357,10 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&secret_file, &link).unwrap();
-            assert_eq!(contain_in_root(&link, &root).unwrap_err(), StatusCode::FORBIDDEN);
+            assert_eq!(
+                contain_in_root(&link, &root).unwrap_err(),
+                StatusCode::FORBIDDEN
+            );
         }
         fs::remove_dir_all(&root).ok();
         fs::remove_dir_all(&secret).ok();
@@ -380,7 +389,10 @@ mod tests {
         assert_eq!(detect_mime(&hdr), Some("video/mp4"));
 
         // MP3 — ID3 prefix
-        assert_eq!(detect_mime(b"ID3\x03\x00\x00\x00\x00\x00\x00"), Some("audio/mpeg"));
+        assert_eq!(
+            detect_mime(b"ID3\x03\x00\x00\x00\x00\x00\x00"),
+            Some("audio/mpeg")
+        );
         // MP3 — bare MPEG sync
         assert_eq!(detect_mime(&[0xFF, 0xFB, 0x90, 0x00]), Some("audio/mpeg"));
 
@@ -417,15 +429,30 @@ mod tests {
     #[test]
     fn parse_range_handles_all_three_grammar_forms() {
         // bytes=A-B
-        assert_eq!(parse_range(&range_headers("bytes=10-19"), 1000), Ok(Some((10, 19))));
+        assert_eq!(
+            parse_range(&range_headers("bytes=10-19"), 1000),
+            Ok(Some((10, 19)))
+        );
         // bytes=N- (open-ended → EOF)
-        assert_eq!(parse_range(&range_headers("bytes=500-"), 1000), Ok(Some((500, 999))));
+        assert_eq!(
+            parse_range(&range_headers("bytes=500-"), 1000),
+            Ok(Some((500, 999)))
+        );
         // bytes=-N (suffix length)
-        assert_eq!(parse_range(&range_headers("bytes=-100"), 1000), Ok(Some((900, 999))));
+        assert_eq!(
+            parse_range(&range_headers("bytes=-100"), 1000),
+            Ok(Some((900, 999)))
+        );
         // suffix larger than file → clamp to whole file
-        assert_eq!(parse_range(&range_headers("bytes=-9999"), 1000), Ok(Some((0, 999))));
+        assert_eq!(
+            parse_range(&range_headers("bytes=-9999"), 1000),
+            Ok(Some((0, 999)))
+        );
         // end past EOF → clamp to last byte
-        assert_eq!(parse_range(&range_headers("bytes=10-9999"), 1000), Ok(Some((10, 999))));
+        assert_eq!(
+            parse_range(&range_headers("bytes=10-9999"), 1000),
+            Ok(Some((10, 999)))
+        );
     }
 
     #[test]

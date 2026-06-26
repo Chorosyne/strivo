@@ -86,7 +86,7 @@ impl Detector for PlateauVariance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewguard::stats::{BIN_SECS, ChannelStats};
+    use crate::viewguard::stats::{ChannelStats, BIN_SECS};
     use chrono::{DateTime, Utc};
 
     fn t(s: i64) -> DateTime<Utc> {
@@ -106,7 +106,11 @@ mod tests {
         // Perfectly flat 500 viewers for 90 bins.
         let s = stats_from(&vec![500; 90]);
         let r = PlateauVariance.evaluate(&s).expect("flatline should fire");
-        assert!(r.score > 0.8, "perfect flatline should score near 1, got {}", r.score);
+        assert!(
+            r.score > 0.8,
+            "perfect flatline should score near 1, got {}",
+            r.score
+        );
     }
 
     #[test]

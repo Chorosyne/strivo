@@ -7,8 +7,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::events::DaemonEvent;
 use crate::config::AppConfig;
+use crate::events::DaemonEvent;
 use crate::platform::{ChannelEntry, Platform, PlatformKind};
 use crate::recording::RecordingCommand;
 
@@ -80,8 +80,13 @@ impl ChannelMonitor {
 
     /// Handles to live-update the poll interval (item 14b): the daemon stores
     /// the new value in the atomic and fires the notify to rebuild the timer.
-    pub fn interval_controls(&self) -> (Arc<std::sync::atomic::AtomicU64>, Arc<tokio::sync::Notify>) {
-        (self.poll_interval_secs.clone(), self.interval_notify.clone())
+    pub fn interval_controls(
+        &self,
+    ) -> (Arc<std::sync::atomic::AtomicU64>, Arc<tokio::sync::Notify>) {
+        (
+            self.poll_interval_secs.clone(),
+            self.interval_notify.clone(),
+        )
     }
 
     /// Set an external auth notify (shared with auth tasks)
@@ -106,7 +111,9 @@ impl ChannelMonitor {
     /// frequently misses the window between live and offline, leaving an
     /// otherwise-recorded channel with no rail "last live" label).
     async fn backfill_last_live_from_persist(&mut self) {
-        let Some(db) = self.persist.clone() else { return };
+        let Some(db) = self.persist.clone() else {
+            return;
+        };
         let jobs = match db.load_recording_jobs().await {
             Ok(j) => j,
             Err(e) => {
@@ -176,7 +183,11 @@ impl ChannelMonitor {
         }
 
         let interval_atomic = self.poll_interval_secs.clone();
-        let cur_secs = || interval_atomic.load(std::sync::atomic::Ordering::Relaxed).max(15);
+        let cur_secs = || {
+            interval_atomic
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .max(15)
+        };
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(cur_secs()));
         // Consume the first tick (it fires immediately)
         interval.tick().await;
@@ -247,8 +258,8 @@ impl ChannelMonitor {
         // Phase 2 so they remain single-threaded.
         type PlatformFetch = (
             PlatformKind,
-            Result<Vec<ChannelEntry>>,          // fetch_followed_channels
-            Option<Result<Vec<ChannelEntry>>>,  // check_live_status (None on fetch failure)
+            Result<Vec<ChannelEntry>>,         // fetch_followed_channels
+            Option<Result<Vec<ChannelEntry>>>, // check_live_status (None on fetch failure)
         );
 
         let futs: Vec<_> = self
@@ -265,8 +276,7 @@ impl ChannelMonitor {
                     };
                     let live_result: Option<Result<Vec<ChannelEntry>>> = match &channels_result {
                         Ok(channels) => {
-                            let ids: Vec<String> =
-                                channels.iter().map(|c| c.id.clone()).collect();
+                            let ids: Vec<String> = channels.iter().map(|c| c.id.clone()).collect();
                             let plat = platform.read().await;
                             Some(plat.check_live_status(&ids).await)
                         }
@@ -277,8 +287,7 @@ impl ChannelMonitor {
             })
             .collect();
 
-        let platform_results: Vec<PlatformFetch> =
-            futures_util::future::join_all(futs).await;
+        let platform_results: Vec<PlatformFetch> = futures_util::future::join_all(futs).await;
 
         // Phase 2 — process each platform's results sequentially.
         // Ordering is stable (collect() preserves insertion order) so the
@@ -315,9 +324,11 @@ impl ChannelMonitor {
                     for ch in &mut channels {
                         // Check auto-record from the channel data directly
                         // (reflects fresh config state from TUI saves)
-                        ch.auto_record = self.config.auto_record_channels.iter().any(|a| {
-                            a.channel_id == ch.id && a.platform == kind.to_string()
-                        });
+                        ch.auto_record = self
+                            .config
+                            .auto_record_channels
+                            .iter()
+                            .any(|a| a.channel_id == ch.id && a.platform == kind.to_string());
 
                         // Track/stamp last-seen-live for the offline
                         // "last live: N ago" label.
@@ -404,7 +415,9 @@ impl ChannelMonitor {
                 )
         });
 
-        let _ = self.event_tx.send(DaemonEvent::ChannelsUpdated(all_channels));
+        let _ = self
+            .event_tx
+            .send(DaemonEvent::ChannelsUpdated(all_channels));
 
         // Persist last-seen-live so the "last live: N ago" label survives
         // restarts. Best-effort.
@@ -428,7 +441,9 @@ impl ChannelMonitor {
         let Some(cutoff) = profile.cutoff_episodes else {
             return false;
         };
-        let Some(db) = &self.persist else { return false };
+        let Some(db) = &self.persist else {
+            return false;
+        };
         match db.count_finished_recordings(&ch.id).await {
             Ok(n) if (n as u32) >= cutoff => {
                 tracing::info!(
@@ -454,7 +469,9 @@ impl ChannelMonitor {
         if cap == 0 {
             return false;
         }
-        let Some(db) = &self.persist else { return false };
+        let Some(db) = &self.persist else {
+            return false;
+        };
         match db.load_jobs_in_states(&["Recording"]).await {
             Ok(active) if (active.len() as u32) >= cap => {
                 tracing::info!(

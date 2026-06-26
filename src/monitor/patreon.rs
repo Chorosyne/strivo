@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::DaemonEvent;
 use crate::config::AppConfig;
+use crate::events::DaemonEvent;
 use crate::platform::patreon::PatreonClient;
 use crate::platform::PlatformKind;
 use crate::recording::RecordingCommand;
@@ -103,7 +103,11 @@ impl PatreonMonitor {
             let last = self.last_checked.get(&creator.campaign_id).copied();
             // The Patreon API returns no posts for campaigns you only patron;
             // when cookies are configured, list them via yt-dlp instead.
-            let cookies = self.config.patreon.as_ref().and_then(|p| p.cookies_path.clone());
+            let cookies = self
+                .config
+                .patreon
+                .as_ref()
+                .and_then(|p| p.cookies_path.clone());
             let posts = match (cookies.as_deref(), creator.vanity.as_deref()) {
                 (Some(cp), Some(vanity)) => {
                     match self
@@ -118,7 +122,11 @@ impl PatreonMonitor {
                         }
                     }
                 }
-                _ => self.client.fetch_posts(&creator.campaign_id, None).await.unwrap_or_default(),
+                _ => self
+                    .client
+                    .fetch_posts(&creator.campaign_id, None)
+                    .await
+                    .unwrap_or_default(),
             };
 
             // Per-creator opt-in to auto-download (task #70). Creators with
@@ -157,11 +165,7 @@ impl PatreonMonitor {
                 }
 
                 if is_new && auto_pull {
-                    tracing::info!(
-                        "Patreon auto-pull: {} - {}",
-                        creator.name,
-                        post.title
-                    );
+                    tracing::info!("Patreon auto-pull: {} - {}", creator.name, post.title);
                     // Monitor already holds the Patreon HTTP client's
                     // live session; `CookieSource::Inherit` skips the
                     // `--cookies` flag and lets the adapter carry the auth.

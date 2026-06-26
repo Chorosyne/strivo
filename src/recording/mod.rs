@@ -21,8 +21,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::events::DaemonEvent;
 use crate::config::{AppConfig, RecordingFormat, ResolvedFormat};
+use crate::events::DaemonEvent;
 use crate::platform::PlatformKind;
 use crate::recording::ffmpeg::{FfmpegBuilder, FfmpegProcess};
 use crate::recording::job::{RecordingJob, RecordingState};
@@ -73,12 +73,7 @@ pub fn resolve_format(
     let profile_fmt: Option<&RecordingFormat> = entry
         .and_then(|e| e.profile.as_ref())
         .and_then(|name| config.capture_profiles.iter().find(|p| &p.name == name))
-        .and_then(|profile| {
-            profile
-                .format
-                .as_ref()
-                .or(synthesised_tier.as_ref())
-        });
+        .and_then(|profile| profile.format.as_ref().or(synthesised_tier.as_ref()));
 
     // 3-level merge: channel_override > profile_fmt > global.
     // We collapse profile_fmt + global into a single RecordingFormat first
@@ -88,9 +83,9 @@ pub fn resolve_format(
         // override has a single RecordingFormat to sit on top of.
         let r = RecordingFormat::resolved(Some(pf), &config.recording.format);
         RecordingFormat {
-            format:      Some(r.format),
+            format: Some(r.format),
             bitrate_kbps: r.bitrate_kbps,
-            container:   Some(r.container),
+            container: Some(r.container),
             video_codec: Some(r.video_codec),
             audio_codec: Some(r.audio_codec),
         }
@@ -235,7 +230,10 @@ fn finalize_completion(
     );
     let trim_ads = config.recording.auto_trim_ads
         && matches!(final_state, RecordingState::Finished)
-        && rec.as_ref().map(|r| r.job.platform == PlatformKind::Twitch).unwrap_or(false);
+        && rec
+            .as_ref()
+            .map(|r| r.job.platform == PlatformKind::Twitch)
+            .unwrap_or(false);
     let ad_min_secs = config.recording.ad_min_secs;
     // Every successful completion gets a container check — yt-dlp's
     // hls-native downloader leaves MPEG-TS bytes inside a .mkv filename,
@@ -244,11 +242,19 @@ fn finalize_completion(
     let needs_remux = matches!(final_state, RecordingState::Finished) && rec.is_some();
 
     if !(needs_merge || trim_ads || needs_remux) {
-        let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
+        let _ = event_tx.send(DaemonEvent::RecordingFinished {
+            job_id: id,
+            final_state,
+            error,
+        });
         return;
     }
     let Some(r) = rec else {
-        let _ = event_tx.send(DaemonEvent::RecordingFinished { job_id: id, final_state, error });
+        let _ = event_tx.send(DaemonEvent::RecordingFinished {
+            job_id: id,
+            final_state,
+            error,
+        });
         return;
     };
     let etx = event_tx;
@@ -261,9 +267,20 @@ fn finalize_completion(
         if needs_merge {
             // M5.5: merge gap-resume parts back into the base path via
             // mkvmerge before any further processing.
-            let parent = base.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
-            let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("recording").to_string();
-            let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("mkv").to_string();
+            let parent = base
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let stem = base
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("recording")
+                .to_string();
+            let ext = base
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("mkv")
+                .to_string();
             let temp = parent.join(format!(".{stem}.merging.{ext}"));
             let segs_for_merge = segs.clone();
             let temp_for_merge = temp.clone();
@@ -298,7 +315,10 @@ fn finalize_completion(
 
         if trim_ads && warn.is_none() {
             match adtrim::trim_in_place(&base, ad_min_secs).await {
-                Ok(adtrim::TrimOutcome::Trimmed { removed_secs, ranges }) => {
+                Ok(adtrim::TrimOutcome::Trimmed {
+                    removed_secs,
+                    ranges,
+                }) => {
                     tracing::info!(
                         job_id = %job_id,
                         ranges,
@@ -366,9 +386,8 @@ pub async fn run_manager(
     // subsequent record turns a recurring WARN log into one INFO line per
     // daemon lifetime. TTL is short enough that an unsub / un-gate naturally
     // re-probes.
-    let rewind_forbidden: std::sync::Arc<
-        tokio::sync::Mutex<HashMap<String, std::time::Instant>>,
-    > = std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let rewind_forbidden: std::sync::Arc<tokio::sync::Mutex<HashMap<String, std::time::Instant>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     const REWIND_FORBIDDEN_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
 
     // Channel for spawned resolve tasks to send back results.
@@ -381,8 +400,10 @@ pub async fn run_manager(
     // the same round-trip it resolves the video id, and rebuilds the
     // filename so a fresh-start auto-record no longer lands as
     // `UCxxxx_2026-…_stream.mkv`. Other call sites pass None.
-    let (resolve_tx, mut resolve_rx) =
-        mpsc::unbounded_channel::<(Uuid, Result<(RecorderProcess, Option<PathBuf>, Option<String>), String>)>();
+    let (resolve_tx, mut resolve_rx) = mpsc::unbounded_channel::<(
+        Uuid,
+        Result<(RecorderProcess, Option<PathBuf>, Option<String>), String>,
+    )>();
 
     loop {
         tokio::select! {
@@ -1014,7 +1035,9 @@ pub async fn run_manager(
 /// Local cache path for a recording's source thumbnail (item: recording
 /// cover art). Keyed by job id under `data_dir/thumbs/`.
 pub fn thumbnail_cache_path(_config: &AppConfig, job_id: uuid::Uuid) -> PathBuf {
-    AppConfig::data_dir().join("thumbs").join(format!("{job_id}.jpg"))
+    AppConfig::data_dir()
+        .join("thumbs")
+        .join(format!("{job_id}.jpg"))
 }
 
 /// Download the source thumbnail to `dest` (best-effort). Snapshotting a local
@@ -1256,10 +1279,7 @@ mod tests {
     // ── Quality-tier resolution ──────────────────────────────────────
     use crate::config::{AppConfig, AutoRecordEntry, CaptureProfile, QualityTier};
 
-    fn make_arc_with_profile(
-        channel_id: &str,
-        profile: Option<&str>,
-    ) -> AutoRecordEntry {
+    fn make_arc_with_profile(channel_id: &str, profile: Option<&str>) -> AutoRecordEntry {
         AutoRecordEntry {
             platform: "Twitch".into(),
             channel_id: channel_id.into(),
@@ -1287,7 +1307,10 @@ mod tests {
         cfg.capture_profiles = vec![make_profile_with_tier("hd", QualityTier::P1080)];
         cfg.auto_record_channels = vec![make_arc_with_profile("streamer1", Some("hd"))];
         let r = resolve_format(&cfg, "streamer1", PlatformKind::Twitch);
-        assert_eq!(r.format, "bestvideo[height<=1080]+bestaudio/best[height<=1080]");
+        assert_eq!(
+            r.format,
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        );
     }
 
     #[test]
@@ -1314,7 +1337,10 @@ mod tests {
             profile: Some("hd".into()),
         }];
         let r = resolve_format(&cfg, "streamer3", PlatformKind::Twitch);
-        assert_eq!(r.format, "worst", "per-channel explicit format must win over tier");
+        assert_eq!(
+            r.format, "worst",
+            "per-channel explicit format must win over tier"
+        );
     }
 
     #[test]

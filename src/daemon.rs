@@ -8,8 +8,8 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::events::DaemonEvent;
 use crate::config::AppConfig;
+use crate::events::DaemonEvent;
 use crate::ipc::{self, ClientMessage, ServerMessage};
 use crate::monitor::ChannelMonitor;
 use crate::platform::{ChannelEntry, Platform, PlatformKind};
@@ -222,9 +222,8 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
     // info-logged, the cache stays valid until the server explicitly
     // revokes). Handle is intentionally leaked — the task lives for
     // the daemon's lifetime.
-    let _licence_refresh = crate::licence::spawn_refresh_loop(
-        crate::licence::DEFAULT_REFRESH_INTERVAL,
-    );
+    let _licence_refresh =
+        crate::licence::spawn_refresh_loop(crate::licence::DEFAULT_REFRESH_INTERVAL);
 
     // Write PID file
     let pid_path = ipc::pid_path();
@@ -326,7 +325,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             match platform.authenticate().await {
                 Ok(()) => {
                     tracing::info!("Twitch authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated { kind: PlatformKind::Twitch });
+                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                        kind: PlatformKind::Twitch,
+                    });
                     notify.notify_one();
                 }
                 Err(e) => {
@@ -355,7 +356,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             match platform.authenticate().await {
                 Ok(()) => {
                     tracing::info!("YouTube authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated { kind: PlatformKind::YouTube });
+                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                        kind: PlatformKind::YouTube,
+                    });
                     notify.notify_one();
                 }
                 Err(e) => {
@@ -382,7 +385,9 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             match patreon_client.authorize().await {
                 Ok(()) => {
                     tracing::info!("Patreon authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated { kind: PlatformKind::Patreon });
+                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                        kind: PlatformKind::Patreon,
+                    });
 
                     let monitor = crate::monitor::patreon::PatreonMonitor::new(
                         patreon_client,
@@ -407,7 +412,8 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
     let rec_cancel = cancel.clone();
     let rec_twitch = twitch_handle.clone();
     tokio::spawn(async move {
-        crate::recording::run_manager(rec_config, rec_twitch, recording_rx, rec_tx, rec_cancel).await;
+        crate::recording::run_manager(rec_config, rec_twitch, recording_rx, rec_tx, rec_cancel)
+            .await;
     });
 
     // Spawn the per-channel bulk back-catalog download manager (task #71).
@@ -443,9 +449,11 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
     // Twitch EventSub (real-time stream.online → immediate poll). Reuses the
     // monitor's poll_notify so the proven auto-record path runs within seconds
     // of a broadcast start, instead of waiting up to a poll interval.
-    if let (Some(th), Some(tcfg), Some(pn)) =
-        (twitch_handle.clone(), config.twitch.clone(), poll_notify.clone())
-    {
+    if let (Some(th), Some(tcfg), Some(pn)) = (
+        twitch_handle.clone(),
+        config.twitch.clone(),
+        poll_notify.clone(),
+    ) {
         let client_id = tcfg.client_id.clone();
         let auto: std::collections::HashSet<String> = config
             .auto_record_channels
@@ -481,7 +489,11 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
             // our app costs 1 — so we can only push-subscribe to 10 channels.
             // Prioritize the auto-record set (the channels we actually PVR) so
             // they get sub-second detection; ordinary polling backstops the rest.
-            let mut ids: Vec<String> = all_ids.iter().filter(|id| auto.contains(*id)).cloned().collect();
+            let mut ids: Vec<String> = all_ids
+                .iter()
+                .filter(|id| auto.contains(*id))
+                .cloned()
+                .collect();
             for id in &all_ids {
                 if ids.len() >= crate::platform::twitch_eventsub::MAX_EVENTSUB_SUBS {
                     break;
@@ -981,7 +993,10 @@ async fn handle_client(
                 if let Some(p) = path {
                     if p.exists() {
                         if let Err(e) = crate::recording::trash::move_to_trash(&p) {
-                            tracing::warn!("delete_recording {job_id}: trash {} failed: {e}", p.display());
+                            tracing::warn!(
+                                "delete_recording {job_id}: trash {} failed: {e}",
+                                p.display()
+                            );
                         }
                     }
                 }
@@ -1001,7 +1016,9 @@ async fn handle_client(
                 // — it doesn't prune anything, just triggers a stale refetch
                 // that still surfaces the deleted row from the daemon snapshot.
                 if pruned {
-                    let _ = event_tx.send(DaemonEvent::RecordingsPruned { job_ids: vec![job_id] });
+                    let _ = event_tx.send(DaemonEvent::RecordingsPruned {
+                        job_ids: vec![job_id],
+                    });
                 }
             }
             ClientMessage::ClearErroredRecordings => {
@@ -1055,14 +1072,15 @@ async fn handle_client(
                     pruned = pruned_ids.len()
                 );
                 if !pruned_ids.is_empty() {
-                    let _ = event_tx.send(DaemonEvent::RecordingsPruned { job_ids: pruned_ids });
+                    let _ = event_tx.send(DaemonEvent::RecordingsPruned {
+                        job_ids: pruned_ids,
+                    });
                 }
             }
             ClientMessage::ListPlaylists { channel_id } => {
                 if let Some(ref tx) = bulk_tx {
-                    let _ = tx.send(crate::recording::bulk::BulkCommand::ListPlaylists {
-                        channel_id,
-                    });
+                    let _ =
+                        tx.send(crate::recording::bulk::BulkCommand::ListPlaylists { channel_id });
                 }
             }
             ClientMessage::FetchChannelVods {
@@ -1092,14 +1110,12 @@ async fn handle_client(
                 playlist_id,
             } => {
                 let cmd = match action {
-                    crate::ipc::BulkAction::Start => {
-                        crate::recording::bulk::BulkCommand::Start {
-                            channel_id,
-                            channel_name,
-                            platform,
-                            playlist_id,
-                        }
-                    }
+                    crate::ipc::BulkAction::Start => crate::recording::bulk::BulkCommand::Start {
+                        channel_id,
+                        channel_name,
+                        platform,
+                        playlist_id,
+                    },
                     crate::ipc::BulkAction::Stop => {
                         crate::recording::bulk::BulkCommand::Stop { channel_id }
                     }
@@ -1225,7 +1241,9 @@ fn dispatch_desktop_notification(cfg: &crate::config::NotificationsConfig, event
                 }
                 (
                     "StriVo — recording failed".to_string(),
-                    error.clone().unwrap_or_else(|| "recording ended in error".to_string()),
+                    error
+                        .clone()
+                        .unwrap_or_else(|| "recording ended in error".to_string()),
                 )
             } else if matches!(final_state, RecordingState::Finished) {
                 if !cfg.on_recording_finished {
@@ -1327,8 +1345,8 @@ async fn persist_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recording::job::{RecordingJob, RecordingState};
     use crate::platform::PlatformKind;
+    use crate::recording::job::{RecordingJob, RecordingState};
 
     fn empty_state() -> DaemonState {
         DaemonState {
@@ -1385,7 +1403,10 @@ mod tests {
             .count();
         assert_eq!(terminal, MAX_TERMINAL_RECORDINGS, "terminal tail capped");
         assert!(st.recordings.contains_key(&active_id), "active job kept");
-        assert!(!st.recordings.contains_key(&oldest_id), "oldest terminal dropped");
+        assert!(
+            !st.recordings.contains_key(&oldest_id),
+            "oldest terminal dropped"
+        );
     }
 
     #[test]

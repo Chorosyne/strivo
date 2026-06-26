@@ -32,7 +32,9 @@ struct Attempts {
 pub enum Decision {
     Allow,
     /// Blocked; advise the client when to retry.
-    Blocked { retry_after_secs: u64 },
+    Blocked {
+        retry_after_secs: u64,
+    },
 }
 
 impl LoginLimiter {

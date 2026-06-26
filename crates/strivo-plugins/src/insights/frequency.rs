@@ -15,16 +15,16 @@ pub struct FrequencyRow {
 /// Toggle via `[s]` in the Insights pane.
 pub const STOPWORDS: &[&str] = &[
     "the", "a", "an", "and", "or", "but", "if", "of", "to", "in", "on", "at", "for", "from",
-    "with", "without", "by", "as", "is", "was", "were", "be", "been", "being", "are", "am",
-    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them", "this",
-    "that", "these", "those", "my", "your", "his", "their", "our", "its", "do", "does", "did",
-    "have", "has", "had", "will", "would", "should", "could", "can", "may", "might", "must",
-    "what", "when", "where", "why", "how", "who", "which", "than", "then", "so", "just",
-    "uh", "um", "yeah", "like", "okay", "right", "really", "actually", "kind", "sort",
-    "very", "much", "many", "any", "all", "some", "no", "not", "only", "even", "also",
-    "there", "here", "now", "well", "still", "more", "most", "back", "good", "great",
-    "go", "get", "got", "going", "make", "made", "see", "look", "think", "know", "want",
-    "say", "said", "tell", "told", "come", "came", "take", "took", "give", "gave",
+    "with", "without", "by", "as", "is", "was", "were", "be", "been", "being", "are", "am", "i",
+    "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them", "this", "that",
+    "these", "those", "my", "your", "his", "their", "our", "its", "do", "does", "did", "have",
+    "has", "had", "will", "would", "should", "could", "can", "may", "might", "must", "what",
+    "when", "where", "why", "how", "who", "which", "than", "then", "so", "just", "uh", "um",
+    "yeah", "like", "okay", "right", "really", "actually", "kind", "sort", "very", "much", "many",
+    "any", "all", "some", "no", "not", "only", "even", "also", "there", "here", "now", "well",
+    "still", "more", "most", "back", "good", "great", "go", "get", "got", "going", "make", "made",
+    "see", "look", "think", "know", "want", "say", "said", "tell", "told", "come", "came", "take",
+    "took", "give", "gave",
 ];
 
 fn stopword_set() -> std::collections::HashSet<&'static str> {

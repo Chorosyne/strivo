@@ -126,8 +126,8 @@ pub fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
     // requires capabilities this build doesn't have.)
     let want = semver::Version::parse(&m.min_host_version)
         .map_err(|e| format!("min_host_version: {e}"))?;
-    let have = semver::Version::parse(HOST_VERSION)
-        .map_err(|e| format!("HOST_VERSION constant: {e}"))?;
+    let have =
+        semver::Version::parse(HOST_VERSION).map_err(|e| format!("HOST_VERSION constant: {e}"))?;
     if want > have {
         return Err(format!(
             "min_host_version {want} > host {have}; upgrade StriVo first"
@@ -168,11 +168,26 @@ fn is_kebab_or_snake(s: &str) -> bool {
 /// `strivo_core::plugin::capability` but kept inline here so this
 /// crate doesn't depend on strivo-core (the spec ships standalone).
 const WELL_KNOWN_CAPABILITIES: &[&str] = &[
-    "transcription", "word_timestamps", "diarisation", "topic_segmentation",
-    "chapters", "scene_detection", "thumbnail_ranking", "highlight_detection",
-    "clip_extraction", "translation", "captions", "audience_retention",
-    "fraud_detection", "stream_comparison", "reporting", "brand_safety",
-    "asset_catalog", "source_track_split", "publish_queue", "edl_editor",
+    "transcription",
+    "word_timestamps",
+    "diarisation",
+    "topic_segmentation",
+    "chapters",
+    "scene_detection",
+    "thumbnail_ranking",
+    "highlight_detection",
+    "clip_extraction",
+    "translation",
+    "captions",
+    "audience_retention",
+    "fraud_detection",
+    "stream_comparison",
+    "reporting",
+    "brand_safety",
+    "asset_catalog",
+    "source_track_split",
+    "publish_queue",
+    "edl_editor",
     "recording", // host-emitted source artefact
 ];
 
@@ -689,7 +704,10 @@ path = "example.so"
         assert!(cat.entries.len() >= 4);
         for entry in &cat.entries {
             validate_manifest(&entry.manifest).unwrap_or_else(|e| {
-                panic!("catalog entry '{}' fails validation: {e}", entry.manifest.name)
+                panic!(
+                    "catalog entry '{}' fails validation: {e}",
+                    entry.manifest.name
+                )
             });
         }
     }

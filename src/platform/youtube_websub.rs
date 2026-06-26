@@ -86,8 +86,10 @@ impl WebSubClient {
         let client = reqwest::Client::new();
         let (mut ok, mut fail) = (0usize, 0u32);
         for ch in &channels {
-            let topic =
-                format!("https://www.youtube.com/xml/feeds/videos.xml?channel_id={}", ch.id);
+            let topic = format!(
+                "https://www.youtube.com/xml/feeds/videos.xml?channel_id={}",
+                ch.id
+            );
             let form = [
                 ("hub.callback", self.callback_url.as_str()),
                 ("hub.topic", topic.as_str()),

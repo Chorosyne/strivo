@@ -43,7 +43,14 @@ pub async fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>> {
         bail!(
             "embed_chunks.py exited with {}: {}",
             output.status,
-            stderr.chars().rev().take(400).collect::<String>().chars().rev().collect::<String>()
+            stderr
+                .chars()
+                .rev()
+                .take(400)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
         );
     }
 
@@ -77,8 +84,7 @@ fn resolve_script() -> Result<PathBuf> {
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home)
-            .join(".local/share/strivo/embed_chunks.py");
+        let p = PathBuf::from(home).join(".local/share/strivo/embed_chunks.py");
         if p.is_file() {
             return Ok(p);
         }

@@ -144,9 +144,7 @@ impl PipelineRegistry {
             for stage in &mut pipe.stages {
                 if matches!(
                     stage.state,
-                    StageState::Pending
-                        | StageState::Running { .. }
-                        | StageState::Failed { .. }
+                    StageState::Pending | StageState::Running { .. } | StageState::Failed { .. }
                 ) {
                     stage.cancel.cancel();
                     stage.state = StageState::Cancelled;
@@ -275,10 +273,7 @@ mod tests {
         reg.mark_stage_failed(a, "boom".into());
         reg.mark_stage_failed(a, "boom".into());
         reg.mark_stage_failed(a, "boom".into());
-        assert!(matches!(
-            reg.get(pid).unwrap().state,
-            PipelineState::Failed
-        ));
+        assert!(matches!(reg.get(pid).unwrap().state, PipelineState::Failed));
 
         // Retry — provider override is irrelevant for Extract but
         // shouldn't blow up.

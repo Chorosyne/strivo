@@ -23,10 +23,7 @@ pub struct SpeakerAirtime {
 
 /// Sum each speaker's total time-on-mic for one recording. Sorted
 /// descending so the largest air-time speaker renders first.
-pub fn airtime_for_recording(
-    conn: &Connection,
-    recording_id: &str,
-) -> Result<Vec<SpeakerAirtime>> {
+pub fn airtime_for_recording(conn: &Connection, recording_id: &str) -> Result<Vec<SpeakerAirtime>> {
     let mut stmt = conn.prepare(
         "SELECT COALESCE(s.speaker, '(unlabeled)') AS sp, \
                 SUM(s.end_sec - s.start_sec) AS secs, \
@@ -117,10 +114,16 @@ mod tests {
 
     #[test]
     fn sentiment_band_known_labels() {
-        assert_eq!(SentimentBand::from_label("positive"), SentimentBand::Positive);
+        assert_eq!(
+            SentimentBand::from_label("positive"),
+            SentimentBand::Positive
+        );
         assert_eq!(SentimentBand::from_label("POS"), SentimentBand::Positive);
         assert_eq!(SentimentBand::from_label("neutral"), SentimentBand::Neutral);
-        assert_eq!(SentimentBand::from_label("negative"), SentimentBand::Negative);
+        assert_eq!(
+            SentimentBand::from_label("negative"),
+            SentimentBand::Negative
+        );
     }
 
     #[test]

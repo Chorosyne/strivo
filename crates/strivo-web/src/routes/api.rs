@@ -69,8 +69,7 @@ async fn patreon(headers: HeaderMap, State(state): State<AppState>) -> impl Into
             patreon_creators,
             patreon_posts,
             ..
-        }) => Json(json!({ "creators": patreon_creators, "posts": patreon_posts }))
-            .into_response(),
+        }) => Json(json!({ "creators": patreon_creators, "posts": patreon_posts })).into_response(),
         Ok(_) => Json(json!({ "creators": [], "posts": [] })).into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
     }
@@ -156,8 +155,10 @@ async fn recording_probe(
     }
     let out = match tokio::process::Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-print_format", "json",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
         ])
@@ -170,24 +171,33 @@ async fn recording_probe(
             return crate::problem::Problem::unavailable("ffprobe not installed").into_response();
         }
         Err(e) => {
-            return crate::problem::Problem::internal(format!("ffprobe spawn: {e}")).into_response();
+            return crate::problem::Problem::internal(format!("ffprobe spawn: {e}"))
+                .into_response();
         }
     };
     if !out.status.success() {
         return crate::problem::Problem::new(
             StatusCode::BAD_GATEWAY,
-            format!("ffprobe failed: {}", String::from_utf8_lossy(&out.stderr).trim()),
+            format!(
+                "ffprobe failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
         )
         .into_response();
     }
     let raw: serde_json::Value = match serde_json::from_slice(&out.stdout) {
         Ok(v) => v,
-        Err(e) => return crate::problem::Problem::internal(format!("ffprobe parse: {e}")).into_response(),
+        Err(e) => {
+            return crate::problem::Problem::internal(format!("ffprobe parse: {e}")).into_response()
+        }
     };
 
     // Normalise: pull just the bits the Info modal renders. Keep `raw` out of
     // the response — the full ffprobe dump is noisy and exposes internals.
-    let fmt = raw.get("format").cloned().unwrap_or(serde_json::Value::Null);
+    let fmt = raw
+        .get("format")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let duration_secs = fmt
         .get("duration")
         .and_then(|v| v.as_str())
@@ -210,7 +220,11 @@ async fn recording_probe(
         let mut it = s.split('/');
         let n: f64 = it.next()?.parse().ok()?;
         let d: f64 = it.next().unwrap_or("1").parse().ok()?;
-        if d == 0.0 { None } else { Some(n / d) }
+        if d == 0.0 {
+            None
+        } else {
+            Some(n / d)
+        }
     }
 
     let mut video = Vec::new();
@@ -219,8 +233,14 @@ async fn recording_probe(
     if let Some(arr) = raw.get("streams").and_then(|v| v.as_array()) {
         for s in arr {
             let codec_type = s.get("codec_type").and_then(|v| v.as_str()).unwrap_or("");
-            let codec_name = s.get("codec_name").and_then(|v| v.as_str()).map(str::to_string);
-            let br = s.get("bit_rate").and_then(|v| v.as_str()).and_then(|x| x.parse::<u64>().ok());
+            let codec_name = s
+                .get("codec_name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let br = s
+                .get("bit_rate")
+                .and_then(|v| v.as_str())
+                .and_then(|x| x.parse::<u64>().ok());
             match codec_type {
                 "video" => video.push(json!({
                     "codec": codec_name,
@@ -489,7 +509,14 @@ fn disk_severity(total: u64, avail: u64) -> &'static str {
     }
 }
 
-fn add_check(checks: &mut Vec<serde_json::Value>, domain: &str, name: &str, sev: &str, message: String, fix: &str) {
+fn add_check(
+    checks: &mut Vec<serde_json::Value>,
+    domain: &str,
+    name: &str,
+    sev: &str,
+    message: String,
+    fix: &str,
+) {
     checks.push(json!({
         "domain": domain, "name": name, "severity": sev,
         "message": message, "fix": fix,
@@ -518,11 +545,23 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
         _ => (false, false, false),
     };
     if snap.is_ok() {
-        add_check(&mut checks, "Network", "Daemon IPC", "ok", "Daemon reachable.".into(), "");
+        add_check(
+            &mut checks,
+            "Network",
+            "Daemon IPC",
+            "ok",
+            "Daemon reachable.".into(),
+            "",
+        );
     } else {
-        add_check(&mut checks, "Network", "Daemon IPC", "error",
+        add_check(
+            &mut checks,
+            "Network",
+            "Daemon IPC",
+            "error",
             "Daemon unreachable over the IPC socket.".into(),
-            "Start the daemon (strivo daemon) or check the socket.");
+            "Start the daemon (strivo daemon) or check the socket.",
+        );
     }
 
     // Storage — free space on the recording filesystem.
@@ -536,11 +575,21 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
             } else {
                 format!("{} free of {}.", human_bytes(avail), human_bytes(total))
             };
-            let fix = if sev == "ok" { "" } else { "Free space or change recording_dir." };
+            let fix = if sev == "ok" {
+                ""
+            } else {
+                "Free space or change recording_dir."
+            };
             add_check(&mut checks, "Storage", "Disk space", sev, msg, fix);
         }
-        Err(e) => add_check(&mut checks, "Storage", "Config", "error",
-            format!("config load failed: {e}"), "Fix config.toml."),
+        Err(e) => add_check(
+            &mut checks,
+            "Storage",
+            "Config",
+            "error",
+            format!("config load failed: {e}"),
+            "Fix config.toml.",
+        ),
     }
 
     // Platform Auth — configured-but-not-authenticated is a warning.
@@ -551,11 +600,23 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
             ("Patreon", cfg.patreon.is_some(), pt_c),
         ] {
             if configured && connected {
-                add_check(&mut checks, "Platform Auth", name, "ok", format!("{name} authenticated."), "");
+                add_check(
+                    &mut checks,
+                    "Platform Auth",
+                    name,
+                    "ok",
+                    format!("{name} authenticated."),
+                    "",
+                );
             } else if configured {
-                add_check(&mut checks, "Platform Auth", name, "warn",
+                add_check(
+                    &mut checks,
+                    "Platform Auth",
+                    name,
+                    "warn",
                     format!("{name} configured but not authenticated."),
-                    "Authenticate the platform (TUI login or re-run auth).");
+                    "Authenticate the platform (TUI login or re-run auth).",
+                );
             }
         }
     }
@@ -639,10 +700,7 @@ fn statvfs_bytes(_p: &std::path::Path) -> Option<(u64, u64)> {
 /// `GET /api/v1/gantt?hours=24` — recordings as Gantt segments for
 /// the dashboard's 24h timeline. Returns
 /// `[{ id, channel_name, start_at, end_at, state }, …]`. (W5.)
-async fn gantt(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn gantt(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
@@ -779,8 +837,9 @@ async fn recording_thumb(
 
     match extract_thumb_with_ffmpeg(&output_path, &cache_path).await {
         Ok(bytes) => thumb_response(bytes),
-        Err(e) => crate::problem::Problem::not_found(format!("no thumbnail: ffmpeg: {e}"))
-            .into_response(),
+        Err(e) => {
+            crate::problem::Problem::not_found(format!("no thumbnail: ffmpeg: {e}")).into_response()
+        }
     }
 }
 
@@ -821,8 +880,16 @@ async fn extract_thumb_with_ffmpeg(
     cmd.args(["-nostdin", "-y", "-ss", "10", "-i"])
         .arg(source)
         .args([
-            "-frames:v", "1", "-vf", "scale=440:-2", "-q:v", "5",
-            "-f", "image2", "-update", "1",
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=440:-2",
+            "-q:v",
+            "5",
+            "-f",
+            "image2",
+            "-update",
+            "1",
         ])
         .arg(&tmp);
     let status = cmd.output().await?;
@@ -833,8 +900,16 @@ async fn extract_thumb_with_ffmpeg(
         cmd.args(["-nostdin", "-y", "-ss", "0", "-i"])
             .arg(source)
             .args([
-                "-frames:v", "1", "-vf", "scale=440:-2", "-q:v", "5",
-                "-f", "image2", "-update", "1",
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=440:-2",
+                "-q:v",
+                "5",
+                "-f",
+                "image2",
+                "-update",
+                "1",
             ])
             .arg(&tmp);
         let status = cmd.output().await?;
@@ -887,8 +962,16 @@ async fn stop_all_recordings(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.send_command(ClientMessage::Recording(RecordingCommand::StopAll)).await {
-        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "stop_all sent"}))).into_response(),
+    match state
+        .ipc
+        .send_command(ClientMessage::Recording(RecordingCommand::StopAll))
+        .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"status": "stop_all sent"})),
+        )
+            .into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
     }
 }
@@ -967,13 +1050,11 @@ async fn remux_recording(
     // Atomic swap: input → orig (keep), tmp → input.
     if let Err(e) = std::fs::rename(&input, &orig) {
         let _ = std::fs::remove_file(&tmp);
-        return crate::problem::Problem::internal(format!("rename original: {e}"))
-            .into_response();
+        return crate::problem::Problem::internal(format!("rename original: {e}")).into_response();
     }
     if let Err(e) = std::fs::rename(&tmp, &input) {
         let _ = std::fs::rename(&orig, &input); // best-effort restore
-        return crate::problem::Problem::internal(format!("install remuxed: {e}"))
-            .into_response();
+        return crate::problem::Problem::internal(format!("install remuxed: {e}")).into_response();
     }
     Json(json!({
         "ok": true,
@@ -1038,14 +1119,23 @@ async fn set_poll_interval(
             cfg.poll_interval_secs = secs;
             let path = cfg.config_path.clone();
             if let Err(e) = cfg.save(path.as_deref()) {
-                return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+                return crate::problem::Problem::internal(format!("save config: {e}"))
+                    .into_response();
             }
         }
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     }
     // Apply live to the running monitor.
-    match state.ipc.send_command(ClientMessage::SetPollInterval(secs)).await {
-        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"poll_interval_secs": secs}))).into_response(),
+    match state
+        .ipc
+        .send_command(ClientMessage::SetPollInterval(secs))
+        .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({"poll_interval_secs": secs})),
+        )
+            .into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
     }
 }
@@ -1089,7 +1179,9 @@ async fn update_setting(
         "recording.auto_vod_backfill" => {
             take_bool(&body.value).map(|v| cfg.recording.auto_vod_backfill = v)
         }
-        "recording.auto_trim_ads" => take_bool(&body.value).map(|v| cfg.recording.auto_trim_ads = v),
+        "recording.auto_trim_ads" => {
+            take_bool(&body.value).map(|v| cfg.recording.auto_trim_ads = v)
+        }
         "ui.reduce_motion" => take_bool(&body.value).map(|v| cfg.ui.reduce_motion = v),
         "ui.verbose_status" => take_bool(&body.value).map(|v| cfg.ui.verbose_status = v),
         #[cfg(feature = "creator")]
@@ -1188,7 +1280,11 @@ async fn update_setting(
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
-    (StatusCode::ACCEPTED, Json(json!({"ok": true, "path": body.path}))).into_response()
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({"ok": true, "path": body.path})),
+    )
+        .into_response()
 }
 
 fn take_bool(v: &serde_json::Value) -> Result<bool, String> {
@@ -1246,10 +1342,8 @@ async fn set_platform(
         return crate::problem::Problem::unauthorized().into_response();
     }
     if body.client_id.trim().is_empty() || body.client_secret.trim().is_empty() {
-        return crate::problem::Problem::bad_request(
-            "client_id and client_secret are required",
-        )
-        .into_response();
+        return crate::problem::Problem::bad_request("client_id and client_secret are required")
+            .into_response();
     }
     let mut cfg = match strivo_core::config::AppConfig::load(None) {
         Ok(c) => c,
@@ -1334,11 +1428,7 @@ fn newest_log_file(dir: &std::path::Path) -> Option<std::path::PathBuf> {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("strivo") && n.ends_with(".log"))
         })
-        .max_by_key(|p| {
-            std::fs::metadata(p)
-                .and_then(|m| m.modified())
-                .ok()
-        })
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1411,7 +1501,8 @@ async fn backup_create(headers: HeaderMap, State(state): State<AppState>) -> imp
     let name = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
     let dest = backups_dir().join(&name);
     if let Err(e) = std::fs::create_dir_all(&dest) {
-        return crate::problem::Problem::internal(format!("create backup dir: {e}")).into_response();
+        return crate::problem::Problem::internal(format!("create backup dir: {e}"))
+            .into_response();
     }
     let cfg = strivo_core::config::AppConfig::config_path();
     let db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
@@ -1447,7 +1538,11 @@ async fn backups_list(headers: HeaderMap, State(state): State<AppState>) -> impl
         .filter(|e| e.path().is_dir())
         .map(|e| {
             let p = e.path();
-            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
             json!({
                 "name": name,
                 "bytes": walk_dir_bytes(&p).unwrap_or(0),
@@ -1484,7 +1579,13 @@ async fn backup_download(
     // Pipe `tar` and let it stream — handles arbitrary sizes without
     // buffering. Conservative content-type so browsers do "Save As".
     let child = std::process::Command::new("tar")
-        .args(["-C", &dir.parent().unwrap_or(&dir).to_string_lossy(), "-czf", "-", &name])
+        .args([
+            "-C",
+            &dir.parent().unwrap_or(&dir).to_string_lossy(),
+            "-czf",
+            "-",
+            &name,
+        ])
         .stdout(std::process::Stdio::piped())
         .spawn();
     let mut child = match child {
@@ -1504,7 +1605,10 @@ async fn backup_download(
             (axum::http::header::CONTENT_TYPE, "application/gzip"),
             (
                 axum::http::header::CONTENT_DISPOSITION,
-                Box::leak(format!("attachment; filename=\"strivo-backup-{name}.tar.gz\"").into_boxed_str()),
+                Box::leak(
+                    format!("attachment; filename=\"strivo-backup-{name}.tar.gz\"")
+                        .into_boxed_str(),
+                ),
             ),
         ],
         out,
@@ -1531,7 +1635,8 @@ async fn backup_restore(
     let cfg_src = src.join("config.toml");
     if cfg_src.exists() {
         if let Err(e) = std::fs::copy(&cfg_src, strivo_core::config::AppConfig::config_path()) {
-            return crate::problem::Problem::internal(format!("restore config: {e}")).into_response();
+            return crate::problem::Problem::internal(format!("restore config: {e}"))
+                .into_response();
         }
         restored.push("config.toml");
     }
@@ -1539,7 +1644,8 @@ async fn backup_restore(
     if db_src.exists() {
         let db_dest = strivo_core::config::AppConfig::data_dir().join("jobs.db");
         if let Err(e) = std::fs::copy(&db_src, &db_dest) {
-            return crate::problem::Problem::internal(format!("restore jobs.db: {e}")).into_response();
+            return crate::problem::Problem::internal(format!("restore jobs.db: {e}"))
+                .into_response();
         }
         restored.push("jobs.db");
     }
@@ -1626,7 +1732,12 @@ async fn blocklist_add(
         Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
     match db
-        .add_blocklist(platform, &body.channel_id, body.vod_id.as_deref(), body.reason.as_deref())
+        .add_blocklist(
+            platform,
+            &body.channel_id,
+            body.vod_id.as_deref(),
+            body.reason.as_deref(),
+        )
         .await
     {
         Ok(()) => (StatusCode::CREATED, Json(json!({"status": "blocked"}))).into_response(),
@@ -1672,7 +1783,9 @@ struct AutoRecordPayload {
 /// Build a `RecordingFormat` with only the container field set from a
 /// UI-supplied string. Returns `None` when the string is absent or empty
 /// (meaning "use the global default").
-fn build_recording_format(container: &Option<String>) -> Option<strivo_core::config::RecordingFormat> {
+fn build_recording_format(
+    container: &Option<String>,
+) -> Option<strivo_core::config::RecordingFormat> {
     container
         .as_deref()
         .filter(|s| !s.is_empty())
@@ -1802,7 +1915,11 @@ async fn put_archiver_tandem(
         Ok(c) => c,
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     };
-    let already_in = cfg.archiver.tandem_channels.iter().any(|c| c == &channel_key);
+    let already_in = cfg
+        .archiver
+        .tandem_channels
+        .iter()
+        .any(|c| c == &channel_key);
     match (body.enabled, already_in) {
         (true, false) => cfg.archiver.tandem_channels.push(channel_key.clone()),
         (false, true) => cfg.archiver.tandem_channels.retain(|c| c != &channel_key),
@@ -1812,7 +1929,11 @@ async fn put_archiver_tandem(
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
-    (StatusCode::OK, Json(json!({"ok": true, "enabled": body.enabled}))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({"ok": true, "enabled": body.enabled})),
+    )
+        .into_response()
 }
 
 /// `PUT /api/v1/channels/<channel_key>/archiver_playlists` — set the
@@ -1875,34 +1996,49 @@ async fn create_capture_profile(
     let quality_tier = body
         .get("quality_tier")
         .and_then(|v| serde_json::from_value::<strivo_core::config::QualityTier>(v.clone()).ok());
-    let format = body
-        .get("format")
-        .and_then(|v| serde_json::from_value::<strivo_core::config::RecordingFormat>(v.clone()).ok());
+    let format = body.get("format").and_then(|v| {
+        serde_json::from_value::<strivo_core::config::RecordingFormat>(v.clone()).ok()
+    });
     let transcode = body.get("transcode").and_then(|v| v.as_bool());
-    let audio_only = body.get("audio_only").and_then(|v| v.as_bool()).unwrap_or(false);
-    let transcript = body.get("transcript").and_then(|v| v.as_bool()).unwrap_or(false);
-    let cutoff_episodes = body.get("cutoff_episodes").and_then(|v| v.as_u64()).map(|n| n as u32);
+    let audio_only = body
+        .get("audio_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let transcript = body
+        .get("transcript")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let cutoff_episodes = body
+        .get("cutoff_episodes")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
 
     let mut cfg = match strivo_core::config::AppConfig::load(None) {
         Ok(c) => c,
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     };
     if cfg.capture_profiles.iter().any(|p| p.name == name) {
-        return crate::problem::Problem::bad_request(format!("profile '{name}' already exists")).into_response();
+        return crate::problem::Problem::bad_request(format!("profile '{name}' already exists"))
+            .into_response();
     }
-    cfg.capture_profiles.push(strivo_core::config::CaptureProfile {
-        name: name.clone(),
-        quality_tier,
-        format,
-        transcode,
-        audio_only,
-        transcript,
-        cutoff_episodes,
-    });
+    cfg.capture_profiles
+        .push(strivo_core::config::CaptureProfile {
+            name: name.clone(),
+            quality_tier,
+            format,
+            transcode,
+            audio_only,
+            transcript,
+            cutoff_episodes,
+        });
     if let Err(e) = cfg.save(None) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
-    (StatusCode::CREATED, Json(json!({ "ok": true, "name": name }))).into_response()
+    (
+        StatusCode::CREATED,
+        Json(json!({ "ok": true, "name": name })),
+    )
+        .into_response()
 }
 
 /// `PUT /api/v1/capture_profiles/{name}` — update an existing capture profile.
@@ -1946,7 +2082,11 @@ async fn update_capture_profile(
         profile.transcript = v;
     }
     if let Some(v) = body.get("cutoff_episodes") {
-        profile.cutoff_episodes = if v.is_null() { None } else { v.as_u64().map(|n| n as u32) };
+        profile.cutoff_episodes = if v.is_null() {
+            None
+        } else {
+            v.as_u64().map(|n| n as u32)
+        };
     }
     if let Err(e) = cfg.save(None) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
@@ -1982,10 +2122,7 @@ async fn delete_capture_profile(
 
 /// `GET /api/v1/channels/export` — export the auto-record channel list
 /// (with per-channel overrides) as a JSON document. Safe: read-only.
-async fn channels_export(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn channels_export(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
@@ -2018,10 +2155,8 @@ async fn channels_import(
     // Validate version field.
     let version = body.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
     if version != 1 {
-        return crate::problem::Problem::bad_request(
-            "unsupported import version — expected 1",
-        )
-        .into_response();
+        return crate::problem::Problem::bad_request("unsupported import version — expected 1")
+            .into_response();
     }
     let incoming: Vec<strivo_core::config::AutoRecordEntry> = match body
         .get("channels")
@@ -2069,7 +2204,11 @@ async fn channels_import(
     // Merge capture profiles: append new, leave existing untouched.
     let mut profiles_added = 0u32;
     for p in incoming_profiles {
-        if !cfg.capture_profiles.iter().any(|existing| existing.name == p.name) {
+        if !cfg
+            .capture_profiles
+            .iter()
+            .any(|existing| existing.name == p.name)
+        {
             cfg.capture_profiles.push(p);
             profiles_added += 1;
         }
@@ -2078,23 +2217,23 @@ async fn channels_import(
     if let Err(e) = cfg.save(None) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
-    (StatusCode::OK, Json(json!({
-        "ok": true,
-        "channels_added": added,
-        "channels_updated": updated,
-        "profiles_added": profiles_added,
-    })))
-    .into_response()
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "channels_added": added,
+            "channels_updated": updated,
+            "profiles_added": profiles_added,
+        })),
+    )
+        .into_response()
 }
 
 /// `GET /api/v1/monitor` — unified view for the Monitor page. Returns
 /// every channel currently set to record-when-live, every channel
 /// flagged for archiver tandem download, and the per-channel playlist
 /// allow-lists.
-async fn monitor_state(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
@@ -2129,7 +2268,10 @@ async fn monitor_state(
         let mut tandem: std::collections::BTreeMap<String, Vec<String>> = Default::default();
         for raw in &cfg.archiver.tandem_playlists {
             if let Some((key, pl)) = raw.split_once('/') {
-                tandem.entry(key.to_string()).or_default().push(pl.to_string());
+                tandem
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(pl.to_string());
             }
         }
         cfg.archiver
@@ -2343,7 +2485,9 @@ async fn request_playlists(
     {
         Ok(()) => (
             StatusCode::ACCEPTED,
-            Json(json!({"status": "requested", "note": "result arrives via /events playlist-list"})),
+            Json(
+                json!({"status": "requested", "note": "result arrives via /events playlist-list"}),
+            ),
         )
             .into_response(),
         Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
@@ -2490,7 +2634,9 @@ async fn marketplace_catalog() -> impl IntoResponse {
     let mut catalog = strivo_marketplace::default_catalog();
     // Strip any catalog entries that fail validation — better to hide
     // than to ship a broken row to the SPA.
-    catalog.entries.retain(|e| strivo_marketplace::validate_manifest(&e.manifest).is_ok());
+    catalog
+        .entries
+        .retain(|e| strivo_marketplace::validate_manifest(&e.manifest).is_ok());
     Json(json!({
         "host_version": strivo_marketplace::HOST_VERSION,
         "catalog": catalog,
@@ -2509,7 +2655,11 @@ fn chains_dir() -> std::path::PathBuf {
 }
 #[cfg(feature = "creator")]
 fn chain_path(id: &str) -> Option<std::path::PathBuf> {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
     Some(chains_dir().join(format!("{id}.json")))
@@ -2541,7 +2691,8 @@ async fn pipelines_chains_save(
         return Problem::bad_request(e).into_response();
     }
     let Some(path) = chain_path(&body.id) else {
-        return Problem::bad_request("chain id must be alphanumeric/dash/underscore").into_response();
+        return Problem::bad_request("chain id must be alphanumeric/dash/underscore")
+            .into_response();
     };
     let dir = chains_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -2562,7 +2713,8 @@ async fn pipelines_chains_delete(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
     let Some(path) = chain_path(&id) else {
-        return Problem::bad_request("chain id must be alphanumeric/dash/underscore").into_response();
+        return Problem::bad_request("chain id must be alphanumeric/dash/underscore")
+            .into_response();
     };
     match std::fs::remove_file(&path) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
@@ -2610,11 +2762,20 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/recordings/{id}/thumb", get(recording_thumb))
         .route("/api/v1/recordings/{id}/probe", get(recording_probe))
         .route("/api/v1/recordings/stop_all", post(stop_all_recordings))
-        .route("/api/v1/recordings/clear_errored", post(clear_errored_recordings))
-        .route("/api/v1/recordings/{id}/file", axum::routing::delete(delete_recording_file))
+        .route(
+            "/api/v1/recordings/clear_errored",
+            post(clear_errored_recordings),
+        )
+        .route(
+            "/api/v1/recordings/{id}/file",
+            axum::routing::delete(delete_recording_file),
+        )
         .route("/api/v1/recordings/{id}/remux", post(remux_recording))
         .route("/api/v1/schedule", get(schedule).post(schedule_add))
-        .route("/api/v1/schedule/{index}", axum::routing::delete(schedule_delete))
+        .route(
+            "/api/v1/schedule/{index}",
+            axum::routing::delete(schedule_delete),
+        )
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/poll_now", post(poll_now))
         .route("/api/v1/settings/poll_interval", post(set_poll_interval))
@@ -2628,7 +2789,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/backups/{name}/download", get(backup_download))
         .route(
             "/api/v1/blocklist",
-            get(blocklist_get).post(blocklist_add).delete(blocklist_remove),
+            get(blocklist_get)
+                .post(blocklist_add)
+                .delete(blocklist_remove),
         )
         .route(
             "/api/v1/channels/{channel_key}/auto_record",
@@ -2711,8 +2874,14 @@ mod tests {
 
     #[test]
     fn log_level_parse_and_rank() {
-        assert_eq!(line_level("2026-05-26T00:00:00Z  INFO mod: hi"), Some("INFO"));
-        assert_eq!(line_level("2026-05-26T00:00:00Z ERROR mod: boom"), Some("ERROR"));
+        assert_eq!(
+            line_level("2026-05-26T00:00:00Z  INFO mod: hi"),
+            Some("INFO")
+        );
+        assert_eq!(
+            line_level("2026-05-26T00:00:00Z ERROR mod: boom"),
+            Some("ERROR")
+        );
         assert_eq!(line_level("continuation line with no level"), None);
         assert!(level_rank("ERROR") > level_rank("WARN"));
         assert!(level_rank("WARN") > level_rank("INFO"));

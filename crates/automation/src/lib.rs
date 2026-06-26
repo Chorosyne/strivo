@@ -40,7 +40,9 @@ pub struct AutomationPoint {
     pub curve: Curve,
 }
 
-fn default_curve() -> Curve { Curve::Linear }
+fn default_curve() -> Curve {
+    Curve::Linear
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VolumeAutomation {
@@ -53,7 +55,11 @@ impl VolumeAutomation {
     /// occasionally emits both.
     pub fn sorted(&self) -> Vec<AutomationPoint> {
         let mut v = self.points.clone();
-        v.sort_by(|a, b| a.time_sec.partial_cmp(&b.time_sec).unwrap_or(std::cmp::Ordering::Equal));
+        v.sort_by(|a, b| {
+            a.time_sec
+                .partial_cmp(&b.time_sec)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // Walk left→right; when two consecutive points share a time (within
         // 1 ms), keep the LATER entry. Std's `dedup_by` keeps the first;
         // the editor UX is "the user moved this point, the prior value
@@ -166,13 +172,17 @@ fn interpolate(a_db: f32, b_db: f32, u: f32, curve: Curve) -> f32 {
 /// Convert decibels to a linear gain multiplier. -inf dB → 0 by clamp.
 /// Capped at -120 dB to avoid float underflow on very long automations.
 pub fn db_to_linear(db: f32) -> f32 {
-    if db <= -120.0 { return 0.0; }
+    if db <= -120.0 {
+        return 0.0;
+    }
     10f32.powf(db / 20.0)
 }
 
 /// Inverse of [`db_to_linear`].
 pub fn linear_to_db(linear: f32) -> f32 {
-    if linear <= 0.0 { return -120.0; }
+    if linear <= 0.0 {
+        return -120.0;
+    }
     20.0 * linear.log10()
 }
 
@@ -185,7 +195,11 @@ mod tests {
     use super::*;
 
     fn pt(t: f32, db: f32, curve: Curve) -> AutomationPoint {
-        AutomationPoint { time_sec: t, gain_db: db, curve }
+        AutomationPoint {
+            time_sec: t,
+            gain_db: db,
+            curve,
+        }
     }
 
     #[test]
@@ -235,7 +249,10 @@ mod tests {
         // Quarter-point of a cosine fade should be roughly 15% dimmer
         // than linear (-1.76 vs -3.0).
         let quarter = a.sample(2.5);
-        assert!(quarter > -3.0, "cosine quarter {quarter} should be brighter than linear -3");
+        assert!(
+            quarter > -3.0,
+            "cosine quarter {quarter} should be brighter than linear -3"
+        );
     }
 
     #[test]
@@ -282,7 +299,7 @@ mod tests {
         };
         let cmd = a.to_asendcmd(0.1);
         let count = cmd.matches('|').count() + 1; // commands = pipes + 1
-        // 1 second / 100 ms = 10 steps, plus the initial → 11 commands.
+                                                  // 1 second / 100 ms = 10 steps, plus the initial → 11 commands.
         assert_eq!(count, 11);
     }
 

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::events::DaemonEvent;
 use crate::config::credentials;
+use crate::events::DaemonEvent;
 use crate::platform::{PlatformKind, VodEntry};
 
 const PATREON_API_URL: &str = "https://www.patreon.com/api/oauth2/v2";
@@ -53,7 +53,10 @@ impl PatreonCreator {
         crate::platform::ChannelEntry {
             id: self.campaign_id.clone(),
             platform: PlatformKind::Patreon,
-            name: self.vanity.clone().unwrap_or_else(|| self.campaign_id.clone()),
+            name: self
+                .vanity
+                .clone()
+                .unwrap_or_else(|| self.campaign_id.clone()),
             display_name: self.name.clone(),
             is_live: false,
             stream_title: self.tier.clone(),
@@ -105,9 +108,10 @@ impl PatreonClient {
             }
             // Try refresh
             if self.refresh_token_value.read().await.is_some()
-                && self.do_refresh_token().await.is_ok() {
-                    return Ok(true);
-                }
+                && self.do_refresh_token().await.is_ok()
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -508,7 +512,11 @@ impl PatreonClient {
                 if e.is_null() {
                     continue; // inaccessible post skipped via --ignore-errors
                 }
-                let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = e
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let webpage = e
                     .get("webpage_url")
                     .and_then(|v| v.as_str())

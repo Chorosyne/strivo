@@ -250,8 +250,8 @@ pub fn insert_chunks(
 /// Chunk `(id, text)` rows for a video, in chunk order — the input to the
 /// local embedding pass (vectorization).
 pub fn chunks_for_embedding(conn: &Connection, video_id: i64) -> Result<Vec<(i64, String)>> {
-    let mut stmt = conn
-        .prepare("SELECT id, text FROM chunks WHERE video_id = ?1 ORDER BY chunk_index")?;
+    let mut stmt =
+        conn.prepare("SELECT id, text FROM chunks WHERE video_id = ?1 ORDER BY chunk_index")?;
     let rows = stmt
         .query_map([video_id], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
@@ -339,10 +339,7 @@ pub fn fts_search_with_facets(
 
     if let Some(ch) = &facets.channel {
         conds.push("LOWER(v.channel_name) LIKE :ch".into());
-        params.push((
-            ":ch",
-            Box::new(format!("%{}%", ch.to_lowercase())),
-        ));
+        params.push((":ch", Box::new(format!("%{}%", ch.to_lowercase()))));
     }
     if let Some(since) = &facets.since {
         conds.push("v.created_at >= :since".into());
@@ -353,15 +350,9 @@ pub fn fts_search_with_facets(
         params.push((":until", Box::new(until.clone())));
     }
     if let Some(sent) = &facets.sentiment {
-        joins.push(
-            "LEFT JOIN video_analysis va ON va.video_id = v.id"
-                .to_string(),
-        );
+        joins.push("LEFT JOIN video_analysis va ON va.video_id = v.id".to_string());
         conds.push("LOWER(va.sentiment) LIKE :sent".into());
-        params.push((
-            ":sent",
-            Box::new(format!("{}%", sent.to_lowercase())),
-        ));
+        params.push((":sent", Box::new(format!("{}%", sent.to_lowercase()))));
     }
     if !facets.speakers.is_empty() {
         joins.push(
@@ -800,8 +791,10 @@ mod tests {
         let conn = fresh_db();
         let v1 = insert_video(&conn, "rec-a", "ChanA", "First", "/tmp/a.mkv").unwrap();
         insert_video(&conn, "rec-b", "ChanB", "Second", "/tmp/b.mkv").unwrap();
-        let segs: Vec<(usize, f64, f64, &str, Option<&str>, Option<f64>)> =
-            vec![(0, 0.0, 1.0, "hi", None, None), (1, 1.0, 2.0, "yo", None, None)];
+        let segs: Vec<(usize, f64, f64, &str, Option<&str>, Option<f64>)> = vec![
+            (0, 0.0, 1.0, "hi", None, None),
+            (1, 1.0, 2.0, "yo", None, None),
+        ];
         insert_segments(&conn, v1, &segs).unwrap();
         conn.execute(
             "INSERT INTO video_analysis (video_id, summary, topics, sentiment) VALUES (?1, 'sum', '[\"x\"]', 'positive')",

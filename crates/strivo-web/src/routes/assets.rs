@@ -17,10 +17,7 @@ async fn asset(Path(path): Path<String>) -> Response {
                     // Asset URLs are content-versioned by the shell
                     // (`?v=<hash>`), so a given URL is safe to cache
                     // forever — a deploy changes the hash and the URL.
-                    (
-                        header::CACHE_CONTROL,
-                        "public, max-age=31536000, immutable",
-                    ),
+                    (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
                 ],
                 content.data.into_owned(),
             )

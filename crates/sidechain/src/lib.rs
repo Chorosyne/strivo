@@ -165,7 +165,11 @@ mod tests {
     use super::*;
 
     fn iv(start: f32, end: f32) -> VoiceInterval {
-        VoiceInterval { start_sec: start, end_sec: end, mean_db: -15.0 }
+        VoiceInterval {
+            start_sec: start,
+            end_sec: end,
+            mean_db: -15.0,
+        }
     }
 
     fn sample(auto: &VolumeAutomation, t: f32) -> f32 {
@@ -198,7 +202,10 @@ mod tests {
 
     #[test]
     fn attack_ramps_from_unity_to_duck() {
-        let knobs = SidechainKnobs { attack_sec: 0.5, ..Default::default() };
+        let knobs = SidechainKnobs {
+            attack_sec: 0.5,
+            ..Default::default()
+        };
         let auto = build_automation(&[iv(2.0, 4.0)], 8.0, &knobs);
         // Halfway through attack (t = 2.0 - 0.25 = 1.75): roughly half-ducked.
         let halfway = sample(&auto, 1.75);
@@ -211,7 +218,11 @@ mod tests {
 
     #[test]
     fn release_recovers_to_unity_after_hold() {
-        let knobs = SidechainKnobs { release_sec: 0.4, hold_sec: 0.1, ..Default::default() };
+        let knobs = SidechainKnobs {
+            release_sec: 0.4,
+            hold_sec: 0.1,
+            ..Default::default()
+        };
         let auto = build_automation(&[iv(2.0, 4.0)], 8.0, &knobs);
         // Just before hold ends + release starts: still ducked.
         let held = sample(&auto, 4.05);
@@ -273,7 +284,10 @@ mod tests {
         // Already ducked at t=0.
         let at_start = sample(&auto, 0.0);
         let knobs = SidechainKnobs::default();
-        assert!((at_start - knobs.duck_db).abs() < 1.5, "at_start {at_start}");
+        assert!(
+            (at_start - knobs.duck_db).abs() < 1.5,
+            "at_start {at_start}"
+        );
     }
 
     #[test]

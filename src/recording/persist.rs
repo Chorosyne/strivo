@@ -470,8 +470,7 @@ impl PersistDb {
         let mut out = Vec::new();
         for r in rows {
             let (payload, state, err) = r?;
-            let Ok(mut job) =
-                serde_json::from_str::<crate::recording::job::RecordingJob>(&payload)
+            let Ok(mut job) = serde_json::from_str::<crate::recording::job::RecordingJob>(&payload)
             else {
                 continue;
             };
@@ -594,7 +593,9 @@ mod tests {
         assert!(!db.is_blocked(p, "ch1", "v1").await.unwrap());
 
         // Block one VOD.
-        db.add_blocklist(p, "ch1", Some("v1"), Some("dupe")).await.unwrap();
+        db.add_blocklist(p, "ch1", Some("v1"), Some("dupe"))
+            .await
+            .unwrap();
         assert!(db.is_blocked(p, "ch1", "v1").await.unwrap());
         assert!(!db.is_blocked(p, "ch1", "v2").await.unwrap());
 

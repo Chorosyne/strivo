@@ -195,8 +195,7 @@ pub fn load_all() -> Vec<CrunchrPreset> {
 }
 
 pub fn load_file(path: &Path) -> Result<CrunchrPreset> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let preset: CrunchrPreset =
         toml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
     preset

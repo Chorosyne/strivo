@@ -24,8 +24,8 @@ use anyhow::{Context, Result};
 
 /// Read an EDL from disk. Validates the schema version + topology.
 pub fn load(path: &Path) -> Result<EdlDoc> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read EDL at {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("read EDL at {}", path.display()))?;
     let doc: EdlDoc =
         serde_json::from_str(&text).with_context(|| format!("parse EDL at {}", path.display()))?;
     doc.validate()
@@ -36,7 +36,8 @@ pub fn load(path: &Path) -> Result<EdlDoc> {
 /// Atomic write: serialize, write to `.tmp`, rename. Survives a SIGKILL
 /// mid-write without leaving a half-EDL on disk.
 pub fn save(path: &Path, doc: &EdlDoc) -> Result<()> {
-    doc.validate().context("EDL failed validation before save")?;
+    doc.validate()
+        .context("EDL failed validation before save")?;
     let tmp = path.with_extension("tmp");
     if let Some(parent) = tmp.parent() {
         std::fs::create_dir_all(parent).ok();

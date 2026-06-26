@@ -69,9 +69,7 @@ pub fn detect_silences(
     min_span_secs: f32,
     trim_threshold_secs: f32,
 ) -> Result<DetectionResult> {
-    let filter = format!(
-        "silencedetect=noise={noise_db}dB:duration={min_span_secs}",
-    );
+    let filter = format!("silencedetect=noise={noise_db}dB:duration={min_span_secs}",);
     let child = Command::new("ffmpeg")
         .args(["-hide_banner", "-nostats", "-loglevel", "info"])
         .arg("-i")
@@ -168,7 +166,10 @@ pub fn recommend_cuts(
             let start = s.start_sec + half_pad;
             let end = s.end_sec - half_pad;
             if end > start + 0.01 {
-                Some(CutRange { start_sec: start, end_sec: end })
+                Some(CutRange {
+                    start_sec: start,
+                    end_sec: end,
+                })
             } else {
                 None
             }
@@ -235,8 +236,16 @@ mod tests {
     #[test]
     fn recommend_drops_short_spans() {
         let spans = vec![
-            SilenceSpan { start_sec: 10.0, end_sec: 13.0, duration_sec: 3.0 },
-            SilenceSpan { start_sec: 50.0, end_sec: 80.0, duration_sec: 30.0 },
+            SilenceSpan {
+                start_sec: 10.0,
+                end_sec: 13.0,
+                duration_sec: 3.0,
+            },
+            SilenceSpan {
+                start_sec: 50.0,
+                end_sec: 80.0,
+                duration_sec: 30.0,
+            },
         ];
         let cuts = recommend_cuts(&spans, 6.0, 0.0);
         assert_eq!(cuts.len(), 1);
@@ -314,8 +323,14 @@ mod tests {
             min_span_secs: 1.0,
             spans: vec![],
             recommended_cuts: vec![
-                CutRange { start_sec: 10.0, end_sec: 20.0 },
-                CutRange { start_sec: 100.0, end_sec: 105.0 },
+                CutRange {
+                    start_sec: 10.0,
+                    end_sec: 20.0,
+                },
+                CutRange {
+                    start_sec: 100.0,
+                    end_sec: 105.0,
+                },
             ],
             total_trim_secs: 15.0,
         };

@@ -70,11 +70,18 @@ pub enum ResourceLock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StageState {
     Pending,
-    Running { started_at_ms: u128 },
+    Running {
+        started_at_ms: u128,
+    },
     Done,
-    Failed { error: String, attempt: u8 },
+    Failed {
+        error: String,
+        attempt: u8,
+    },
     /// Permanent failure — out of retries. Pipeline marks itself Failed.
-    Exhausted { error: String },
+    Exhausted {
+        error: String,
+    },
     /// User-requested cancellation. No further attempts.
     Cancelled,
     /// Earlier stage's failure means this one will never run.

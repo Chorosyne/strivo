@@ -43,10 +43,7 @@ fn vod_path_adjacent_to(live: &Path) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("recording");
-    let ext = live
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("mkv");
+    let ext = live.extension().and_then(|s| s.to_str()).unwrap_or("mkv");
     parent.join(format!("{stem}_vod.{ext}"))
 }
 

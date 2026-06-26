@@ -56,26 +56,18 @@ impl ViewguardPlugin {
     fn record_snapshot(&mut self, entries: &[ChannelEntry]) {
         let now = Utc::now();
         for entry in entries.iter().filter(|c| c.is_live) {
-            let stats = self
-                .channels
-                .entry(entry.id.clone())
-                .or_insert_with(|| {
-                    ChannelStats::new(
-                        entry.id.clone(),
-                        format!("{}", entry.platform),
-                        entry.display_name.clone(),
-                    )
-                });
+            let stats = self.channels.entry(entry.id.clone()).or_insert_with(|| {
+                ChannelStats::new(
+                    entry.id.clone(),
+                    format!("{}", entry.platform),
+                    entry.display_name.clone(),
+                )
+            });
             stats.mark_session_start(entry.started_at.unwrap_or(now));
             let viewers = entry.viewer_count.unwrap_or(0) as u32;
             if stats.push(now, viewers) {
                 if let Some(s) = &self.store {
-                    let _ = s.insert_sample(
-                        &entry.id,
-                        &platform_str(entry.platform),
-                        now,
-                        viewers,
-                    );
+                    let _ = s.insert_sample(&entry.id, &platform_str(entry.platform), now, viewers);
                 }
             }
         }
@@ -116,15 +108,17 @@ impl ViewguardPlugin {
 
     fn close_session(&mut self, channel_id: &str) {
         let now = Utc::now();
-        let Some(stats) = self.channels.get_mut(channel_id) else { return };
+        let Some(stats) = self.channels.get_mut(channel_id) else {
+            return;
+        };
         let started_at = match stats.session_started_at {
             Some(t) => t,
             None => return,
         };
         let signals = run_all(stats);
         let verdict = aggregate(&signals);
-        let contributors = serde_json::to_string(&verdict.contributors)
-            .unwrap_or_else(|_| "[]".into());
+        let contributors =
+            serde_json::to_string(&verdict.contributors).unwrap_or_else(|_| "[]".into());
         if let Some(s) = &self.store {
             let _ = s.upsert_verdict(&VerdictRow {
                 channel_id: channel_id.to_string(),
@@ -145,8 +139,12 @@ fn platform_str(p: PlatformKind) -> String {
 }
 
 impl Plugin for ViewguardPlugin {
-    fn name(&self) -> &'static str { "viewguard" }
-    fn display_name(&self) -> &str { "Viewguard" }
+    fn name(&self) -> &'static str {
+        "viewguard"
+    }
+    fn display_name(&self) -> &str {
+        "Viewguard"
+    }
 
     fn init(&mut self, ctx: &PluginContext) -> anyhow::Result<()> {
         self.data_dir = ctx.data_dir.join("plugins").join("viewguard");
@@ -208,8 +206,14 @@ impl Plugin for ViewguardPlugin {
         }
     }
 
-    fn status_slot(&self) -> StatusSlot { StatusSlot::Tray }
+    fn status_slot(&self) -> StatusSlot {
+        StatusSlot::Tray
+    }
 
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

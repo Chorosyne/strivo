@@ -15,9 +15,9 @@ use crate::recording::RecordingCommand;
 /// channels, no async.
 pub fn start_recording(spec: StartSpec, config: &AppConfig) -> RecordingCommand {
     let cookies_path = spec.cookies.resolve(config, spec.platform);
-    let transcode = spec
-        .transcode_override
-        .unwrap_or_else(|| config.effective_transcode(&spec.platform.to_string(), &spec.channel_id));
+    let transcode = spec.transcode_override.unwrap_or_else(|| {
+        config.effective_transcode(&spec.platform.to_string(), &spec.channel_id)
+    });
 
     RecordingCommand::Start {
         channel_id: spec.channel_id,

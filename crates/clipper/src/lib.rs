@@ -86,18 +86,11 @@ pub struct ClipResult {
 /// Slide a `window_secs`-wide window across the cuepoint timeline at
 /// 5s steps; score each window by the number of cuepoints inside it;
 /// return the top-K non-overlapping windows by score.
-pub fn score_highlights(
-    cuepoints: &[Cuepoint],
-    window_secs: f32,
-    top_k: usize,
-) -> Vec<Highlight> {
+pub fn score_highlights(cuepoints: &[Cuepoint], window_secs: f32, top_k: usize) -> Vec<Highlight> {
     if cuepoints.is_empty() || window_secs <= 0.0 || top_k == 0 {
         return Vec::new();
     }
-    let span_end = cuepoints
-        .last()
-        .map(|c| c.time_sec)
-        .unwrap_or(0.0);
+    let span_end = cuepoints.last().map(|c| c.time_sec).unwrap_or(0.0);
     let step = 5.0_f32.min(window_secs / 4.0).max(1.0);
     let half = window_secs / 2.0;
 
@@ -127,7 +120,11 @@ pub fn score_highlights(
     for w in &mut windows {
         w.score = (w.density as f32) / max_density;
     }
-    windows.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    windows.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Greedy non-maximum suppression: take the highest-scoring window,
     // then drop every other window whose centre is within `window_secs`
@@ -146,13 +143,21 @@ pub fn score_highlights(
     }
     // Re-sort chronologically so the SPA shows them in timeline order
     // — score badge tells the user which is hottest.
-    picked.sort_by(|a, b| a.time_sec.partial_cmp(&b.time_sec).unwrap_or(std::cmp::Ordering::Equal));
+    picked.sort_by(|a, b| {
+        a.time_sec
+            .partial_cmp(&b.time_sec)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     picked
 }
 
 /// Clamp + tweak a user-supplied clip start/duration so it lands on
 /// safe boundaries. Returns (start, duration).
-pub fn clamp_request(start_sec: f32, duration_sec: f32, source_duration: Option<f32>) -> (f32, f32) {
+pub fn clamp_request(
+    start_sec: f32,
+    duration_sec: f32,
+    source_duration: Option<f32>,
+) -> (f32, f32) {
     let mut s = start_sec.max(0.0);
     let mut d = duration_sec.clamp(10.0, 90.0);
     if let Some(src) = source_duration {
@@ -200,7 +205,10 @@ mod tests {
     use super::*;
 
     fn cp(t: f32) -> Cuepoint {
-        Cuepoint { time_sec: t, frame: None }
+        Cuepoint {
+            time_sec: t,
+            frame: None,
+        }
     }
 
     #[test]
@@ -212,15 +220,16 @@ mod tests {
     #[test]
     fn dense_cluster_outranks_sparse_clusters() {
         // 3 cuepoints clustered at t=10s vs 1 at t=400s.
-        let cuepoints = vec![
-            cp(8.0), cp(10.0), cp(12.0),
-            cp(400.0),
-        ];
+        let cuepoints = vec![cp(8.0), cp(10.0), cp(12.0), cp(400.0)];
         let out = score_highlights(&cuepoints, 30.0, 5);
         assert!(!out.is_empty(), "expected at least 1 highlight");
         // Chronologically sorted; first highlight should be the dense
         // cluster, second (if present) should be the sparse one.
-        assert!(out[0].time_sec < 50.0, "first highlight should sit near the dense cluster, got {:?}", out[0]);
+        assert!(
+            out[0].time_sec < 50.0,
+            "first highlight should sit near the dense cluster, got {:?}",
+            out[0]
+        );
         if out.len() > 1 {
             assert!(out[1].time_sec > 350.0);
             assert!(out[0].score > out[1].score);
@@ -233,7 +242,11 @@ mod tests {
         // many overlapping windows; NMS keeps one.
         let cuepoints: Vec<Cuepoint> = (0..10).map(|i| cp(i as f32 * 2.0)).collect();
         let out = score_highlights(&cuepoints, 30.0, 5);
-        assert_eq!(out.len(), 1, "expected 1 NMS-deduped highlight, got {out:?}");
+        assert_eq!(
+            out.len(),
+            1,
+            "expected 1 NMS-deduped highlight, got {out:?}"
+        );
     }
 
     #[test]

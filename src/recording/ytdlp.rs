@@ -46,7 +46,10 @@ fn parse_rate_bps(tok: &str) -> Option<u64> {
 
 /// "00:42" → 42, "01:23:45" → 5025.
 fn parse_eta_secs(tok: &str) -> Option<u32> {
-    let parts: Vec<u32> = tok.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let parts: Vec<u32> = tok
+        .split(':')
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
     Some(match parts.as_slice() {
         [s] => *s,
         [m, s] => m * 60 + s,
@@ -62,10 +65,14 @@ pub(crate) fn parse_download_line(line: &str) -> Option<DownloadProgress> {
     let body = line.trim_start().strip_prefix("[download]")?.trim_start();
     let mut toks = body.split_whitespace();
     let pct = toks.next()?.strip_suffix('%')?.parse::<f32>().ok()?;
-    if toks.next()? != "of" { return None; }
+    if toks.next()? != "of" {
+        return None;
+    }
     let size_tok = toks.next()?;
     let bytes_total = parse_size_bytes(size_tok);
-    if toks.next()? != "at" { return None; }
+    if toks.next()? != "at" {
+        return None;
+    }
     // Rate is either "<num><unit>/s" or "Unknown B/s".
     let rate_tok = toks.next()?;
     let rate_bps = if rate_tok == "Unknown" {
@@ -75,10 +82,21 @@ pub(crate) fn parse_download_line(line: &str) -> Option<DownloadProgress> {
     } else {
         parse_rate_bps(rate_tok)
     };
-    if toks.next()? != "ETA" { return None; }
+    if toks.next()? != "ETA" {
+        return None;
+    }
     let eta_tok = toks.next()?;
-    let eta_secs = if eta_tok == "Unknown" { None } else { parse_eta_secs(eta_tok) };
-    Some(DownloadProgress { pct: Some(pct), eta_secs, rate_bps, bytes_total })
+    let eta_secs = if eta_tok == "Unknown" {
+        None
+    } else {
+        parse_eta_secs(eta_tok)
+    };
+    Some(DownloadProgress {
+        pct: Some(pct),
+        eta_secs,
+        rate_bps,
+        bytes_total,
+    })
 }
 
 /// YT-2 — resolve a YouTube `/live` channel URL to the underlying
@@ -99,7 +117,9 @@ pub async fn resolve_live_video_id(
     channel_live_url: &str,
     cookies_path: Option<&std::path::Path>,
 ) -> Result<String> {
-    Ok(resolve_live_fields(channel_live_url, cookies_path).await?.video_id)
+    Ok(resolve_live_fields(channel_live_url, cookies_path)
+        .await?
+        .video_id)
 }
 
 #[derive(Debug, Clone)]
@@ -140,10 +160,9 @@ pub async fn resolve_live_fields(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        async move { cmd.output().await },
-    )
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), async move {
+        cmd.output().await
+    })
     .await
     .context("yt-dlp --print id timed out after 30 s")?
     .context("yt-dlp --print id failed to spawn")?;
@@ -189,10 +208,18 @@ fn parse_print_line(stdout: &str) -> Result<LiveFields> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "NA");
 
-    if video_id.len() != 11 || !video_id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
+    if video_id.len() != 11
+        || !video_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    {
         anyhow::bail!("yt-dlp --print returned unexpected id shape: {video_id:?}");
     }
-    Ok(LiveFields { video_id, title, uploader })
+    Ok(LiveFields {
+        video_id,
+        title,
+        uploader,
+    })
 }
 
 /// YT-5 guard: should the host substitute yt-dlp's uploader for the
@@ -342,7 +369,12 @@ impl YtDlpProcess {
             });
         }
 
-        Ok(Self { child, output_path, stderr_tail, progress })
+        Ok(Self {
+            child,
+            output_path,
+            stderr_tail,
+            progress,
+        })
     }
 
     /// Gracefully stop by sending SIGINT, then wait
@@ -485,7 +517,8 @@ mod tests {
     #[test]
     fn parse_download_early_unknowns() {
         // First ticks before yt-dlp has a rate/ETA estimate.
-        let p = parse_download_line("[download]   0.0% of ~1.23GiB at Unknown B/s ETA Unknown").unwrap();
+        let p = parse_download_line("[download]   0.0% of ~1.23GiB at Unknown B/s ETA Unknown")
+            .unwrap();
         assert_eq!(p.pct, Some(0.0));
         assert_eq!(p.eta_secs, None);
         assert_eq!(p.rate_bps, None);
@@ -494,7 +527,8 @@ mod tests {
 
     #[test]
     fn parse_download_long_eta() {
-        let p = parse_download_line("[download]  3.1% of 4.20GiB at 1.10MiB/s ETA 01:23:45").unwrap();
+        let p =
+            parse_download_line("[download]  3.1% of 4.20GiB at 1.10MiB/s ETA 01:23:45").unwrap();
         assert_eq!(p.eta_secs, Some(5025));
     }
 

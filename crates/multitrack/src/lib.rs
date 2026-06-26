@@ -141,7 +141,11 @@ pub fn infer_kind(title: &str) -> TrackKind {
         TrackKind::Game
     } else if t.contains("discord") || t.contains("voice chat") || t.contains("vc") {
         TrackKind::Discord
-    } else if t.contains("music") || t.contains("spotify") || t.contains("song") || t.contains("ost") {
+    } else if t.contains("music")
+        || t.contains("spotify")
+        || t.contains("song")
+        || t.contains("ost")
+    {
         TrackKind::Music
     } else if t.contains("browser") || t.contains("chrome") || t.contains("alert") {
         TrackKind::Browser
@@ -153,11 +157,7 @@ pub fn infer_kind(title: &str) -> TrackKind {
 /// Run ffprobe against `input` and return the audio-stream list.
 pub fn probe_audio_tracks(input: &Path) -> Result<Vec<AudioTrack>> {
     let out = Command::new("ffprobe")
-        .args([
-            "-v", "error",
-            "-print_format", "json",
-            "-show_streams",
-        ])
+        .args(["-v", "error", "-print_format", "json", "-show_streams"])
         .arg(input)
         .output()
         .context("spawn ffprobe")?;

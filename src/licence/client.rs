@@ -109,10 +109,7 @@ pub fn spawn_refresh_loop(interval: std::time::Duration) -> tokio::task::JoinHan
         // First tick after one interval — at startup we want to come
         // up immediately even if the network is down, then catch up
         // on the first scheduled fire.
-        let mut next = tokio::time::interval_at(
-            tokio::time::Instant::now() + interval,
-            interval,
-        );
+        let mut next = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
         loop {
             next.tick().await;
             if backend_url().is_none() {

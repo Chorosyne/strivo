@@ -77,7 +77,8 @@ async fn login(
     Json(body): Json<LoginPayload>,
 ) -> impl IntoResponse {
     let ip = peer.ip();
-    if let crate::ratelimit::Decision::Blocked { retry_after_secs } = state.login_limiter.check(ip) {
+    if let crate::ratelimit::Decision::Blocked { retry_after_secs } = state.login_limiter.check(ip)
+    {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from(retry_after_secs));
         return (
@@ -98,7 +99,11 @@ async fn login(
     // it always exists here.
     let token = SessionToken::new(SESSION_TTL_SECS);
     let cookie_value = token.encode(&state.session_secret);
-    let cookie = build_session_cookie(&cookie_value, SESSION_TTL_SECS, is_secure_request(&req_headers));
+    let cookie = build_session_cookie(
+        &cookie_value,
+        SESSION_TTL_SECS,
+        is_secure_request(&req_headers),
+    );
 
     let cookie_header = match HeaderValue::from_str(&cookie) {
         Ok(h) => h,
@@ -133,7 +138,12 @@ async fn logout() -> impl IntoResponse {
             headers.append(SET_COOKIE, h);
         }
     }
-    (StatusCode::OK, headers, Json(json!({"status": "logged out"}))).into_response()
+    (
+        StatusCode::OK,
+        headers,
+        Json(json!({"status": "logged out"})),
+    )
+        .into_response()
 }
 
 /// Extract a valid session token from the request's Cookie header, if
@@ -323,7 +333,10 @@ mod tests {
         let key = crate::auth::ApiKey("secret-key".into());
         let mut h = HeaderMap::new();
         h.insert("x-api-key", HeaderValue::from_static("nope"));
-        assert_eq!(check_dual(&h, &key, "unused-secret").unwrap_err(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            check_dual(&h, &key, "unused-secret").unwrap_err(),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]

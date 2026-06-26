@@ -4,8 +4,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::events::DaemonEvent;
 use crate::config::credentials;
+use crate::events::DaemonEvent;
 use crate::platform::{ChannelEntry, Platform, PlatformKind, VodEntry};
 
 const TWITCH_AUTH_URL: &str = "https://id.twitch.tv/oauth2";
@@ -144,10 +144,11 @@ impl TwitchPlatform {
             }
             // Try refresh
             if self.refresh_token_value.read().await.is_some()
-                && self.do_refresh_token().await.is_ok() {
-                    self.fetch_user_id().await?;
-                    return Ok(true);
-                }
+                && self.do_refresh_token().await.is_ok()
+            {
+                self.fetch_user_id().await?;
+                return Ok(true);
+            }
         }
         Ok(false)
     }

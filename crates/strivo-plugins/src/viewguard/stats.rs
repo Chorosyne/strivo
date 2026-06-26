@@ -49,14 +49,20 @@ impl ChannelStats {
             if last.ts == bin_ts {
                 // dedupe — keep the latest viewer count for the bin
                 let n = self.samples.len();
-                self.samples[n - 1] = Sample { ts: bin_ts, viewers };
+                self.samples[n - 1] = Sample {
+                    ts: bin_ts,
+                    viewers,
+                };
                 return false;
             }
         }
         if self.samples.len() == RING_CAPACITY {
             self.samples.pop_front();
         }
-        self.samples.push_back(Sample { ts: bin_ts, viewers });
+        self.samples.push_back(Sample {
+            ts: bin_ts,
+            viewers,
+        });
         true
     }
 

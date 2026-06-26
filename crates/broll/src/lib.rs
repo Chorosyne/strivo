@@ -274,7 +274,14 @@ mod tests {
         };
         // 5 widely-spaced slices that would otherwise yield 5 picks.
         let slices: Vec<TopicSlice> = (0..5)
-            .map(|i| slice((i as f32) * 200.0, (i as f32) * 200.0 + 30.0, &["Diablo"], ""))
+            .map(|i| {
+                slice(
+                    (i as f32) * 200.0,
+                    (i as f32) * 200.0 + 30.0,
+                    &["Diablo"],
+                    "",
+                )
+            })
             .collect();
         let suggestions = suggest_brolls(&slices, &lib, 10);
         assert!(suggestions.len() <= MAX_PER_ASSET, "got {suggestions:?}");
@@ -295,10 +302,7 @@ mod tests {
     #[test]
     fn suggestions_returned_in_chronological_order() {
         let lib = BrollLibrary {
-            assets: vec![
-                asset("a1", 6.0, &["alpha"]),
-                asset("a2", 6.0, &["beta"]),
-            ],
+            assets: vec![asset("a1", 6.0, &["alpha"]), asset("a2", 6.0, &["beta"])],
         };
         let slices = vec![
             slice(500.0, 530.0, &["Beta"], ""),
@@ -339,11 +343,13 @@ mod tests {
         let s_long = score_pair(
             &normalise_keywords(slice_long.topics.iter().map(|s| s.as_str())),
             &normalise_keywords(asset_long.tags.iter().map(|s| s.as_str())),
-        ).0;
+        )
+        .0;
         let s_short = score_pair(
             &normalise_keywords(slice_short.topics.iter().map(|s| s.as_str())),
             &normalise_keywords(asset_short.tags.iter().map(|s| s.as_str())),
-        ).0;
+        )
+        .0;
         assert!(s_long > s_short, "{s_long} > {s_short}");
     }
 

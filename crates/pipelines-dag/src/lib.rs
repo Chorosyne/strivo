@@ -67,7 +67,14 @@ pub fn default_pipelines() -> Vec<Pipeline> {
     ]
 }
 
-fn n(id: &str, label: &str, produces: &[&str], consumes: &[&str], blurb: &str, status: &str) -> Node {
+fn n(
+    id: &str,
+    label: &str,
+    produces: &[&str],
+    consumes: &[&str],
+    blurb: &str,
+    status: &str,
+) -> Node {
     Node {
         id: id.into(),
         label: label.into(),
@@ -174,14 +181,26 @@ fn captions_pipeline() -> Pipeline {
     Pipeline {
         id: "captions".into(),
         name: "Captions & translation".into(),
-        description: "Crunchr → caption file generation in SRT / VTT / TXT with translator-trait backend.".into(),
+        description:
+            "Crunchr → caption file generation in SRT / VTT / TXT with translator-trait backend."
+                .into(),
         nodes: vec![
-            n("crunchr_c", "Crunchr",
-              &["transcription"], &["recording"],
-              "Transcript source.", "available"),
-            n("captions", "Captions",
-              &["captions", "translation"], &["transcription"],
-              "SRT / VTT / TXT export + pluggable translator (identity today, NLLB next).", "available"),
+            n(
+                "crunchr_c",
+                "Crunchr",
+                &["transcription"],
+                &["recording"],
+                "Transcript source.",
+                "available",
+            ),
+            n(
+                "captions",
+                "Captions",
+                &["captions", "translation"],
+                &["transcription"],
+                "SRT / VTT / TXT export + pluggable translator (identity today, NLLB next).",
+                "available",
+            ),
         ],
         edges: vec![e("crunchr_c", "captions", "transcription")],
     }
@@ -225,7 +244,10 @@ pub fn topo_order(p: &Pipeline) -> Result<Vec<String>, String> {
     let mut out_edges: HashMap<&str, Vec<&str>> = HashMap::new();
     for e in &p.edges {
         *in_deg.entry(e.to.as_str()).or_insert(0) += 1;
-        out_edges.entry(e.from.as_str()).or_default().push(e.to.as_str());
+        out_edges
+            .entry(e.from.as_str())
+            .or_default()
+            .push(e.to.as_str());
     }
     let mut queue: VecDeque<&str> = in_deg
         .iter()
@@ -339,13 +361,24 @@ mod tests {
             name: "Cycle".into(),
             description: "".into(),
             nodes: vec![
-                n("a", "A", &["transcription"], &["recording"], "", "available"),
-                n("b", "B", &["recording"], &["transcription"], "", "available"),
+                n(
+                    "a",
+                    "A",
+                    &["transcription"],
+                    &["recording"],
+                    "",
+                    "available",
+                ),
+                n(
+                    "b",
+                    "B",
+                    &["recording"],
+                    &["transcription"],
+                    "",
+                    "available",
+                ),
             ],
-            edges: vec![
-                e("a", "b", "transcription"),
-                e("b", "a", "recording"),
-            ],
+            edges: vec![e("a", "b", "transcription"), e("b", "a", "recording")],
         };
         assert!(topo_order(&p).is_err());
     }
@@ -359,14 +392,21 @@ mod tests {
             .filter(|e| e.to == "casebook")
             .map(|e| e.from.as_str())
             .collect();
-        assert!(casebook_predecessors.len() >= 3, "got {casebook_predecessors:?}");
+        assert!(
+            casebook_predecessors.len() >= 3,
+            "got {casebook_predecessors:?}"
+        );
     }
 
     #[test]
     fn clip_mining_pipeline_only_uses_available_status() {
         let p = clip_mining_pipeline();
         for node in &p.nodes {
-            assert_eq!(node.status, "available", "node {} expected available", node.id);
+            assert_eq!(
+                node.status, "available",
+                "node {} expected available",
+                node.id
+            );
         }
     }
 
@@ -390,9 +430,21 @@ mod tests {
             label: "On finish → chapters → captions → reuse".into(),
             trigger: RecipeTrigger::RecordingFinished,
             steps: vec![
-                RecipeStep { plugin: "chapters".into(), verb: "generate".into(), gate: None },
-                RecipeStep { plugin: "captions".into(), verb: "export".into(), gate: None },
-                RecipeStep { plugin: "reuse".into(),    verb: "queue".into(),   gate: None },
+                RecipeStep {
+                    plugin: "chapters".into(),
+                    verb: "generate".into(),
+                    gate: None,
+                },
+                RecipeStep {
+                    plugin: "captions".into(),
+                    verb: "export".into(),
+                    gate: None,
+                },
+                RecipeStep {
+                    plugin: "reuse".into(),
+                    verb: "queue".into(),
+                    gate: None,
+                },
             ],
             enabled: true,
         };
@@ -406,9 +458,11 @@ mod tests {
             id: "demo".into(),
             label: "Demo".into(),
             trigger: RecipeTrigger::Manual,
-            steps: vec![
-                RecipeStep { plugin: "thumbnails".into(), verb: "rank".into(), gate: Some(RecipeGate::DurationGteSec { secs: 60.0 }) },
-            ],
+            steps: vec![RecipeStep {
+                plugin: "thumbnails".into(),
+                verb: "rank".into(),
+                gate: Some(RecipeGate::DurationGteSec { secs: 60.0 }),
+            }],
             enabled: false,
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -432,7 +486,11 @@ mod tests {
             id: "ok".into(),
             label: "x".into(),
             trigger: RecipeTrigger::Manual,
-            steps: vec![RecipeStep { plugin: "".into(), verb: "v".into(), gate: None }],
+            steps: vec![RecipeStep {
+                plugin: "".into(),
+                verb: "v".into(),
+                gate: None,
+            }],
             enabled: true,
         };
         assert!(bad_step.validate().is_err());

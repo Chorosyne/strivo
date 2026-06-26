@@ -61,8 +61,7 @@ pub fn save(name: &str, log: &[String]) -> Result<PathBuf> {
     }
 
     let dir = dir();
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("mkdir {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let path = dir.join(format!("{trimmed}.json"));
     let preset = CommandPreset::new(trimmed.clone(), log.to_vec());
     let text = serde_json::to_string_pretty(&preset)?;
@@ -74,10 +73,9 @@ pub fn save(name: &str, log: &[String]) -> Result<PathBuf> {
 }
 
 pub fn load(path: &Path) -> Result<CommandPreset> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let p: CommandPreset = serde_json::from_str(&text)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let p: CommandPreset =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
     Ok(p)
 }
 
@@ -131,6 +129,10 @@ mod tests {
         std::env::set_var("STRIVO_DATA_DIR", tmp.path());
         let path = save("good name!", &[]).unwrap();
         // The space + `!` get stripped; result file is `goodname.json`.
-        assert!(path.file_name().unwrap().to_string_lossy().starts_with("goodname"));
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("goodname"));
     }
 }

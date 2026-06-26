@@ -57,9 +57,7 @@ pub fn extract_cuepoints(input: &Path, threshold: f32) -> Result<Vec<Cuepoint>> 
         .stderr(Stdio::piped())
         .spawn()
         .context("spawn ffmpeg")?;
-    let output = child
-        .wait_with_output()
-        .context("wait on ffmpeg")?;
+    let output = child.wait_with_output().context("wait on ffmpeg")?;
     if !output.status.success() {
         anyhow::bail!(
             "ffmpeg exited {}: {}",
@@ -95,7 +93,11 @@ pub fn parse_showinfo(stderr: &str) -> Vec<Cuepoint> {
             let cp = Cuepoint { time_sec: t, frame };
             // Drop near-duplicates within 50ms — ffmpeg sometimes
             // reports the same frame twice across the encoder + filter.
-            if out.last().map(|p| (p.time_sec - t).abs() > 0.05).unwrap_or(true) {
+            if out
+                .last()
+                .map(|p| (p.time_sec - t).abs() > 0.05)
+                .unwrap_or(true)
+            {
                 out.push(cp);
             }
         }
@@ -137,8 +139,7 @@ mod tests {
 
     #[test]
     fn parse_handles_space_after_colon() {
-        let stderr =
-            "[Parsed_showinfo_1 @ 0x55] n: 99 pts_time: 5.5 pos: 1 fmt:yuv420p\n";
+        let stderr = "[Parsed_showinfo_1 @ 0x55] n: 99 pts_time: 5.5 pos: 1 fmt:yuv420p\n";
         let out = parse_showinfo(stderr);
         assert_eq!(out.len(), 1);
         assert!((out[0].time_sec - 5.5).abs() < 1e-4);

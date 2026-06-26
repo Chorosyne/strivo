@@ -163,11 +163,17 @@ fn build_chapters(
     let mut buf: Vec<&Segment> = Vec::new();
     let mut buf_vec: BTreeMap<String, u32> = BTreeMap::new();
 
-    let flush = |buf: &mut Vec<&Segment>, buf_vec: &mut BTreeMap<String, u32>, chapters: &mut Vec<Chapter>| {
+    let flush = |buf: &mut Vec<&Segment>,
+                 buf_vec: &mut BTreeMap<String, u32>,
+                 chapters: &mut Vec<Chapter>| {
         if buf.is_empty() {
             return;
         }
-        let text: String = buf.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+        let text: String = buf
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let title = titler.title(&text);
         chapters.push(Chapter {
             start_sec: buf[0].start_sec,
@@ -197,7 +203,13 @@ fn build_chapters(
     // Always anchor with an Intro chapter at 0.0 — YouTube/Twitch
     // require the first marker to be at 0:00.
     if chapters.first().map(|c| c.start_sec > 0.5).unwrap_or(true) {
-        chapters.insert(0, Chapter { start_sec: 0.0, title: "Intro".into() });
+        chapters.insert(
+            0,
+            Chapter {
+                start_sec: 0.0,
+                title: "Intro".into(),
+            },
+        );
     }
     chapters
 }
@@ -268,19 +280,131 @@ pub fn format_for_description(chapters: &[Chapter]) -> String {
 /// function words). Kept inline as a `&[&str]` so the consumer doesn't
 /// have to bundle a data file.
 const STOPWORDS: &[&str] = &[
-    "about", "after", "again", "ahead", "akin", "alike", "alone", "along", "also", "amongst",
-    "around", "back", "because", "been", "being", "between", "could", "didn", "does", "doesn",
-    "doing", "down", "during", "each", "either", "enough", "every", "from", "further", "going",
-    "gonna", "hasn", "have", "haven", "having", "here", "into", "just", "keep", "kinda",
-    "know", "like", "look", "make", "many", "more", "much", "need", "needs", "never", "next",
-    "only", "other", "over", "really", "right", "same", "since", "some", "such", "than",
-    "that", "thats", "their", "them", "then", "there", "these", "they", "thing", "things",
-    "think", "this", "those", "through", "today", "told", "took", "tried", "trying", "twice",
-    "under", "until", "very", "want", "wants", "well", "went", "were", "what", "whats",
-    "when", "where", "which", "while", "with", "without", "would", "wouldn", "yeah", "year",
-    "your", "yours", "youre", "youve", "whatever", "whenever", "wherever", "whoever", "however",
-    "somebody", "somehow", "someone", "something", "somewhere", "anybody", "anyhow", "anyone",
-    "anything", "anywhere", "everybody", "everyone", "everything", "everywhere", "nobody",
+    "about",
+    "after",
+    "again",
+    "ahead",
+    "akin",
+    "alike",
+    "alone",
+    "along",
+    "also",
+    "amongst",
+    "around",
+    "back",
+    "because",
+    "been",
+    "being",
+    "between",
+    "could",
+    "didn",
+    "does",
+    "doesn",
+    "doing",
+    "down",
+    "during",
+    "each",
+    "either",
+    "enough",
+    "every",
+    "from",
+    "further",
+    "going",
+    "gonna",
+    "hasn",
+    "have",
+    "haven",
+    "having",
+    "here",
+    "into",
+    "just",
+    "keep",
+    "kinda",
+    "know",
+    "like",
+    "look",
+    "make",
+    "many",
+    "more",
+    "much",
+    "need",
+    "needs",
+    "never",
+    "next",
+    "only",
+    "other",
+    "over",
+    "really",
+    "right",
+    "same",
+    "since",
+    "some",
+    "such",
+    "than",
+    "that",
+    "thats",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "thing",
+    "things",
+    "think",
+    "this",
+    "those",
+    "through",
+    "today",
+    "told",
+    "took",
+    "tried",
+    "trying",
+    "twice",
+    "under",
+    "until",
+    "very",
+    "want",
+    "wants",
+    "well",
+    "went",
+    "were",
+    "what",
+    "whats",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "without",
+    "would",
+    "wouldn",
+    "yeah",
+    "year",
+    "your",
+    "yours",
+    "youre",
+    "youve",
+    "whatever",
+    "whenever",
+    "wherever",
+    "whoever",
+    "however",
+    "somebody",
+    "somehow",
+    "someone",
+    "something",
+    "somewhere",
+    "anybody",
+    "anyhow",
+    "anyone",
+    "anything",
+    "anywhere",
+    "everybody",
+    "everyone",
+    "everything",
+    "everywhere",
+    "nobody",
 ];
 
 #[cfg(test)]
@@ -288,7 +412,11 @@ mod tests {
     use super::*;
 
     fn seg(start: f32, end: f32, text: &str) -> Segment {
-        Segment { start_sec: start, end_sec: end, text: text.into() }
+        Segment {
+            start_sec: start,
+            end_sec: end,
+            text: text.into(),
+        }
     }
 
     #[test]
@@ -334,11 +462,15 @@ mod tests {
         assert_eq!(out[0].start_sec, 0.0);
         let lower: Vec<String> = out.iter().map(|c| c.title.to_lowercase()).collect();
         assert!(
-            lower.iter().any(|t| t.contains("diablo") || t.contains("hardcore")),
+            lower
+                .iter()
+                .any(|t| t.contains("diablo") || t.contains("hardcore")),
             "expected diablo/hardcore in {lower:?}"
         );
         assert!(
-            lower.iter().any(|t| t.contains("pasta") || t.contains("recipe")),
+            lower
+                .iter()
+                .any(|t| t.contains("pasta") || t.contains("recipe")),
             "expected pasta/recipe in {lower:?}"
         );
     }
@@ -346,9 +478,18 @@ mod tests {
     #[test]
     fn format_renders_youtube_compatible_lines() {
         let chapters = vec![
-            Chapter { start_sec: 0.0, title: "Intro".into() },
-            Chapter { start_sec: 65.0, title: "Diablo".into() },
-            Chapter { start_sec: 3725.0, title: "Cooking".into() },
+            Chapter {
+                start_sec: 0.0,
+                title: "Intro".into(),
+            },
+            Chapter {
+                start_sec: 65.0,
+                title: "Diablo".into(),
+            },
+            Chapter {
+                start_sec: 3725.0,
+                title: "Cooking".into(),
+            },
         ];
         let out = format_for_description(&chapters);
         let lines: Vec<&str> = out.lines().collect();

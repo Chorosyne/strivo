@@ -74,7 +74,9 @@ async fn status() -> Json<LicenceStatus> {
 }
 
 fn backend_url() -> Option<String> {
-    std::env::var("STRIVO_LICENCE_URL").ok().filter(|v| !v.is_empty())
+    std::env::var("STRIVO_LICENCE_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
 }
 
 #[derive(Deserialize)]
@@ -221,7 +223,11 @@ async fn persist_and_reply(
         // Pass the backend's status + body through so the SPA gets the
         // real reason ("licence revoked", "trial already claimed", …)
         // instead of a generic 500.
-        return (resp.status, [(axum::http::header::CONTENT_TYPE, "application/json")], resp.raw)
+        return (
+            resp.status,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            resp.raw,
+        )
             .into_response();
     }
     let parsed: BackendTokenResponse = match serde_json::from_str(&resp.raw) {

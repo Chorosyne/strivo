@@ -99,9 +99,7 @@ impl RecordingJob {
         started_at: DateTime<Utc>,
     ) -> Self {
         let bytes_written = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.clone());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         let id = Uuid::new_v5(
             &Uuid::NAMESPACE_OID,
             canonical.as_os_str().as_encoded_bytes(),
@@ -187,13 +185,7 @@ mod tests {
         // Different file → different id.
         let other = dir.path().join("other.mkv");
         std::fs::write(&other, b"y").unwrap();
-        let c = RecordingJob::from_file(
-            other,
-            "falco".into(),
-            PlatformKind::Twitch,
-            None,
-            now,
-        );
+        let c = RecordingJob::from_file(other, "falco".into(), PlatformKind::Twitch, None, now);
         assert_ne!(a.id, c.id, "different file must produce a different UUID");
     }
 }

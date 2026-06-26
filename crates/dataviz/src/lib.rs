@@ -41,12 +41,19 @@ pub struct Episode {
 impl Episode {
     /// Total speaking duration in seconds across all utterances.
     pub fn total_seconds(&self) -> f64 {
-        self.utterances.iter().map(|u| (u.end_sec - u.start_sec).max(0.0)).sum()
+        self.utterances
+            .iter()
+            .map(|u| (u.end_sec - u.start_sec).max(0.0))
+            .sum()
     }
 
     /// Concatenated speech text — convenient for word frequency runs.
     pub fn flat_text(&self) -> String {
-        self.utterances.iter().map(|u| u.text.as_str()).collect::<Vec<_>>().join(" ")
+        self.utterances
+            .iter()
+            .map(|u| u.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -117,13 +124,11 @@ pub fn run(corpus: &Corpus, exp: &Experiment) -> Series {
 // ── Implementations ────────────────────────────────────────────────
 
 const STOPWORDS: &[&str] = &[
-    "the", "and", "of", "to", "a", "in", "is", "you", "that", "it",
-    "for", "on", "with", "as", "are", "i", "this", "be", "or", "by",
-    "but", "we", "an", "have", "not", "they", "from", "at", "your",
-    "all", "was", "so", "if", "what", "can", "do", "just", "like",
-    "my", "me", "he", "she", "his", "her", "its", "their", "out",
-    "about", "up", "than", "then", "there", "here", "when", "how",
-    "who", "yeah", "okay", "ok", "um", "uh",
+    "the", "and", "of", "to", "a", "in", "is", "you", "that", "it", "for", "on", "with", "as",
+    "are", "i", "this", "be", "or", "by", "but", "we", "an", "have", "not", "they", "from", "at",
+    "your", "all", "was", "so", "if", "what", "can", "do", "just", "like", "my", "me", "he", "she",
+    "his", "her", "its", "their", "out", "about", "up", "than", "then", "there", "here", "when",
+    "how", "who", "yeah", "okay", "ok", "um", "uh",
 ];
 
 fn word_frequency(corpus: &Corpus, top_n: usize) -> Series {
@@ -145,10 +150,14 @@ fn word_frequency(corpus: &Corpus, top_n: usize) -> Series {
     let mut paired: Vec<(String, usize)> = counts.into_iter().collect();
     paired.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let take = top_n.max(1);
-    let points = paired.into_iter().take(take).map(|(w, c)| DataPoint {
-        label: w,
-        value: c as f64,
-    }).collect();
+    let points = paired
+        .into_iter()
+        .take(take)
+        .map(|(w, c)| DataPoint {
+            label: w,
+            value: c as f64,
+        })
+        .collect();
     Series {
         label: format!("Top {take} words"),
         chart_hint: "bar".into(),
@@ -163,11 +172,18 @@ fn speaker_time(corpus: &Corpus) -> Series {
             *totals.entry(u.speaker.clone()).or_insert(0.0) += (u.end_sec - u.start_sec).max(0.0);
         }
     }
-    let mut points: Vec<DataPoint> = totals.into_iter().map(|(s, sec)| DataPoint {
-        label: s,
-        value: sec / 60.0,
-    }).collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    let mut points: Vec<DataPoint> = totals
+        .into_iter()
+        .map(|(s, sec)| DataPoint {
+            label: s,
+            value: sec / 60.0,
+        })
+        .collect();
+    points.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Series {
         label: "Speaker minutes (across corpus)".into(),
         chart_hint: "bar".into(),
@@ -181,10 +197,13 @@ fn episodes_per_month(corpus: &Corpus) -> Series {
         let m = ep.date.get(..7).unwrap_or("unknown").to_string();
         *counts.entry(m).or_insert(0) += 1;
     }
-    let mut points: Vec<DataPoint> = counts.into_iter().map(|(m, c)| DataPoint {
-        label: m,
-        value: c as f64,
-    }).collect();
+    let mut points: Vec<DataPoint> = counts
+        .into_iter()
+        .map(|(m, c)| DataPoint {
+            label: m,
+            value: c as f64,
+        })
+        .collect();
     points.sort_by(|a, b| a.label.cmp(&b.label));
     Series {
         label: "Episodes per month".into(),
@@ -203,11 +222,18 @@ fn speaker_episode_count(corpus: &Corpus) -> Series {
             }
         }
     }
-    let mut points: Vec<DataPoint> = counts.into_iter().map(|(s, n)| DataPoint {
-        label: s,
-        value: n as f64,
-    }).collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    let mut points: Vec<DataPoint> = counts
+        .into_iter()
+        .map(|(s, n)| DataPoint {
+            label: s,
+            value: n as f64,
+        })
+        .collect();
+    points.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Series {
         label: "Episodes each speaker appears in".into(),
         chart_hint: "bar".into(),
@@ -216,11 +242,19 @@ fn speaker_episode_count(corpus: &Corpus) -> Series {
 }
 
 fn episode_durations(corpus: &Corpus) -> Series {
-    let mut points: Vec<DataPoint> = corpus.episodes.iter().map(|ep| DataPoint {
-        label: ep.title.clone(),
-        value: ep.total_seconds() / 60.0,
-    }).collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    let mut points: Vec<DataPoint> = corpus
+        .episodes
+        .iter()
+        .map(|ep| DataPoint {
+            label: ep.title.clone(),
+            value: ep.total_seconds() / 60.0,
+        })
+        .collect();
+    points.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Series {
         label: "Episode durations (min)".into(),
         chart_hint: "bar".into(),
@@ -243,11 +277,18 @@ fn speaker_cooccurrence(corpus: &Corpus) -> Series {
             }
         }
     }
-    let mut points: Vec<DataPoint> = pairs.into_iter().map(|(k, n)| DataPoint {
-        label: k,
-        value: n as f64,
-    }).collect();
-    points.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    let mut points: Vec<DataPoint> = pairs
+        .into_iter()
+        .map(|(k, n)| DataPoint {
+            label: k,
+            value: n as f64,
+        })
+        .collect();
+    points.sort_by(|a, b| {
+        b.value
+            .partial_cmp(&a.value)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Series {
         label: "Speaker pair co-occurrence".into(),
         chart_hint: "treemap".into(),
@@ -268,8 +309,18 @@ mod tests {
                     title: "Pilot".into(),
                     date: "2026-01-15T00:00:00Z".into(),
                     utterances: vec![
-                        Utterance { speaker: "Alice".into(), text: "the quick brown fox".into(), start_sec: 0.0, end_sec: 30.0 },
-                        Utterance { speaker: "Bob".into(),   text: "fox jumps over".into(),       start_sec: 30.0, end_sec: 60.0 },
+                        Utterance {
+                            speaker: "Alice".into(),
+                            text: "the quick brown fox".into(),
+                            start_sec: 0.0,
+                            end_sec: 30.0,
+                        },
+                        Utterance {
+                            speaker: "Bob".into(),
+                            text: "fox jumps over".into(),
+                            start_sec: 30.0,
+                            end_sec: 60.0,
+                        },
                     ],
                 },
                 Episode {
@@ -277,8 +328,18 @@ mod tests {
                     title: "Sequel".into(),
                     date: "2026-02-10T00:00:00Z".into(),
                     utterances: vec![
-                        Utterance { speaker: "Alice".into(), text: "fox returns".into(), start_sec: 0.0, end_sec: 60.0 },
-                        Utterance { speaker: "Carol".into(), text: "and a new fox".into(), start_sec: 60.0, end_sec: 90.0 },
+                        Utterance {
+                            speaker: "Alice".into(),
+                            text: "fox returns".into(),
+                            start_sec: 0.0,
+                            end_sec: 60.0,
+                        },
+                        Utterance {
+                            speaker: "Carol".into(),
+                            text: "and a new fox".into(),
+                            start_sec: 60.0,
+                            end_sec: 90.0,
+                        },
                     ],
                 },
             ],
@@ -313,7 +374,11 @@ mod tests {
     #[test]
     fn speaker_episode_count_counts_distinct_appearances() {
         let s = run(&corpus(), &Experiment::SpeakerEpisodeCount);
-        let m: HashMap<String, f64> = s.points.iter().map(|p| (p.label.clone(), p.value)).collect();
+        let m: HashMap<String, f64> = s
+            .points
+            .iter()
+            .map(|p| (p.label.clone(), p.value))
+            .collect();
         assert_eq!(m.get("Alice"), Some(&2.0)); // both episodes
         assert_eq!(m.get("Bob"), Some(&1.0));
         assert_eq!(m.get("Carol"), Some(&1.0));
@@ -323,7 +388,9 @@ mod tests {
     fn episode_durations_sorted_desc() {
         let s = run(&corpus(), &Experiment::EpisodeDurations);
         let vals: Vec<f64> = s.points.iter().map(|p| p.value).collect();
-        for w in vals.windows(2) { assert!(w[0] >= w[1]); }
+        for w in vals.windows(2) {
+            assert!(w[0] >= w[1]);
+        }
     }
 
     #[test]

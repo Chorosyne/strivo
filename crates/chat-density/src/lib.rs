@@ -42,7 +42,9 @@ pub struct ChatEvent {
     pub weight: f32,
 }
 
-fn default_weight() -> f32 { 1.0 }
+fn default_weight() -> f32 {
+    1.0
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DensityPoint {
@@ -156,7 +158,10 @@ pub fn parse_csv_log(csv: &str) -> Vec<ChatEvent> {
         if user.is_empty() {
             continue;
         }
-        let message = parts.get(2).map(|s| s.trim().to_string()).unwrap_or_default();
+        let message = parts
+            .get(2)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         out.push(ChatEvent {
             time_sec,
             user: user.to_string(),
@@ -194,7 +199,11 @@ pub fn compute_density(
     }
     let unique_counts: Vec<f32> = chatters.iter().map(|s| s.len() as f32).collect();
     let max_count = counts.iter().copied().fold(0.0_f32, f32::max).max(1.0);
-    let max_unique = unique_counts.iter().copied().fold(0.0_f32, f32::max).max(1.0);
+    let max_unique = unique_counts
+        .iter()
+        .copied()
+        .fold(0.0_f32, f32::max)
+        .max(1.0);
     (0..n)
         .map(|i| {
             let density = counts[i] / max_count;
@@ -261,7 +270,8 @@ mod tests {
     fn parse_irc_skips_events_before_stream_start() {
         // Event ts (500ms) is before the stream-start (1000ms) — should
         // be discarded so it doesn't pile into bucket 0.
-        let log = "@badge-info=;tmi-sent-ts=500 :alice!alice@alice.tmi.twitch.tv PRIVMSG #chan :hi\n";
+        let log =
+            "@badge-info=;tmi-sent-ts=500 :alice!alice@alice.tmi.twitch.tv PRIVMSG #chan :hi\n";
         let evs = parse_irc_log(log, 1000);
         assert!(evs.is_empty());
     }
@@ -275,16 +285,36 @@ mod tests {
 
     #[test]
     fn density_returns_empty_for_zero_duration() {
-        let evs = vec![ChatEvent { time_sec: 0.0, user: "a".into(), message: "".into(), weight: 1.0 }];
+        let evs = vec![ChatEvent {
+            time_sec: 0.0,
+            user: "a".into(),
+            message: "".into(),
+            weight: 1.0,
+        }];
         assert!(compute_density(&evs, 0.0, 30.0).is_empty());
     }
 
     #[test]
     fn density_buckets_events_correctly() {
         let evs = vec![
-            ChatEvent { time_sec: 5.0, user: "a".into(), message: "".into(), weight: 1.0 },
-            ChatEvent { time_sec: 7.0, user: "b".into(), message: "".into(), weight: 1.0 },
-            ChatEvent { time_sec: 35.0, user: "a".into(), message: "".into(), weight: 1.0 },
+            ChatEvent {
+                time_sec: 5.0,
+                user: "a".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
+            ChatEvent {
+                time_sec: 7.0,
+                user: "b".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
+            ChatEvent {
+                time_sec: 35.0,
+                user: "a".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
         ];
         let pts = compute_density(&evs, 60.0, 30.0);
         assert_eq!(pts.len(), 2);
@@ -340,8 +370,18 @@ mod tests {
     #[test]
     fn density_negative_event_times_ignored() {
         let evs = vec![
-            ChatEvent { time_sec: -5.0, user: "a".into(), message: "".into(), weight: 1.0 },
-            ChatEvent { time_sec: 10.0, user: "b".into(), message: "".into(), weight: 1.0 },
+            ChatEvent {
+                time_sec: -5.0,
+                user: "a".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
+            ChatEvent {
+                time_sec: 10.0,
+                user: "b".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
         ];
         let pts = compute_density(&evs, 60.0, 30.0);
         assert_eq!(pts.len(), 2);
@@ -353,8 +393,18 @@ mod tests {
         // Two messages in bucket 0 with weight 0.5 each → message_count
         // floored to 1 (sum = 1.0 → as u32 = 1).
         let evs = vec![
-            ChatEvent { time_sec: 1.0, user: "a".into(), message: "".into(), weight: 0.5 },
-            ChatEvent { time_sec: 2.0, user: "b".into(), message: "".into(), weight: 0.5 },
+            ChatEvent {
+                time_sec: 1.0,
+                user: "a".into(),
+                message: "".into(),
+                weight: 0.5,
+            },
+            ChatEvent {
+                time_sec: 2.0,
+                user: "b".into(),
+                message: "".into(),
+                weight: 0.5,
+            },
         ];
         let pts = compute_density(&evs, 30.0, 30.0);
         assert_eq!(pts.len(), 1);
@@ -365,9 +415,24 @@ mod tests {
     #[test]
     fn density_unique_chatters_dedupes_users() {
         let evs = vec![
-            ChatEvent { time_sec: 1.0, user: "alice".into(), message: "".into(), weight: 1.0 },
-            ChatEvent { time_sec: 2.0, user: "alice".into(), message: "".into(), weight: 1.0 },
-            ChatEvent { time_sec: 3.0, user: "alice".into(), message: "".into(), weight: 1.0 },
+            ChatEvent {
+                time_sec: 1.0,
+                user: "alice".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
+            ChatEvent {
+                time_sec: 2.0,
+                user: "alice".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
+            ChatEvent {
+                time_sec: 3.0,
+                user: "alice".into(),
+                message: "".into(),
+                weight: 1.0,
+            },
         ];
         let pts = compute_density(&evs, 30.0, 30.0);
         assert_eq!(pts[0].message_count, 3);

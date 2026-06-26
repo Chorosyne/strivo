@@ -71,7 +71,11 @@ pub struct DiffEntry {
 pub fn diff(a: &RenderVariant, b: &RenderVariant) -> Vec<DiffEntry> {
     let mut out = vec![];
     if a.label != b.label {
-        out.push(DiffEntry { field: "label".into(), a: a.label.clone(), b: b.label.clone() });
+        out.push(DiffEntry {
+            field: "label".into(),
+            a: a.label.clone(),
+            b: b.label.clone(),
+        });
     }
     let an = a.insert_fx.as_ref().map(|c| c.effects.len()).unwrap_or(0);
     let bn = b.insert_fx.as_ref().map(|c| c.effects.len()).unwrap_or(0);

@@ -22,16 +22,18 @@ pub async fn recluster_speakers(
     target_k: Option<u32>,
 ) -> Result<usize> {
     if segments.len() < 2 {
-        return Ok(segments.iter().filter(|s| s.speaker.is_some()).count().min(1));
+        return Ok(segments
+            .iter()
+            .filter(|s| s.speaker.is_some())
+            .count()
+            .min(1));
     }
     let script = resolve_script().context("could not locate cluster_speakers.py")?;
 
     let payload = serde_json::to_string(
         &segments
             .iter()
-            .map(|s| {
-                serde_json::json!({"index": s.index, "start": s.start_sec, "end": s.end_sec})
-            })
+            .map(|s| serde_json::json!({"index": s.index, "start": s.start_sec, "end": s.end_sec}))
             .collect::<Vec<_>>(),
     )?;
     let tmp = tempfile::Builder::new()
@@ -53,7 +55,14 @@ pub async fn recluster_speakers(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let tail: String = stderr.chars().rev().take(400).collect::<String>().chars().rev().collect();
+        let tail: String = stderr
+            .chars()
+            .rev()
+            .take(400)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         bail!("cluster_speakers.py exited with {}: {tail}", output.status);
     }
 

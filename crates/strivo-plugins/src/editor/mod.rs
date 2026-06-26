@@ -43,8 +43,12 @@ impl EditorPlugin {
 }
 
 impl Plugin for EditorPlugin {
-    fn name(&self) -> &'static str { "editor" }
-    fn display_name(&self) -> &str { "Editor" }
+    fn name(&self) -> &'static str {
+        "editor"
+    }
+    fn display_name(&self) -> &str {
+        "Editor"
+    }
 
     fn init(&mut self, ctx: &PluginContext) -> anyhow::Result<()> {
         self.data_dir = ctx.data_dir.join("plugins").join("editor");
@@ -60,9 +64,17 @@ impl Plugin for EditorPlugin {
         Vec::new()
     }
 
-    fn status_line(&self) -> Option<String> { None }
-    fn status_slot(&self) -> StatusSlot { StatusSlot::None }
+    fn status_line(&self) -> Option<String> {
+        None
+    }
+    fn status_slot(&self) -> StatusSlot {
+        StatusSlot::None
+    }
 
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

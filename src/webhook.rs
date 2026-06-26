@@ -100,8 +100,7 @@ pub fn build_payload(event: &DaemonEvent) -> Option<WebhookPayload> {
             final_state,
             error,
         } => {
-            let failed =
-                error.is_some() || matches!(final_state, RecordingState::Failed);
+            let failed = error.is_some() || matches!(final_state, RecordingState::Failed);
             let event_name = if failed {
                 "recording_failed"
             } else {

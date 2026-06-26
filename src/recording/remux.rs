@@ -99,9 +99,13 @@ pub async fn normalise_container(path: &Path) -> anyhow::Result<Outcome> {
         .unwrap_or(false);
     if remuxed_nonempty {
         let _ = tokio::fs::remove_file(&orig).await;
-        Ok(Outcome::Remuxed { kept_original: None })
+        Ok(Outcome::Remuxed {
+            kept_original: None,
+        })
     } else {
-        Ok(Outcome::Remuxed { kept_original: Some(orig) })
+        Ok(Outcome::Remuxed {
+            kept_original: Some(orig),
+        })
     }
 }
 

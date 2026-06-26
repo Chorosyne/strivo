@@ -38,11 +38,19 @@ impl InsightsPlugin {
 }
 
 impl Plugin for InsightsPlugin {
-    fn name(&self) -> &'static str { "insights" }
-    fn display_name(&self) -> &str { "Insights" }
+    fn name(&self) -> &'static str {
+        "insights"
+    }
+    fn display_name(&self) -> &str {
+        "Insights"
+    }
 
     fn init(&mut self, ctx: &PluginContext) -> anyhow::Result<()> {
-        self.db_path = ctx.data_dir.join("plugins").join("crunchr").join("crunchr.db");
+        self.db_path = ctx
+            .data_dir
+            .join("plugins")
+            .join("crunchr")
+            .join("crunchr.db");
         Ok(())
     }
 
@@ -54,9 +62,17 @@ impl Plugin for InsightsPlugin {
         Vec::new()
     }
 
-    fn status_line(&self) -> Option<String> { self.last_status.clone() }
-    fn status_slot(&self) -> StatusSlot { StatusSlot::Tray }
+    fn status_line(&self) -> Option<String> {
+        self.last_status.clone()
+    }
+    fn status_slot(&self) -> StatusSlot {
+        StatusSlot::Tray
+    }
 
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

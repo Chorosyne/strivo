@@ -179,13 +179,7 @@ impl Edl {
 
     /// Insert a B-roll cut at position `at_idx`. If `at_idx` is past
     /// the end, append.
-    pub fn insert_broll(
-        &mut self,
-        at_idx: usize,
-        broll_path: &str,
-        start_sec: f32,
-        end_sec: f32,
-    ) {
+    pub fn insert_broll(&mut self, at_idx: usize, broll_path: &str, start_sec: f32, end_sec: f32) {
         let cut = Cut {
             start_sec: start_sec.max(0.0),
             end_sec: end_sec.max(start_sec),
@@ -286,7 +280,9 @@ pub fn render_edl_with_filters(
                 .args(["-ss", &start])
                 .arg("-i")
                 .arg(path)
-                .args(["-t", &dur, "-vf", &vfilter, "-c:v", "libx264", "-c:a", "aac"])
+                .args([
+                    "-t", &dur, "-vf", &vfilter, "-c:v", "libx264", "-c:a", "aac",
+                ])
                 .arg(&sub_clip_path)
                 .status()
                 .context("ffmpeg sub-clip (fade)")?;
@@ -352,10 +348,7 @@ pub fn render_edl_with_filters(
             .args(["-map", "[aout]"])
             .args(["-c:v", "libx264", "-c:a", "aac"]);
     }
-    let status = concat
-        .arg(output)
-        .status()
-        .context("ffmpeg concat")?;
+    let status = concat.arg(output).status().context("ffmpeg concat")?;
     if !status.success() {
         anyhow::bail!("ffmpeg concat exited {status}");
     }
@@ -373,7 +366,9 @@ mod tests {
         Cut {
             start_sec: start,
             end_sec: end,
-            kind: CutKind::Source { source_path: "/x".into() },
+            kind: CutKind::Source {
+                source_path: "/x".into(),
+            },
             fade_in_sec: 0.0,
             fade_out_sec: 0.0,
         }

@@ -40,7 +40,6 @@ pub struct PluginRegistry {
     capability_index: HashMap<&'static str, Vec<usize>>,
 }
 
-
 impl PluginRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -269,10 +268,7 @@ impl PluginRegistry {
     /// Plugin verbs scoped to a specific item type. Backs the actions
     /// popup (D5+X5) — each entry becomes a row alongside built-in
     /// verbs like Play / Properties / Delete.
-    pub fn item_commands(
-        &self,
-        kind: super::ItemKind,
-    ) -> Vec<(&'static str, PluginCommand)> {
+    pub fn item_commands(&self, kind: super::ItemKind) -> Vec<(&'static str, PluginCommand)> {
         use super::PluginCommandScope;
         let mut out = Vec::new();
         for plugin in &self.plugins {

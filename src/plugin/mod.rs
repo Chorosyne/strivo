@@ -29,15 +29,13 @@ pub enum ItemKind {
 /// - `Pane` scopes the command to a specific plugin pane.
 /// - `Item` registers the command as a *verb* in the actions popup,
 ///   so pressing `a` on the focused item type surfaces it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PluginCommandScope {
     #[default]
     Global,
     Pane(PaneId),
     Item(ItemKind),
 }
-
 
 /// A command that a plugin registers. The host surfaces these by name
 /// and description in the SPA's plugin hub. Previously carried
@@ -63,11 +61,7 @@ impl PluginCommand {
 
     /// Register a verb against an item type. The host surfaces it in
     /// the actions popup for items of that kind.
-    pub const fn item(
-        name: &'static str,
-        description: &'static str,
-        kind: ItemKind,
-    ) -> Self {
+    pub const fn item(name: &'static str, description: &'static str, kind: ItemKind) -> Self {
         Self {
             name,
             description,
@@ -229,8 +223,7 @@ fn audit_manifest_conflicts(manifests: &[PluginManifest]) {
     // Activation-letter collisions inside the `,` namespace. Two
     // plugins claiming `,c` is a hard configuration error the user
     // can fix by renaming one.
-    let mut letters_seen: std::collections::HashMap<char, &str> =
-        std::collections::HashMap::new();
+    let mut letters_seen: std::collections::HashMap<char, &str> = std::collections::HashMap::new();
     for m in manifests {
         let Some(ref l) = m.activation_letter else {
             continue;

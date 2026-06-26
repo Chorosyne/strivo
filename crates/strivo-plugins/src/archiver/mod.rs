@@ -10,9 +10,7 @@ use std::path::PathBuf;
 
 use strivo_core::events::DaemonEvent;
 use strivo_core::platform::ChannelEntry;
-use strivo_core::plugin::{
-    DaemonEventKind, Plugin, PluginAction, PluginContext, StatusSlot,
-};
+use strivo_core::plugin::{DaemonEventKind, Plugin, PluginAction, PluginContext, StatusSlot};
 use strivo_core::recording::job::RecordingState;
 
 pub mod db;
@@ -56,8 +54,12 @@ impl ArchiverPlugin {
 }
 
 impl Plugin for ArchiverPlugin {
-    fn name(&self) -> &'static str { "archiver" }
-    fn display_name(&self) -> &str { "Archiver" }
+    fn name(&self) -> &'static str {
+        "archiver"
+    }
+    fn display_name(&self) -> &str {
+        "Archiver"
+    }
 
     fn init(&mut self, ctx: &PluginContext) -> anyhow::Result<()> {
         self.data_dir = ctx.data_dir.join("plugins").join("archiver");
@@ -84,7 +86,9 @@ impl Plugin for ArchiverPlugin {
                 self.channels = channels.clone();
             }
             DaemonEvent::RecordingFinished {
-                job_id, final_state, ..
+                job_id,
+                final_state,
+                ..
             } => {
                 if *final_state != RecordingState::Finished || !self.enabled {
                     return Vec::new();
@@ -113,9 +117,17 @@ impl Plugin for ArchiverPlugin {
         Vec::new()
     }
 
-    fn status_line(&self) -> Option<String> { None }
-    fn status_slot(&self) -> StatusSlot { StatusSlot::None }
+    fn status_line(&self) -> Option<String> {
+        None
+    }
+    fn status_slot(&self) -> StatusSlot {
+        StatusSlot::None
+    }
 
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

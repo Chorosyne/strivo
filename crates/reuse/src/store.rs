@@ -79,9 +79,9 @@ impl ReuseStore {
     }
 
     pub fn latest_generated_at(&self, recording_id: &str) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT MAX(generated_at) FROM drafts WHERE recording_id = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT MAX(generated_at) FROM drafts WHERE recording_id = ?1")?;
         let row = stmt
             .query_row([recording_id], |r| r.get::<_, Option<String>>(0))
             .optional()?;

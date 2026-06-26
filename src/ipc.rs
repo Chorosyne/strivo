@@ -61,9 +61,7 @@ pub enum ClientMessage {
     /// Request the playlists for a YouTube channel, to populate the
     /// bulk-download scope picker (task #73). Answered asynchronously
     /// with DaemonEvent::PlaylistList.
-    ListPlaylists {
-        channel_id: String,
-    },
+    ListPlaylists { channel_id: String },
     /// Pull a single Patreon video post on demand (task #75 — webui
     /// equivalent of the TUI's PullPatreonPost). The daemon builds the
     /// output path from its config, so the webui doesn't have to.
@@ -115,9 +113,7 @@ pub enum ClientMessage {
     /// Hard-delete a finished or errored recording: move the file into the
     /// 7-day trash and drop the jobs.db row. Active recordings are rejected;
     /// the webui must Stop them first.
-    DeleteRecording {
-        job_id: Uuid,
-    },
+    DeleteRecording { job_id: Uuid },
     /// Bulk-delete every recording whose state is `failed` or `interrupted`.
     /// Same trash-then-drop semantics as `DeleteRecording`.
     ClearErroredRecordings,
@@ -303,8 +299,7 @@ mod tests {
         // An old client sends {"Hello":{}} with no version field; the new
         // daemon must parse this as version 0.
         let json = r#"{"Hello":{}}"#;
-        let msg: ClientMessage =
-            serde_json::from_str(json).expect("struct variant with no fields");
+        let msg: ClientMessage = serde_json::from_str(json).expect("struct variant with no fields");
         assert!(
             matches!(msg, ClientMessage::Hello { version: 0 }),
             "expected Hello {{ version: 0 }}, got: {msg:?}"

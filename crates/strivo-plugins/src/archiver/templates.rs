@@ -37,9 +37,7 @@ impl FormatTemplate {
     pub fn description(&self) -> &'static str {
         match self {
             Self::ByDate => "<archive>/<YYYY-MM>/<MM-DD-YYYY> - <title>.<ext>",
-            Self::ByPlaylist => {
-                "<archive>/Playlists/<playlist>/<MM-DD-YYYY> - <title>.<ext>"
-            }
+            Self::ByPlaylist => "<archive>/Playlists/<playlist>/<MM-DD-YYYY> - <title>.<ext>",
             Self::ByChannel => "<archive>/<channel>/<YYYY-MM-DD> - <title>.<ext>",
             Self::Flat => "<archive>/<YYYY-MM-DD> <title>.<ext>",
             Self::Custom => "user-supplied yt-dlp output template",
@@ -55,11 +53,10 @@ impl FormatTemplate {
                 "%(upload_date>%Y-%m)s/%(upload_date>%m-%d-%Y)s - %(title)s.%(ext)s".into()
             }
             Self::ByPlaylist => {
-                "Playlists/%(playlist_title,playlist)s/%(upload_date>%m-%d-%Y)s - %(title)s.%(ext)s".into()
+                "Playlists/%(playlist_title,playlist)s/%(upload_date>%m-%d-%Y)s - %(title)s.%(ext)s"
+                    .into()
             }
-            Self::ByChannel => {
-                "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title)s.%(ext)s".into()
-            }
+            Self::ByChannel => "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title)s.%(ext)s".into(),
             Self::Flat => "%(upload_date>%Y-%m-%d)s %(title)s.%(ext)s".into(),
             Self::Custom => custom.unwrap_or("").to_string(),
         }
@@ -74,12 +71,7 @@ impl FormatTemplate {
     }
 
     pub fn all() -> &'static [Self] {
-        &[
-            Self::ByDate,
-            Self::ByPlaylist,
-            Self::ByChannel,
-            Self::Flat,
-        ]
+        &[Self::ByDate, Self::ByPlaylist, Self::ByChannel, Self::Flat]
     }
 }
 
@@ -236,10 +228,7 @@ mod tests {
     #[test]
     fn custom_uses_user_string() {
         let s = SampleMetadata::default();
-        let p = FormatTemplate::Custom.preview(
-            Some("dump/%(uploader)s/%(title)s.%(ext)s"),
-            &s,
-        );
+        let p = FormatTemplate::Custom.preview(Some("dump/%(uploader)s/%(title)s.%(ext)s"), &s);
         assert_eq!(p, "dump/AwesomeStreamer/Weekly stream recap.mkv");
     }
 

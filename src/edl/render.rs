@@ -90,17 +90,17 @@ pub fn pipeline_from_preset_stages(
     for (vod_id, _path) in inputs {
         let mut prev: Option<StageId> = None;
         // Every input chain starts with audio extraction.
-        let extract = Stage::new(
-            format!("extract:{vod_id}"),
-            StageKind::Extract,
-        )
-        .with_inputs(prev.iter().copied().collect());
+        let extract = Stage::new(format!("extract:{vod_id}"), StageKind::Extract)
+            .with_inputs(prev.iter().copied().collect());
         let extract_id = p.add_stage(extract);
         prev = Some(extract_id);
 
         for stage in preset_stages {
             let (kind, requires) = match stage {
-                PresetStageBridge::Transcribe { provider, max_attempts: _ } => {
+                PresetStageBridge::Transcribe {
+                    provider,
+                    max_attempts: _,
+                } => {
                     let mut locks = Vec::new();
                     if provider.contains("local") {
                         locks.push(ResourceLock::Gpu);

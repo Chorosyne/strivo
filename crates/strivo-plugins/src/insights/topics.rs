@@ -42,8 +42,7 @@ pub fn cross_recording_topics(conn: &Connection) -> Result<Vec<TopicRow>> {
     for r in rows {
         let (raw, day) = r?;
         let topics = parse_topics(&raw);
-        let mut seen_in_video: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut seen_in_video: std::collections::HashSet<String> = std::collections::HashSet::new();
         for t in topics {
             let key = t.trim().to_lowercase();
             if key.is_empty() || !seen_in_video.insert(key.clone()) {
@@ -89,9 +88,7 @@ fn parse_topics(raw: &str) -> Vec<String> {
                     v.as_str()
                         .map(String::from)
                         .or_else(|| v.get("name").and_then(|n| n.as_str()).map(String::from))
-                        .or_else(|| {
-                            v.get("topic").and_then(|n| n.as_str()).map(String::from)
-                        })
+                        .or_else(|| v.get("topic").and_then(|n| n.as_str()).map(String::from))
                 })
                 .collect();
         }
@@ -117,8 +114,7 @@ mod tests {
 
     #[test]
     fn parse_topics_object_array() {
-        let out =
-            parse_topics(r#"[{"name":"streaming"},{"topic":"retro gaming"}]"#);
+        let out = parse_topics(r#"[{"name":"streaming"},{"topic":"retro gaming"}]"#);
         assert_eq!(out, vec!["streaming", "retro gaming"]);
     }
 }

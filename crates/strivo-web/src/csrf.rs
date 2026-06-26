@@ -59,7 +59,10 @@ pub async fn csrf_guard(req: Request<Body>, next: Next) -> Result<Response, Stat
 }
 
 fn is_state_changing(method: &Method) -> bool {
-    matches!(*method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE)
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    )
 }
 
 /// A browser can only set these custom headers on a same-origin request
@@ -162,7 +165,10 @@ mod tests {
         assert!(has_csrf_header(&h));
 
         let mut h2 = HeaderMap::new();
-        h2.insert("x-requested-with", HeaderValue::from_static("XMLHttpRequest"));
+        h2.insert(
+            "x-requested-with",
+            HeaderValue::from_static("XMLHttpRequest"),
+        );
         assert!(has_csrf_header(&h2));
     }
 

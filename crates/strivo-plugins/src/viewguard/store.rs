@@ -160,9 +160,10 @@ impl ViewguardStore {
     /// Trim samples older than `days`. Verdicts kept forever.
     pub fn sweep_old_samples(&self, days: i64) -> Result<usize> {
         let cutoff = Utc::now() - chrono::Duration::days(days);
-        let n = self
-            .conn
-            .execute("DELETE FROM samples WHERE ts < ?1", params![cutoff.to_rfc3339()])?;
+        let n = self.conn.execute(
+            "DELETE FROM samples WHERE ts < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
         Ok(n)
     }
 }
@@ -266,7 +267,11 @@ mod tests {
         s.insert_sample("c1", "twitch", t, 150).unwrap(); // REPLACE
         let count: i64 = s
             .conn
-            .query_row("SELECT COUNT(*) FROM samples WHERE channel_id='c1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM samples WHERE channel_id='c1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -355,8 +360,13 @@ mod tests {
         let (_d, s) = fresh();
         let base = Utc::now() - chrono::Duration::minutes(10);
         for i in 0..5 {
-            s.insert_sample("c1", "twitch", base + chrono::Duration::minutes(i), (i * 10) as u32)
-                .unwrap();
+            s.insert_sample(
+                "c1",
+                "twitch",
+                base + chrono::Duration::minutes(i),
+                (i * 10) as u32,
+            )
+            .unwrap();
         }
         let pts = samples_for(&s.conn, "c1", 3).unwrap();
         assert_eq!(pts.len(), 3);

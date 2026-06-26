@@ -185,7 +185,10 @@ mod tests {
             _ = tokio::time::sleep(Duration::from_secs(3600)) => false,
             _ = cancel.cancelled() => true,
         };
-        assert!(cancelled, "delayed cancel must still win over the 3600 s sleep");
+        assert!(
+            cancelled,
+            "delayed cancel must still win over the 3600 s sleep"
+        );
         assert!(
             start.elapsed() < Duration::from_millis(500),
             "should unblock well before the 3600 s delay"

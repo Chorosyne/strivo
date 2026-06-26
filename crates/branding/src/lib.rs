@@ -11,9 +11,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Anchor {
-    TopLeft, TopCenter, TopRight,
-    MiddleLeft, MiddleCenter, MiddleRight,
-    BottomLeft, BottomCenter, BottomRight,
+    TopLeft,
+    TopCenter,
+    TopRight,
+    MiddleLeft,
+    MiddleCenter,
+    MiddleRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
 }
 
 impl Anchor {
@@ -22,15 +28,24 @@ impl Anchor {
     pub fn xy_expr(self, inset_px: u32) -> (String, String) {
         let m = inset_px;
         match self {
-            Anchor::TopLeft       => (format!("{m}"),                              format!("{m}")),
-            Anchor::TopCenter     => ("(main_w-overlay_w)/2".into(),               format!("{m}")),
-            Anchor::TopRight      => (format!("main_w-overlay_w-{m}"),             format!("{m}")),
-            Anchor::MiddleLeft    => (format!("{m}"),                              "(main_h-overlay_h)/2".into()),
-            Anchor::MiddleCenter  => ("(main_w-overlay_w)/2".into(),               "(main_h-overlay_h)/2".into()),
-            Anchor::MiddleRight   => (format!("main_w-overlay_w-{m}"),             "(main_h-overlay_h)/2".into()),
-            Anchor::BottomLeft    => (format!("{m}"),                              format!("main_h-overlay_h-{m}")),
-            Anchor::BottomCenter  => ("(main_w-overlay_w)/2".into(),               format!("main_h-overlay_h-{m}")),
-            Anchor::BottomRight   => (format!("main_w-overlay_w-{m}"),             format!("main_h-overlay_h-{m}")),
+            Anchor::TopLeft => (format!("{m}"), format!("{m}")),
+            Anchor::TopCenter => ("(main_w-overlay_w)/2".into(), format!("{m}")),
+            Anchor::TopRight => (format!("main_w-overlay_w-{m}"), format!("{m}")),
+            Anchor::MiddleLeft => (format!("{m}"), "(main_h-overlay_h)/2".into()),
+            Anchor::MiddleCenter => ("(main_w-overlay_w)/2".into(), "(main_h-overlay_h)/2".into()),
+            Anchor::MiddleRight => (
+                format!("main_w-overlay_w-{m}"),
+                "(main_h-overlay_h)/2".into(),
+            ),
+            Anchor::BottomLeft => (format!("{m}"), format!("main_h-overlay_h-{m}")),
+            Anchor::BottomCenter => (
+                "(main_w-overlay_w)/2".into(),
+                format!("main_h-overlay_h-{m}"),
+            ),
+            Anchor::BottomRight => (
+                format!("main_w-overlay_w-{m}"),
+                format!("main_h-overlay_h-{m}"),
+            ),
         }
     }
 }
@@ -42,7 +57,11 @@ pub enum WatermarkSource {
     /// Path to a PNG/SVG/etc. loaded via a `movie=` input.
     Image { path: String },
     /// Rendered with `drawtext`.
-    Text { text: String, font_size: u32, color_rgba: String },
+    Text {
+        text: String,
+        font_size: u32,
+        color_rgba: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +176,11 @@ fn watermark_step(w: &Watermark, in_label: &str, out_label: &str) -> String {
                 "movie={escaped},format=rgba,colorchannelmixer=aa={opacity:.3}[wm];{in_label}[wm]overlay={x}:{y}{out_label}"
             )
         }
-        WatermarkSource::Text { text, font_size, color_rgba } => {
+        WatermarkSource::Text {
+            text,
+            font_size,
+            color_rgba,
+        } => {
             let escaped = drawtext_escape(text);
             let color = color_with_alpha(color_rgba, opacity);
             format!(
@@ -184,12 +207,16 @@ fn banner_step(b: &Banner, in_label: &str, out_label: &str) -> String {
 /// Escape a literal path/value for use inside an ffmpeg filter chain.
 /// Backslash, single-quote and colon are the troublemakers.
 pub fn ffmpeg_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace(':', "\\:").replace('\'', "\\'")
+    s.replace('\\', "\\\\")
+        .replace(':', "\\:")
+        .replace('\'', "\\'")
 }
 
 /// Escape a string for use inside a `drawtext` `text='…'` literal.
 pub fn drawtext_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\'', "\\'").replace(':', "\\:")
+    s.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace(':', "\\:")
 }
 
 /// Apply opacity to an `rgba(R,G,B,A)`-ish or `0xRRGGBB`-ish colour.
@@ -212,9 +239,13 @@ mod tests {
     fn wm_text() -> Watermark {
         Watermark {
             source: WatermarkSource::Text {
-                text: "@channel".into(), font_size: 32, color_rgba: "white".into(),
+                text: "@channel".into(),
+                font_size: 32,
+                color_rgba: "white".into(),
             },
-            anchor: Anchor::BottomRight, inset_px: 24, opacity: 0.7,
+            anchor: Anchor::BottomRight,
+            inset_px: 24,
+            opacity: 0.7,
         }
     }
 
@@ -248,9 +279,14 @@ mod tests {
 
     #[test]
     fn text_watermark_emits_drawtext() {
-        let spec = BrandingSpec { watermark: Some(wm_text()), banners: vec![] };
+        let spec = BrandingSpec {
+            watermark: Some(wm_text()),
+            banners: vec![],
+        };
         let chain = spec.build_filter_chain("[0:v]");
-        assert!(chain.filter_complex.starts_with("[0:v]drawtext=text='@channel'"));
+        assert!(chain
+            .filter_complex
+            .starts_with("[0:v]drawtext=text='@channel'"));
         assert!(chain.filter_complex.contains("fontsize=32"));
         assert!(chain.filter_complex.contains("fontcolor=white@0.700"));
         assert!(chain.filter_complex.contains("x=main_w-overlay_w-24"));
@@ -261,23 +297,35 @@ mod tests {
     fn image_watermark_uses_movie_and_colorchannelmixer() {
         let spec = BrandingSpec {
             watermark: Some(Watermark {
-                source: WatermarkSource::Image { path: "/tmp/logo.png".into() },
-                anchor: Anchor::TopRight, inset_px: 12, opacity: 0.5,
+                source: WatermarkSource::Image {
+                    path: "/tmp/logo.png".into(),
+                },
+                anchor: Anchor::TopRight,
+                inset_px: 12,
+                opacity: 0.5,
             }),
             banners: vec![],
         };
         let chain = spec.build_filter_chain("[0:v]");
         assert!(chain.filter_complex.contains("movie=/tmp/logo.png"));
         assert!(chain.filter_complex.contains("colorchannelmixer=aa=0.500"));
-        assert!(chain.filter_complex.contains("overlay=main_w-overlay_w-12:12"));
+        assert!(chain
+            .filter_complex
+            .contains("overlay=main_w-overlay_w-12:12"));
     }
 
     #[test]
     fn opacity_clamps_to_unit_range() {
         let spec = BrandingSpec {
             watermark: Some(Watermark {
-                source: WatermarkSource::Text { text: "x".into(), font_size: 16, color_rgba: "white".into() },
-                anchor: Anchor::TopLeft, inset_px: 0, opacity: 1.7,
+                source: WatermarkSource::Text {
+                    text: "x".into(),
+                    font_size: 16,
+                    color_rgba: "white".into(),
+                },
+                anchor: Anchor::TopLeft,
+                inset_px: 0,
+                opacity: 1.7,
             }),
             banners: vec![],
         };
@@ -289,8 +337,14 @@ mod tests {
     fn opacity_negative_clamps_to_zero() {
         let spec = BrandingSpec {
             watermark: Some(Watermark {
-                source: WatermarkSource::Text { text: "x".into(), font_size: 16, color_rgba: "white".into() },
-                anchor: Anchor::TopLeft, inset_px: 0, opacity: -0.4,
+                source: WatermarkSource::Text {
+                    text: "x".into(),
+                    font_size: 16,
+                    color_rgba: "white".into(),
+                },
+                anchor: Anchor::TopLeft,
+                inset_px: 0,
+                opacity: -0.4,
             }),
             banners: vec![],
         };
@@ -310,9 +364,13 @@ mod tests {
         let spec = BrandingSpec {
             watermark: None,
             banners: vec![Banner {
-                slot: BannerSlot::Intro, text: "Welcome".into(),
-                font_size: 48, color_rgba: "yellow".into(),
-                anchor: Anchor::TopCenter, inset_px: 40, duration_secs: 3.5,
+                slot: BannerSlot::Intro,
+                text: "Welcome".into(),
+                font_size: 48,
+                color_rgba: "yellow".into(),
+                anchor: Anchor::TopCenter,
+                inset_px: 40,
+                duration_secs: 3.5,
             }],
         };
         let chain = spec.build_filter_chain("[0:v]");
@@ -325,13 +383,19 @@ mod tests {
         let spec = BrandingSpec {
             watermark: None,
             banners: vec![Banner {
-                slot: BannerSlot::Outro, text: "Like & Sub".into(),
-                font_size: 48, color_rgba: "white".into(),
-                anchor: Anchor::BottomCenter, inset_px: 40, duration_secs: 5.0,
+                slot: BannerSlot::Outro,
+                text: "Like & Sub".into(),
+                font_size: 48,
+                color_rgba: "white".into(),
+                anchor: Anchor::BottomCenter,
+                inset_px: 40,
+                duration_secs: 5.0,
             }],
         };
         let chain = spec.build_filter_chain("[0:v]");
-        assert!(chain.filter_complex.contains("enable='gte(t,main_duration-5.000)'"));
+        assert!(chain
+            .filter_complex
+            .contains("enable='gte(t,main_duration-5.000)'"));
     }
 
     #[test]
@@ -339,10 +403,24 @@ mod tests {
         let spec = BrandingSpec {
             watermark: Some(wm_text()),
             banners: vec![
-                Banner { slot: BannerSlot::Intro, text: "Hi".into(), font_size: 40, color_rgba: "white".into(),
-                         anchor: Anchor::TopCenter, inset_px: 20, duration_secs: 2.0 },
-                Banner { slot: BannerSlot::Outro, text: "Bye".into(), font_size: 40, color_rgba: "white".into(),
-                         anchor: Anchor::BottomCenter, inset_px: 20, duration_secs: 4.0 },
+                Banner {
+                    slot: BannerSlot::Intro,
+                    text: "Hi".into(),
+                    font_size: 40,
+                    color_rgba: "white".into(),
+                    anchor: Anchor::TopCenter,
+                    inset_px: 20,
+                    duration_secs: 2.0,
+                },
+                Banner {
+                    slot: BannerSlot::Outro,
+                    text: "Bye".into(),
+                    font_size: 40,
+                    color_rgba: "white".into(),
+                    anchor: Anchor::BottomCenter,
+                    inset_px: 20,
+                    duration_secs: 4.0,
+                },
             ],
         };
         let chain = spec.build_filter_chain("[0:v]");
@@ -383,8 +461,13 @@ mod tests {
         let spec = BrandingSpec {
             watermark: Some(wm_text()),
             banners: vec![Banner {
-                slot: BannerSlot::Outro, text: "End".into(), font_size: 32, color_rgba: "white".into(),
-                anchor: Anchor::BottomCenter, inset_px: 30, duration_secs: 3.0,
+                slot: BannerSlot::Outro,
+                text: "End".into(),
+                font_size: 32,
+                color_rgba: "white".into(),
+                anchor: Anchor::BottomCenter,
+                inset_px: 30,
+                duration_secs: 3.0,
             }],
         };
         let s = serde_json::to_string(&spec).unwrap();

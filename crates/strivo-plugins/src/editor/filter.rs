@@ -4,8 +4,8 @@
 //! drops (or keeps only) listed speakers. The resulting clips feed the
 //! lossless concat path the way any other Editor clip list would.
 
-use crate::crunchr::types::Segment;
 use super::EditorClip;
+use crate::crunchr::types::Segment;
 
 #[derive(Debug, Clone)]
 pub struct SpeakerFilter {
@@ -31,11 +31,7 @@ impl SpeakerFilter {
         segments: &[Segment],
         word_index_for_seg: impl Fn(usize) -> u32,
     ) -> Vec<EditorClip> {
-        let lower: Vec<String> = self
-            .speakers
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
+        let lower: Vec<String> = self.speakers.iter().map(|s| s.to_lowercase()).collect();
 
         let keep = |seg: &Segment| -> bool {
             let Some(label) = &seg.speaker else {
@@ -63,7 +59,25 @@ impl SpeakerFilter {
                 clips.push(EditorClip {
                     in_word: word_index_for_seg(start),
                     out_word: word_index_for_seg(i),
-                    label: format!("{}..{}", segments[start].text.split_whitespace().take(3).collect::<Vec<_>>().join(" "), segments[i - 1].text.split_whitespace().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ")),
+                    label: format!(
+                        "{}..{}",
+                        segments[start]
+                            .text
+                            .split_whitespace()
+                            .take(3)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        segments[i - 1]
+                            .text
+                            .split_whitespace()
+                            .rev()
+                            .take(3)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ),
                 });
             }
         }
@@ -173,10 +187,7 @@ mod tests {
 
     #[test]
     fn unlabeled_segments_pass_under_drop() {
-        let segs = vec![
-            s(None, "narrator-ish"),
-            s(Some("Alice"), "hi"),
-        ];
+        let segs = vec![s(None, "narrator-ish"), s(Some("Alice"), "hi")];
         let f = SpeakerFilter {
             speakers: vec!["Alice".into()],
             keep_only: false,
@@ -190,10 +201,7 @@ mod tests {
 
     #[test]
     fn unlabeled_segments_dropped_under_keep_only() {
-        let segs = vec![
-            s(None, "narrator-ish"),
-            s(Some("Alice"), "hi"),
-        ];
+        let segs = vec![s(None, "narrator-ish"), s(Some("Alice"), "hi")];
         let f = SpeakerFilter {
             speakers: vec!["Alice".into()],
             keep_only: true,

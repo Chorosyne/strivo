@@ -72,7 +72,10 @@ pub fn build_concat_argv(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."));
-    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
     let concat_file_path = output_dir.join(format!("{stem}.concat.txt"));
     let output_path = output_dir.join(format!("{stem}.editor.mkv"));
 
@@ -231,11 +234,7 @@ mod tests {
 
     #[test]
     fn empty_clip_list_errors() {
-        let res = build_concat_argv(
-            &[],
-            &ws(&[("a", 0.0)]),
-            &Some(PathBuf::from("/tmp/x.mkv")),
-        );
+        let res = build_concat_argv(&[], &ws(&[("a", 0.0)]), &Some(PathBuf::from("/tmp/x.mkv")));
         assert!(res.is_err());
     }
 
@@ -334,10 +333,7 @@ mod tests {
         }];
         let plan = build_compilation_argv(&clips, &sources, "Highlight Reel!!!").unwrap();
         // Non-alnum chars stripped.
-        assert!(plan
-            .output_path
-            .to_string_lossy()
-            .contains("HighlightReel"));
+        assert!(plan.output_path.to_string_lossy().contains("HighlightReel"));
     }
 
     #[test]

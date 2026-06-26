@@ -179,10 +179,23 @@ mod tests {
     #[test]
     fn list_channels_and_videos_roll_up_download_state() {
         let conn = fresh();
-        let cid = upsert_channel(&conn, "Alpha", "https://t/alpha", "Twitch", "/arc/alpha").unwrap();
+        let cid =
+            upsert_channel(&conn, "Alpha", "https://t/alpha", "Twitch", "/arc/alpha").unwrap();
         let vids = vec![
-            ("v1".to_string(), "One".to_string(), "20260101".to_string(), Some(60.0), None),
-            ("v2".to_string(), "Two".to_string(), "20260102".to_string(), None, Some("pl".to_string())),
+            (
+                "v1".to_string(),
+                "One".to_string(),
+                "20260101".to_string(),
+                Some(60.0),
+                None,
+            ),
+            (
+                "v2".to_string(),
+                "Two".to_string(),
+                "20260102".to_string(),
+                None,
+                Some("pl".to_string()),
+            ),
         ];
         insert_videos(&conn, cid, &vids).unwrap();
         mark_downloaded(&conn, cid, "v1").unwrap();

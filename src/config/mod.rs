@@ -720,7 +720,9 @@ pub struct NotificationsConfig {
     pub webhook: WebhookConfig,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 impl Default for NotificationsConfig {
     fn default() -> Self {
@@ -766,7 +768,9 @@ pub struct PluginToggle {
 }
 
 impl Default for PluginToggle {
-    fn default() -> Self { Self { enabled: true } }
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Capture-time safety knobs. Both fields default to 0 (= disabled) so
@@ -888,7 +892,10 @@ impl AppConfig {
         let mut seen = std::collections::HashSet::new();
         for p in &self.capture_profiles {
             if !seen.insert(p.name.as_str()) {
-                warnings.push(format!("capture profile '{}' is defined more than once", p.name));
+                warnings.push(format!(
+                    "capture profile '{}' is defined more than once",
+                    p.name
+                ));
             }
             // A zero cutoff would block all capture for attached channels.
             if p.cutoff_episodes == Some(0) {
@@ -1163,9 +1170,15 @@ mod profile_tests {
         ];
         cfg.auto_record_channels = vec![arc("Foo", Some("nonexistent"))];
         let w = cfg.config_warnings();
-        assert!(w.iter().any(|s| s.contains("defined more than once")), "{w:?}");
+        assert!(
+            w.iter().any(|s| s.contains("defined more than once")),
+            "{w:?}"
+        );
         assert!(w.iter().any(|s| s.contains("never record")), "{w:?}");
-        assert!(w.iter().any(|s| s.contains("unknown capture profile")), "{w:?}");
+        assert!(
+            w.iter().any(|s| s.contains("unknown capture profile")),
+            "{w:?}"
+        );
     }
 
     #[test]
@@ -1178,7 +1191,10 @@ mod profile_tests {
             duration: "4h".into(),
         }];
         let w = cfg.config_warnings();
-        assert!(w.iter().any(|s| s.contains("perpetual re-capture")), "{w:?}");
+        assert!(
+            w.iter().any(|s| s.contains("perpetual re-capture")),
+            "{w:?}"
+        );
     }
 
     #[test]

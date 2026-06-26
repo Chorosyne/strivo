@@ -23,10 +23,15 @@ pub enum Band {
 
 impl Band {
     pub fn from_score(s: f32) -> Self {
-        if s >= 0.80 { Band::Fraudulent }
-        else if s >= 0.50 { Band::Suspect }
-        else if s >= 0.25 { Band::Watch }
-        else { Band::Clean }
+        if s >= 0.80 {
+            Band::Fraudulent
+        } else if s >= 0.50 {
+            Band::Suspect
+        } else if s >= 0.25 {
+            Band::Watch
+        } else {
+            Band::Clean
+        }
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -76,7 +81,11 @@ pub fn aggregate(signals: &[SignalScore]) -> AggregatedVerdict {
             confidence: s.confidence,
         })
         .collect();
-    contributors.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    contributors.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let qualified: Vec<&Contributor> = contributors
         .iter()
@@ -111,12 +120,17 @@ pub fn aggregate(signals: &[SignalScore]) -> AggregatedVerdict {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::detectors::DetectorKind;
+    use super::*;
     use serde_json::json;
 
     fn sig(kind: DetectorKind, score: f32, confidence: f32) -> SignalScore {
-        SignalScore { kind, score, confidence, evidence: json!({}) }
+        SignalScore {
+            kind,
+            score,
+            confidence,
+            evidence: json!({}),
+        }
     }
 
     #[test]

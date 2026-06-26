@@ -121,7 +121,12 @@ mod tests {
     #[test]
     fn single_passthrough_track_anulls_and_mixes() {
         let s = SubMix {
-            tracks: vec![TrackIn { label: "voice".into(), input_index: 0, insert_fx: None, gain_db: 0.0 }],
+            tracks: vec![TrackIn {
+                label: "voice".into(),
+                input_index: 0,
+                insert_fx: None,
+                gain_db: 0.0,
+            }],
             master_chain: None,
             master_gain_db: 0.0,
         };
@@ -149,14 +154,20 @@ mod tests {
                 },
             ],
             master_chain: Some(InsertChain::new(vec![
-                strivo_insert_fx::InsertEffect::Limiter { ceiling_db: -1.0, release_sec: 0.05 },
+                strivo_insert_fx::InsertEffect::Limiter {
+                    ceiling_db: -1.0,
+                    release_sec: 0.05,
+                },
             ])),
             master_gain_db: 0.0,
         };
         let f = s.to_filter_complex();
         assert!(f.contains("[0:a]"), "voice input mapped");
         assert!(f.contains("[1:a]"), "game input mapped");
-        assert!(f.contains("highpass=f=80.0"), "voice preset applied per-track");
+        assert!(
+            f.contains("highpass=f=80.0"),
+            "voice preset applied per-track"
+        );
         assert!(f.contains("acompressor"), "game compressor applied");
         assert!(f.contains("volume=-3.00dB"), "game gain trim applied");
         assert!(f.contains("amix=inputs=2:normalize=0[mix]"));
@@ -167,7 +178,12 @@ mod tests {
     #[test]
     fn master_gain_only_no_chain() {
         let s = SubMix {
-            tracks: vec![TrackIn { label: "x".into(), input_index: 0, insert_fx: None, gain_db: 0.0 }],
+            tracks: vec![TrackIn {
+                label: "x".into(),
+                input_index: 0,
+                insert_fx: None,
+                gain_db: 0.0,
+            }],
             master_chain: None,
             master_gain_db: -1.5,
         };
@@ -177,7 +193,12 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let s = SubMix {
-            tracks: vec![TrackIn { label: "v".into(), input_index: 0, insert_fx: Some(InsertChain::voice_bus_default()), gain_db: 1.0 }],
+            tracks: vec![TrackIn {
+                label: "v".into(),
+                input_index: 0,
+                insert_fx: Some(InsertChain::voice_bus_default()),
+                gain_db: 1.0,
+            }],
             master_chain: Some(InsertChain::game_bus_default()),
             master_gain_db: -0.5,
         };

@@ -130,7 +130,10 @@ impl TranscriptionBackend for VoxtralApiBackend {
 /// Diarized speaker label, tolerating either a string id (`"speaker_id"` /
 /// `"speaker"`) or an integer index that we render as `Speaker N`.
 fn parse_speaker(seg: &serde_json::Value) -> Option<String> {
-    if let Some(s) = seg["speaker_id"].as_str().or_else(|| seg["speaker"].as_str()) {
+    if let Some(s) = seg["speaker_id"]
+        .as_str()
+        .or_else(|| seg["speaker"].as_str())
+    {
         return Some(s.to_string());
     }
     for key in ["speaker_id", "speaker"] {

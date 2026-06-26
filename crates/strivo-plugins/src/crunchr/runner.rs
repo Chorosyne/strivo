@@ -253,7 +253,14 @@ async fn extract_audio(video_path: &Path, cache_dir: &Path, rid: &str) -> Result
         bail!(
             "ffmpeg exited with {}: {}",
             status.status,
-            stderr.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
+            stderr
+                .chars()
+                .rev()
+                .take(300)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
         );
     }
     if !audio_path.exists() {

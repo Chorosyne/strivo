@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::events::DaemonEvent;
 use crate::config::AppConfig;
+use crate::events::DaemonEvent;
 use crate::platform::PlatformKind;
 use crate::recording::RecordingCommand;
 

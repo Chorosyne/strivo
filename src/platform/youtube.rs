@@ -4,8 +4,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::events::DaemonEvent;
 use crate::config::credentials;
+use crate::events::DaemonEvent;
 use crate::platform::{ChannelEntry, Platform, PlatformKind, VodEntry};
 
 const YOUTUBE_API_URL: &str = "https://www.googleapis.com/youtube/v3";
@@ -167,9 +167,10 @@ impl YouTubePlatform {
                 return Ok(true);
             }
             if self.refresh_token_value.read().await.is_some()
-                && self.do_refresh_token().await.is_ok() {
-                    return Ok(true);
-                }
+                && self.do_refresh_token().await.is_ok()
+            {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -412,20 +413,23 @@ impl YouTubePlatform {
                     .and_then(|s| s.channel_title.clone())
                     .unwrap_or_default();
 
-                live_channels.push((video_id, ChannelEntry {
-                    id: channel_id.clone(),
-                    platform: PlatformKind::YouTube,
-                    name: channel_id,
-                    display_name: channel_title,
-                    is_live: true,
-                    stream_title: snippet.and_then(|s| s.title.clone()),
-                    game_or_category: None,
-                    viewer_count,
-                    started_at,
-                    thumbnail_url: thumbnail,
-                    auto_record: false,
-                    last_live_at: None,
-                }));
+                live_channels.push((
+                    video_id,
+                    ChannelEntry {
+                        id: channel_id.clone(),
+                        platform: PlatformKind::YouTube,
+                        name: channel_id,
+                        display_name: channel_title,
+                        is_live: true,
+                        stream_title: snippet.and_then(|s| s.title.clone()),
+                        game_or_category: None,
+                        viewer_count,
+                        started_at,
+                        thumbnail_url: thumbnail,
+                        auto_record: false,
+                        last_live_at: None,
+                    },
+                ));
             }
         }
 
@@ -875,7 +879,9 @@ mod tests {
     fn partitions_live_from_uploads() {
         let mut vods = vec![vod("stream1"), vod("upload1"), vod("stream2")];
         let live: std::collections::HashSet<String> =
-            ["stream1".to_string(), "stream2".to_string()].into_iter().collect();
+            ["stream1".to_string(), "stream2".to_string()]
+                .into_iter()
+                .collect();
         annotate_live(&mut vods, &live);
 
         let kinds: Vec<_> = vods.iter().map(|v| (v.id.as_str(), v.kind)).collect();
@@ -883,7 +889,10 @@ mod tests {
         assert_eq!(kinds[1], ("upload1", VodKind::Upload));
         assert_eq!(kinds[2], ("stream2", VodKind::LiveBroadcast));
         // No id appears in both partitions.
-        let streams = vods.iter().filter(|v| v.kind == VodKind::LiveBroadcast).count();
+        let streams = vods
+            .iter()
+            .filter(|v| v.kind == VodKind::LiveBroadcast)
+            .count();
         let uploads = vods.iter().filter(|v| v.kind == VodKind::Upload).count();
         assert_eq!(streams + uploads, vods.len());
     }

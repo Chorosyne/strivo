@@ -60,11 +60,31 @@ pub struct LoudnormPass1 {
 /// most commonly aim for; the user can override every knob.
 pub fn preset_for(platform: Platform) -> LoudnormTarget {
     match platform {
-        Platform::YouTube => LoudnormTarget { i: -14.0, lra: 11.0, tp: -1.0 },
-        Platform::Spotify => LoudnormTarget { i: -14.0, lra: 7.0, tp: -1.0 },
-        Platform::AppleMusic => LoudnormTarget { i: -16.0, lra: 9.0, tp: -1.0 },
-        Platform::EbuR128 => LoudnormTarget { i: -23.0, lra: 7.0, tp: -2.0 },
-        Platform::Twitch => LoudnormTarget { i: -14.0, lra: 11.0, tp: -2.0 },
+        Platform::YouTube => LoudnormTarget {
+            i: -14.0,
+            lra: 11.0,
+            tp: -1.0,
+        },
+        Platform::Spotify => LoudnormTarget {
+            i: -14.0,
+            lra: 7.0,
+            tp: -1.0,
+        },
+        Platform::AppleMusic => LoudnormTarget {
+            i: -16.0,
+            lra: 9.0,
+            tp: -1.0,
+        },
+        Platform::EbuR128 => LoudnormTarget {
+            i: -23.0,
+            lra: 7.0,
+            tp: -2.0,
+        },
+        Platform::Twitch => LoudnormTarget {
+            i: -14.0,
+            lra: 11.0,
+            tp: -2.0,
+        },
     }
 }
 
@@ -253,7 +273,12 @@ frame= 2400 fps=120 q=-1.0 size=N/A time=00:01:40.00 bitrate=N/A speed=4.99x
 
     #[test]
     fn target_clamps_out_of_range_inputs() {
-        let t = LoudnormTarget { i: -100.0, lra: 200.0, tp: 5.0 }.clamped();
+        let t = LoudnormTarget {
+            i: -100.0,
+            lra: 200.0,
+            tp: 5.0,
+        }
+        .clamped();
         assert_eq!(t.i, -70.0);
         assert_eq!(t.lra, 50.0);
         assert_eq!(t.tp, 0.0);
@@ -261,7 +286,12 @@ frame= 2400 fps=120 q=-1.0 size=N/A time=00:01:40.00 bitrate=N/A speed=4.99x
 
     #[test]
     fn target_clamps_low_extremes() {
-        let t = LoudnormTarget { i: 5.0, lra: -3.0, tp: -50.0 }.clamped();
+        let t = LoudnormTarget {
+            i: 5.0,
+            lra: -3.0,
+            tp: -50.0,
+        }
+        .clamped();
         assert_eq!(t.i, -5.0);
         assert_eq!(t.lra, 1.0);
         assert_eq!(t.tp, -9.0);

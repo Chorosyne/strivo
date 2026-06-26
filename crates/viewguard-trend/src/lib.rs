@@ -107,7 +107,12 @@ pub fn build_watchlist(rows: &[VerdictRow]) -> Watchlist {
     }
     // Sort each band by latest_score desc so the noisiest channels
     // lead each section.
-    for v in [&mut wl.critical, &mut wl.warning, &mut wl.watch, &mut wl.clear] {
+    for v in [
+        &mut wl.critical,
+        &mut wl.warning,
+        &mut wl.watch,
+        &mut wl.clear,
+    ] {
         v.sort_by(|a, b| {
             b.latest_score
                 .partial_cmp(&a.latest_score)
@@ -139,7 +144,10 @@ pub fn build_trends(rows: &[VerdictRow]) -> Vec<ChannelTrend> {
         }
         let latest = samples.last().unwrap();
         let latest_score = latest.final_score.clamp(0.0, 1.0);
-        let channel_name = latest.channel_name.clone().unwrap_or_else(|| channel_id.clone());
+        let channel_name = latest
+            .channel_name
+            .clone()
+            .unwrap_or_else(|| channel_id.clone());
 
         // Rolling mean of the last 5 samples (or fewer if fewer
         // exist), excluding the latest so direction compares the most
@@ -250,14 +258,38 @@ mod tests {
 
     #[test]
     fn recommend_action_paths() {
-        assert_eq!(recommend_action(Band::Critical, false), SuggestedAction::EscalateAndReport);
-        assert_eq!(recommend_action(Band::Critical, true), SuggestedAction::EscalateAndReport);
-        assert_eq!(recommend_action(Band::Warning, false), SuggestedAction::ManualReview);
-        assert_eq!(recommend_action(Band::Warning, true), SuggestedAction::EscalateAndReport);
-        assert_eq!(recommend_action(Band::Watch, false), SuggestedAction::KeepMonitoring);
-        assert_eq!(recommend_action(Band::Watch, true), SuggestedAction::ManualReview);
-        assert_eq!(recommend_action(Band::Clear, false), SuggestedAction::NoAction);
-        assert_eq!(recommend_action(Band::Clear, true), SuggestedAction::KeepMonitoring);
+        assert_eq!(
+            recommend_action(Band::Critical, false),
+            SuggestedAction::EscalateAndReport
+        );
+        assert_eq!(
+            recommend_action(Band::Critical, true),
+            SuggestedAction::EscalateAndReport
+        );
+        assert_eq!(
+            recommend_action(Band::Warning, false),
+            SuggestedAction::ManualReview
+        );
+        assert_eq!(
+            recommend_action(Band::Warning, true),
+            SuggestedAction::EscalateAndReport
+        );
+        assert_eq!(
+            recommend_action(Band::Watch, false),
+            SuggestedAction::KeepMonitoring
+        );
+        assert_eq!(
+            recommend_action(Band::Watch, true),
+            SuggestedAction::ManualReview
+        );
+        assert_eq!(
+            recommend_action(Band::Clear, false),
+            SuggestedAction::NoAction
+        );
+        assert_eq!(
+            recommend_action(Band::Clear, true),
+            SuggestedAction::KeepMonitoring
+        );
     }
 
     #[test]
@@ -326,7 +358,11 @@ mod tests {
         let t = &build_trends(&rows)[0];
         // Rolling mean is over the 5 priors before latest:
         // 0.10, 0.12, 0.11, 0.15, 0.10 → ~0.116
-        assert!((t.rolling_mean - 0.116).abs() < 0.01, "got {}", t.rolling_mean);
+        assert!(
+            (t.rolling_mean - 0.116).abs() < 0.01,
+            "got {}",
+            t.rolling_mean
+        );
     }
 
     #[test]

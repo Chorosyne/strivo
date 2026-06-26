@@ -39,8 +39,11 @@ pub fn move_to_trash(src: &Path) -> Result<PathBuf> {
         let kind = rename_err.raw_os_error();
         let is_cross_fs = matches!(kind, Some(libc_exdev) if libc_exdev == 18);
         if !is_cross_fs {
-            return Err(anyhow::Error::new(rename_err)
-                .context(format!("move {} -> {}", src.display(), dest.display())));
+            return Err(anyhow::Error::new(rename_err).context(format!(
+                "move {} -> {}",
+                src.display(),
+                dest.display()
+            )));
         }
         std::fs::copy(src, &dest)
             .with_context(|| format!("copy {} -> {}", src.display(), dest.display()))?;

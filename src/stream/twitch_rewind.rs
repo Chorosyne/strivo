@@ -219,10 +219,7 @@ impl RewindResolver {
             .await
             .map_err(|e| RewindError::Other(anyhow!("GQL parse: {e}")))?;
         if !status.is_success() {
-            return Err(RewindError::Other(anyhow!(
-                "GQL HTTP {status}: {}",
-                json
-            )));
+            return Err(RewindError::Other(anyhow!("GQL HTTP {status}: {}", json)));
         }
         let tok = json
             .get("data")
@@ -278,8 +275,8 @@ fn build_usher_url(video_id: &str, tok: &VodAccessToken) -> String {
         .map(|d| d.as_micros())
         .unwrap_or(0)
         % 1_000_000;
-    let mut url = reqwest::Url::parse(&format!("{USHER_VOD_URL}/{video_id}.m3u8"))
-        .expect("usher URL parse");
+    let mut url =
+        reqwest::Url::parse(&format!("{USHER_VOD_URL}/{video_id}.m3u8")).expect("usher URL parse");
     url.query_pairs_mut()
         .append_pair("nauthsig", &tok.signature)
         .append_pair("nauth", &tok.value)

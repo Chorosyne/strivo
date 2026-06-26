@@ -34,11 +34,7 @@ pub enum TrimOutcome {
 /// ranges sorted by start time.
 pub async fn detect_black_ranges(input: &Path, min_secs: f64) -> Result<Vec<BlackRange>> {
     let output = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-nostats",
-            "-i",
-        ])
+        .args(["-hide_banner", "-nostats", "-i"])
         .arg(input)
         .args([
             "-vf",
@@ -73,7 +69,11 @@ pub async fn detect_black_ranges(input: &Path, min_secs: f64) -> Result<Vec<Blac
             }
         }
     }
-    ranges.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    ranges.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(ranges)
 }
 
@@ -108,7 +108,8 @@ async fn probe_duration(input: &Path) -> Result<f64> {
         );
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    s.parse::<f64>().with_context(|| format!("parse duration '{s}'"))
+    s.parse::<f64>()
+        .with_context(|| format!("parse duration '{s}'"))
 }
 
 /// Detect-and-trim. On success, the input file is rewritten in place. The
@@ -131,10 +132,7 @@ pub async fn trim_in_place(input: &Path, min_secs: f64) -> Result<TrimOutcome> {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("recording");
-    let ext = input
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("mkv");
+    let ext = input.extension().and_then(|s| s.to_str()).unwrap_or("mkv");
 
     // Extract each keep range to a sibling temp with -c copy. Concat then
     // produces the final trimmed file.
@@ -157,7 +155,12 @@ pub async fn trim_in_place(input: &Path, min_secs: f64) -> Result<TrimOutcome> {
                 .await
                 .context("spawn ffmpeg segment extract")?;
             if !status.success() {
-                bail!("ffmpeg segment extract failed (range {}: {:.2}-{:.2})", i, kr.start, kr.end);
+                bail!(
+                    "ffmpeg segment extract failed (range {}: {:.2}-{:.2})",
+                    i,
+                    kr.start,
+                    kr.end
+                );
             }
             segment_paths.push(seg);
         }
@@ -171,7 +174,9 @@ pub async fn trim_in_place(input: &Path, min_secs: f64) -> Result<TrimOutcome> {
             let p = s.to_string_lossy().replace('\'', "'\\''");
             list.push_str(&format!("file '{p}'\n"));
         }
-        tokio::fs::write(&list_path, list).await.context("write concat list")?;
+        tokio::fs::write(&list_path, list)
+            .await
+            .context("write concat list")?;
 
         let merged = parent.join(format!(".{stem}.trimmed.{ext}"));
         cleanup.push(merged.clone());
@@ -255,7 +260,10 @@ mod tests {
     #[test]
     fn invert_middle() {
         let k = invert_ranges(
-            &[BlackRange { start: 30.0, end: 60.0 }],
+            &[BlackRange {
+                start: 30.0,
+                end: 60.0,
+            }],
             100.0,
         );
         assert_eq!(k.len(), 2);
@@ -269,8 +277,14 @@ mod tests {
     fn invert_leading_and_trailing() {
         let k = invert_ranges(
             &[
-                BlackRange { start: 0.0, end: 10.0 },
-                BlackRange { start: 90.0, end: 100.0 },
+                BlackRange {
+                    start: 0.0,
+                    end: 10.0,
+                },
+                BlackRange {
+                    start: 90.0,
+                    end: 100.0,
+                },
             ],
             100.0,
         );

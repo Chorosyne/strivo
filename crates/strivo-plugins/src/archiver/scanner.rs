@@ -32,11 +32,7 @@ impl CatalogFilter {
             // Use case-insensitive substring match instead of pulling in
             // a regex crate; cheap to upgrade later when the UI demands
             // anchored patterns.
-            if !entry
-                .title
-                .to_lowercase()
-                .contains(&rx.to_lowercase())
-            {
+            if !entry.title.to_lowercase().contains(&rx.to_lowercase()) {
                 return false;
             }
         }
@@ -185,7 +181,13 @@ mod tests {
             title_regex: Some("recap".into()),
             ..Default::default()
         };
-        assert!(f.matches(&make_entry("a", "Weekly RECAP show", "20260101", 100.0, None)));
+        assert!(f.matches(&make_entry(
+            "a",
+            "Weekly RECAP show",
+            "20260101",
+            100.0,
+            None
+        )));
         assert!(!f.matches(&make_entry("b", "Other stream", "20260101", 100.0, None)));
     }
 
