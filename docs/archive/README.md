@@ -11,3 +11,6 @@ current. Live status lives in [`ROADMAP.md`](../../ROADMAP.md).
   competitive research under [`research/`](../../research/) (exemplars + analysis).
 - `speculative-crates-triage.md` — 2026-05-29 triage of "speculative" crates;
   resolved by the edition split (the tool crates are now Creator Edition, gated).
+- `elegantfin-theme.css`, `jellyfin-elegantfin-custom.css` — ElegantFin Jellyfin
+  reference CSS. Superseded: the SPA's canonical theme is **JellySkin** (see
+  DESIGN.md §"Web UI Theme"); these are kept only as historical reference.

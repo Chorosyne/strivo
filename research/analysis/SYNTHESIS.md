@@ -94,16 +94,18 @@ section. Larger follow-up: a build-time SPA split to drop the dead creator JS.
 
 ---
 
-## 6. DESIGN.md deviations ✔ (verified against `spa.css`)
+## 6. DESIGN.md deviations — RESOLVED (JellySkin is canonical)
 
-- **Theme**: `spa.css` implements **JellySkin** (navy `hsl(208,89%,5%)`, 25px
-  blur, 45° gradient); `DESIGN.md` prescribes **ElegantFin** (near-black
-  `#101010→#050505`, 2px blur, 180°).
-- **Font/CDN**: loads **Montserrat from Google Fonts**; `DESIGN.md` specifies
-  Satoshi / Instrument Sans from **Bunny Fonts** (a privacy regression — Google
-  Fonts leaks IP/referer).
-- **Accent**: `DESIGN.md` itself conflicts — cyan `#00E5FF` (brand) vs purple
-  `rgb(119,91,244)` (ElegantFin). Needs a decision: brand identity vs Jellyfin mimicry.
+Decision (owner, 2026-06-25): **JellySkin is the current SPA design trajectory.**
+DESIGN.md was the stale side and has been corrected to match `spa.css`:
 
-These need an owner decision (follow Jellyfin theme literally, or the StriVo
-brand) before mass CSS edits — flagged in ROADMAP, not silently changed.
+- **Theme**: DESIGN.md §"Web UI Theme" rewritten ElegantFin → **JellySkin**
+  (navy `hsl(208,89%,5%)`, 25px frosted glass, 45° gradient, 130° purple→cyan
+  accent), tokens mirrored from `spa.css :root`.
+- **Font**: SPA typeface is **Montserrat** (JellySkin). DESIGN.md typography now
+  scopes Montserrat to the SPA and Satoshi/Instrument Sans to marketing/docs.
+- **CDN**: switched `spa.css` `@import` from Google Fonts → **Bunny Fonts**
+  (same Montserrat, no IP/referer leak) — the one substantive code change.
+- **Accent**: the SPA intentionally uses JellySkin purple/cyan; brand cyan
+  `#00E5FF` stays the TUI/marketing accent. Both DESIGN.md and `spa.css` now
+  state this explicitly, so there is no remaining internal conflict.

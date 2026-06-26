@@ -122,13 +122,13 @@ ui-ux, backend) and `research/exemplars/`.
 | Storage gauge in the UI | ⬜ | `/api/v1/storage` returns the data; render a bar |
 | Concurrent-slot indicator ("N / M rec"), filename-token browser, JSON channel import/export | ⬜ | small, expected by competitors |
 
-### DESIGN.md compliance (decision needed before mass CSS edits)
-The SPA ships **JellySkin** (navy, Montserrat from Google Fonts) while DESIGN.md
-mandates **ElegantFin** as canonical (near-black, Satoshi/Instrument Sans from
-Bunny Fonts). DESIGN.md also self-conflicts on accent (cyan brand vs purple
-ElegantFin). Resolve "follow Jellyfin literally vs the StriVo brand" first, then
-align `spa.css`. (Google Fonts is also a privacy regression vs the stated Bunny
-Fonts goal.) See `research/analysis/ui-ux.md` §5.
+### DESIGN.md compliance ✅ (resolved — JellySkin is canonical)
+DESIGN.md previously mandated ElegantFin while the SPA shipped JellySkin. Owner
+decision: **JellySkin is the trajectory.** DESIGN.md §"Web UI Theme" + Typography
+were rewritten to JellySkin (tokens mirror `spa.css`), the SPA font is Montserrat,
+and `spa.css` font loading moved Google Fonts → Bunny Fonts (privacy). The SPA
+uses JellySkin purple/cyan; brand cyan `#00E5FF` stays the TUI/marketing accent.
+The stale ElegantFin reference CSS under `docs/reference/` was archived.
 
 ---
 

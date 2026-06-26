@@ -1,13 +1,12 @@
-/* StriVo SPA — *arr-inspired dark theme. (W4 MVP.)
- *
- * Colors map to DESIGN.md neon: bg #1A1B26, surface #24253A,
- * overlay #3B3D56, fg #E8E8E2, primary #00E5FF (cyan),
- * secondary #FFB020 (amber), live #39FF7F, recording #FF4444. */
+/* StriVo SPA theme — JellySkin-derived (prayag17/JellySkin), CANONICAL per
+ * DESIGN.md §"Web UI Theme": deep navy gradient, purple→cyan accent gradient,
+ * heavy frosted glass, Montserrat. Ported from JellySkin's SCSS variables.
+ * The SPA intentionally uses JellySkin's purple/cyan identity, not the brand
+ * cyan (#00E5FF) which stays the TUI/marketing accent. */
 
-/* JellySkin-derived theme (prayag17/JellySkin): deep navy gradient, purple→cyan
-   accent gradient, heavy frosted glass, Montserrat. Ported from its SCSS
-   variables. */
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap");
+/* Montserrat via Bunny Fonts (privacy-friendly Google Fonts mirror — no client
+   IP/referer leak to Google). */
+@import url("https://fonts.bunny.net/css?family=montserrat:300,400,500,600,700");
 :root {
   /* Navy background gradient (JellySkin $background-darker → $background-dark). */
   --bg: hsl(208, 89%, 5%);
