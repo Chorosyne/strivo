@@ -362,15 +362,21 @@ impl PersistDb {
 
     /// Count finished recordings for a channel (roadmap item 21 cutoff). Used
     /// by the monitor to stop auto-recording once a profile's cutoff is met.
+    ///
+    /// Uses a single SQL `COUNT(*)` with a `json_extract` predicate instead of
+    /// loading and filtering up to 500 rows in Rust (the previous O(N) approach
+    /// silently undercounted channels with more than 500 records).
     pub async fn count_finished_recordings(&self, channel_id: &str) -> Result<usize> {
-        let jobs = self.load_recording_jobs().await?;
-        Ok(jobs
-            .iter()
-            .filter(|j| {
-                j.channel_id == channel_id
-                    && matches!(j.state, crate::recording::job::RecordingState::Finished)
-            })
-            .count())
+        let conn = self.inner.lock().await;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs
+             WHERE kind = 'Recording'
+               AND state = 'finished'
+               AND json_extract(payload, '$.channel_id') = ?1",
+            params![channel_id],
+            |row| row.get(0),
+        )?;
+        Ok(n as usize)
     }
 
     pub async fn upsert_crunchr_queue(&self, entry: &CrunchrQueueEntry) -> Result<()> {
@@ -601,6 +607,76 @@ mod tests {
         db.remove_blocklist(p, "ch1", Some("v1")).await.unwrap();
         assert!(!db.is_blocked(p, "ch1", "v1").await.unwrap());
         assert_eq!(db.list_blocklist().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn count_finished_recordings_sql_count() {
+        use crate::recording::job::RecordingJob;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = PersistDb::open(&dir.path().join("jobs.db")).unwrap();
+
+        // Zero for an unknown channel.
+        assert_eq!(db.count_finished_recordings("chanA").await.unwrap(), 0);
+
+        // Helper: insert a finished recording for a given channel_id.
+        let insert = |channel_id: &'static str| {
+            let db = db.clone();
+            async move {
+                let job = RecordingJob::new(
+                    channel_id.into(),
+                    "test".into(),
+                    PlatformKind::Twitch,
+                    std::path::PathBuf::from(format!("/tmp/{channel_id}.mkv")),
+                    false,
+                    None,
+                );
+                let payload = serde_json::to_string(&job).unwrap();
+                db.upsert_job(&PersistedJob {
+                    id: job.id.to_string(),
+                    kind: "Recording".into(),
+                    payload,
+                    state: "finished".into(),
+                    attempts: 0,
+                    last_error: None,
+                    episode_dir: None,
+                })
+                .await
+                .unwrap();
+            }
+        };
+
+        // 3 finished for chanA, 1 for chanB, 1 "running" for chanA (not counted).
+        insert("chanA").await;
+        insert("chanA").await;
+        insert("chanA").await;
+        insert("chanB").await;
+
+        // Also insert one running recording for chanA — must not be counted.
+        let running_job = RecordingJob::new(
+            "chanA".into(),
+            "test".into(),
+            PlatformKind::Twitch,
+            std::path::PathBuf::from("/tmp/running.mkv"),
+            false,
+            None,
+        );
+        let running_payload = serde_json::to_string(&running_job).unwrap();
+        db.upsert_job(&PersistedJob {
+            id: running_job.id.to_string(),
+            kind: "Recording".into(),
+            payload: running_payload,
+            state: "running".into(),
+            attempts: 0,
+            last_error: None,
+            episode_dir: None,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(db.count_finished_recordings("chanA").await.unwrap(), 3);
+        assert_eq!(db.count_finished_recordings("chanB").await.unwrap(), 1);
+        assert_eq!(db.count_finished_recordings("chanC").await.unwrap(), 0);
     }
 
     #[tokio::test]
