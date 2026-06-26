@@ -105,6 +105,7 @@ const API = {
   settings: () => API._fetch("/settings"),
   patreon: () => API._fetch("/patreon"),
   gantt: () => API._fetch("/gantt"),
+  /* @creator-start */
   pluginRpc: (plugin, verb, body) =>
     API._fetch(`/plugins/${encodeURIComponent(plugin)}/${encodeURIComponent(verb)}`, {
       method: "POST",
@@ -134,6 +135,7 @@ const API = {
   insightsTopics: () => API._fetch("/plugins/insights/topics"),
   insightsSpeakers: (id) =>
     API._fetch(`/plugins/insights/recordings/${encodeURIComponent(id)}/speakers`),
+  /* @creator-end */
   bulkDownload: (channelId, body) =>
     API._fetch(`/channels/${encodeURIComponent(channelId)}/bulk`, {
       method: "POST",
@@ -156,6 +158,7 @@ const API = {
     API._fetch(`/schedule/${encodeURIComponent(index)}`, { method: "DELETE" }),
   // Monitor (record-when-live + auto-download new uploads).
   monitor: () => API._fetch("/monitor"),
+  /* @creator-start */
   setArchiverTandem: (key, enabled) =>
     API._fetch(`/channels/${encodeURIComponent(key)}/archiver_tandem`, {
       method: "PUT",
@@ -225,11 +228,13 @@ const API = {
     API._fetch(`/dataviz/run`, { method: "POST", body: { corpus, experiment } }),
   crunchrTranscript: (recordingId) =>
     API._fetch(`/plugins/crunchr/transcript/${encodeURIComponent(recordingId)}`).catch(() => null),
+  /* @creator-end */
   chatSend: (room, text) =>
     API._fetch(`/chat/send`, {
       method: "POST",
       body: { room, text },
     }),
+  /* @creator-start */
   chatDensityCompute: (recordingId, body) =>
     API._fetch(`/plugins/chat-density/${encodeURIComponent(recordingId)}`, {
       method: "POST",
@@ -340,6 +345,7 @@ const API = {
   viewguardTrend: () => API._fetch("/plugins/viewguard/trend"),
   pipelinesDag: () => API._fetch("/pipelines/dag"),
   marketplaceCatalog: () => API._fetch("/marketplace/catalog"),
+  /* @creator-end */
   patreonPull: (body) =>
     API._fetch("/patreon/pull", { method: "POST", body }),
   vodDownload: (body) =>
@@ -362,6 +368,17 @@ const API = {
   licenceActivate: (key) =>
     API._fetch("/licence/activate", { method: "POST", body: { key } }),
   licenceTrial: () => API._fetch("/licence/trial", { method: "POST" }),
+  // ── Capture-profile CRUD ─────────────────────────────────────────────
+  captureProfileCreate: (profile) =>
+    API._fetch("/capture_profiles", { method: "POST", body: profile }),
+  captureProfileUpdate: (name, profile) =>
+    API._fetch(`/capture_profiles/${encodeURIComponent(name)}`, { method: "PUT", body: profile }),
+  captureProfileDelete: (name) =>
+    API._fetch(`/capture_profiles/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  // ── Channel JSON export / import ─────────────────────────────────────
+  channelsExport: () => API._fetch("/channels/export"),
+  channelsImport: (data) =>
+    API._fetch("/channels/import", { method: "POST", body: data }),
 };
 
 // ── SSE event stream ─────────────────────────────────────────────────
@@ -9785,6 +9802,91 @@ function wireSettingsControls() {
       }
     });
   });
+  // Filename template live preview — updates #stg-fn-preview as user types.
+  const fnInput = pane.querySelector('[data-stg-path="recording.filename_template"]');
+  const fnPreview = pane.querySelector("#stg-fn-preview");
+  if (fnInput && fnPreview) {
+    const updatePreview = () => {
+      const tpl = fnInput.value || "{channel}_{date}_{title}.mkv";
+      const d = new Date();
+      const preview = tpl
+        .replace("{channel}", "mychannel")
+        .replace("{platform}", "twitch")
+        .replace("{date}", d.toISOString().slice(0, 10))
+        .replace("{time}", d.toTimeString().replace(/\D/g, "").slice(0, 6))
+        .replace("{title}", "stream_title")
+        .replace("{id}", "1234567890");
+      fnPreview.textContent = preview;
+    };
+    fnInput.addEventListener("input", updatePreview);
+  }
+
+  // Capture profile add / delete (Task 1).
+  pane.querySelector("#stg-profile-add")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const nameInp = pane.querySelector("#stg-profile-name-inp");
+    const tierSel = pane.querySelector("#stg-profile-tier-sel");
+    if (!nameInp) return;
+    const name = nameInp.value.trim();
+    if (!name) return;
+    const quality_tier = tierSel ? (tierSel.value || null) : null;
+    try {
+      await API.captureProfileCreate({ name, quality_tier });
+      Toast.success(`Profile '${name}' created`);
+      renderSettings();
+    } catch (err) {
+      Toast.error(`Couldn't create profile: ${err.message}`);
+    }
+  });
+  pane.querySelectorAll(".stg-profile-del").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.profileName;
+      if (!confirm(`Delete capture profile '${name}'?`)) return;
+      try {
+        await API.captureProfileDelete(name);
+        Toast.success(`Profile '${name}' deleted`);
+        renderSettings();
+      } catch (err) {
+        Toast.error(`Couldn't delete: ${err.message}`);
+      }
+    });
+  });
+
+  // Channel export / import (Task 4).
+  pane.querySelector(".stg-channels-export")?.addEventListener("click", async () => {
+    try {
+      const data = await API.channelsExport();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `strivo-channels-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      Toast.error(`Export failed: ${err.message}`);
+    }
+  });
+  const importFileInput = pane.querySelector("#stg-channels-import-file");
+  pane.querySelector(".stg-channels-import-btn")?.addEventListener("click", () => {
+    importFileInput?.click();
+  });
+  importFileInput?.addEventListener("change", async () => {
+    const file = importFileInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const result = await API.channelsImport(data);
+      Toast.success(`Imported: ${result.added ?? 0} added, ${result.updated ?? 0} updated`);
+      renderSettings();
+    } catch (err) {
+      Toast.error(`Import failed: ${err.message}`);
+    } finally {
+      importFileInput.value = "";
+    }
+  });
+
   pane.querySelectorAll("[data-stg-path]").forEach((el) => {
     el.addEventListener("change", async () => {
       const path = el.getAttribute("data-stg-path");
@@ -9838,9 +9940,33 @@ function renderSettingsPane(slug, s) {
       .join("");
     return `<select class="stg-select" data-stg-path="${htmlEscape(path)}" data-prev="${htmlEscape(value ?? "")}">${options}</select>`;
   };
-  // Filename template token reference shown via the ⓘ hover hint.
-  const TEMPLATE_TOKENS_HINT =
-    "Tokens: {channel} channel name · {title} stream title · {date} YYYY-MM-DD · {time} HHMMSS · {platform} twitch/youtube/patreon · {id} broadcast id. Path-safe at write-time.";
+  // Filename template token browser — collapsible <details> with live preview.
+  const TEMPLATE_TOKENS = [
+    ["{channel}",  "Channel name"],
+    ["{platform}", "twitch / youtube / patreon"],
+    ["{date}",     "YYYY-MM-DD (local)"],
+    ["{time}",     "HHmmss (local)"],
+    ["{title}",    "Stream title (path-safe)"],
+    ["{id}",       "Broadcast / video ID"],
+  ];
+  const tokenBrowserHtml = (currentTpl) => {
+    const rows = TEMPLATE_TOKENS.map(([tok, desc]) =>
+      `<tr><td><code class="stg-tok">${htmlEscape(tok)}</code></td>` +
+      `<td class="muted stg-tok-desc">${htmlEscape(desc)}</td></tr>`
+    ).join("");
+    const example = (currentTpl || "{channel}_{date}_{title}.mkv")
+      .replace("{channel}", "mychannel")
+      .replace("{platform}", "twitch")
+      .replace("{date}", new Date().toISOString().slice(0, 10))
+      .replace("{time}", new Date().toTimeString().replace(/\D/g, "").slice(0, 6))
+      .replace("{title}", "stream_title")
+      .replace("{id}", "1234567890");
+    return `<details class="stg-token-browser">
+      <summary class="stg-token-summary">Tokens ▸</summary>
+      <table class="stg-token-table">${rows}</table>
+      <div class="stg-token-preview">Preview: <code id="stg-fn-preview">${htmlEscape(example)}</code></div>
+    </details>`;
+  };
   // Row helper. `hint` is rendered as a tooltip on a ⓘ glyph so the
   // layout stays clean; long-form text only appears on hover.
   const row = (label, value, hint) => `
@@ -9911,6 +10037,15 @@ function renderSettingsPane(slug, s) {
             "Root directory for all recordings. Each platform/channel gets its own subdirectory.",
           ),
         ].join("")),
+        group("Channels", [
+          row(
+            "Export / Import",
+            `<button class="sm stg-channels-export" type="button">Export channels JSON</button>
+             <button class="sm stg-channels-import-btn" type="button">Import channels JSON</button>
+             <input id="stg-channels-import-file" type="file" accept=".json" style="display:none" />`,
+            "Export all tracked channels + capture profiles as a JSON file. Import merges new channels and updates existing ones by platform + channel ID.",
+          ),
+        ].join("")),
       ].join("");
 
     case "notifications": {
@@ -9952,12 +10087,40 @@ function renderSettingsPane(slug, s) {
       ].join("");
     }
 
-    case "recording":
+    case "recording": {
+      // Capture-profile rows (Task 1).
+      const profiles = s.capture_profiles || [];
+      const QUALITY_TIER_LABELS = {
+        best: "Best", "1080p": "1080p", "720p": "720p", "480p": "480p", audio_only: "Audio only",
+      };
+      const profileRows = profiles.length
+        ? profiles.map((p) => `
+          <div class="stg-row stg-profile-row" data-profile-name="${htmlEscape(p.name)}">
+            <div class="stg-row-label">${htmlEscape(p.name)}</div>
+            <div class="stg-row-value">
+              ${p.quality_tier
+                ? `<span class="cfg-badge ok">${htmlEscape(QUALITY_TIER_LABELS[p.quality_tier] || p.quality_tier)}</span>`
+                : `<span class="muted">no tier</span>`}
+              <button class="sm stg-profile-del" data-profile-name="${htmlEscape(p.name)}"
+                      type="button" title="Delete profile '${htmlEscape(p.name)}'">✕</button>
+            </div>
+          </div>`).join("")
+        : `<div class="empty sm">No capture profiles defined yet.</div>`;
+      const tierOpts = ["", "best", "1080p", "720p", "480p", "audio_only"]
+        .map((v) => `<option value="${htmlEscape(v)}">${htmlEscape(QUALITY_TIER_LABELS[v] || "(none)")}</option>`)
+        .join("");
+      const addProfileForm = `
+        <form id="stg-profile-add" class="stg-profile-add">
+          <input id="stg-profile-name-inp" type="text" placeholder="Profile name"
+                 maxlength="64" required aria-label="New profile name" />
+          <select id="stg-profile-tier-sel" aria-label="Quality tier">${tierOpts}</select>
+          <button class="btn-primary" type="submit">Add</button>
+        </form>`;
       return [
         group("Output", [
           row("Filename template",
-            textInput("recording.filename_template", rec.filename_template, "{channel}_{date}_{title}.mkv"),
-            TEMPLATE_TOKENS_HINT),
+            textInput("recording.filename_template", rec.filename_template, "{channel}_{date}_{title}.mkv") +
+            tokenBrowserHtml(rec.filename_template)),
           row("Container",
             selectInput("recording.container",
               (rec.container || "matroska").toLowerCase(),
@@ -9976,7 +10139,9 @@ function renderSettingsPane(slug, s) {
           row("Auto-trim ads", toggle("recording.auto_trim_ads", rec.auto_trim_ads),
             "Run sponsorblock-style ad-segment trimming on completed Twitch VODs."),
         ].join("")),
+        group("Capture Profiles", profileRows + addProfileForm),
       ].join("");
+    }
 
     case "platforms": {
       const platformRow = (key, statusOk) => `
@@ -10844,12 +11009,17 @@ async function renderSchedule() {
     .map((p) => `<option value="${htmlEscape(p)}">${htmlEscape(p || "(default)")}</option>`)
     .join("");
 
+  // Quality-tier lookup map from capture profiles (Task 1).
+  const profileTierMap = new Map(captureProfiles.map((p) => [p.name, p.quality_tier || ""]));
+  const TIER_LABEL = { best: "Best", "1080p": "1080p", "720p": "720p", "480p": "480p", audio_only: "Audio only" };
+
   // Section 1 — record when live (existing auto-record list).
   const recordRows = monitor.auto_record
     .map(
       (e) => {
         const curContainer = e.format || "";
         const curProfile = e.profile || "";
+        const curTier = curProfile ? (profileTierMap.get(curProfile) || "") : "";
         // Rebuild option lists with selected=true on the current values.
         const containerOpts = ["", "mkv", "mp4", "ts"]
           .map((c) => `<option value="${htmlEscape(c)}"${c === curContainer ? " selected" : ""}>${htmlEscape(c || "(default)")}</option>`)
@@ -10857,6 +11027,9 @@ async function renderSchedule() {
         const profileOpts = ["", ...captureProfiles.map((p) => p.name)]
           .map((p) => `<option value="${htmlEscape(p)}"${p === curProfile ? " selected" : ""}>${htmlEscape(p || "(default)")}</option>`)
           .join("");
+        const tierBadge = curTier
+          ? `<span class="mon-tier-badge" data-key="${htmlEscape(e.key)}">${htmlEscape(TIER_LABEL[curTier] || curTier)}</span>`
+          : `<span class="mon-tier-badge" data-key="${htmlEscape(e.key)}"></span>`;
         return `
     <div class="task-row">
       <div class="task-info">
@@ -10869,6 +11042,7 @@ async function renderSchedule() {
           <label class="mon-fmt-label" title="Named capture profile for this channel">Profile</label>
           <select class="mon-fmt-sel" data-key="${htmlEscape(e.key)}" data-field="profile"
                   title="Per-channel capture profile (empty = global default)">${profileOpts}</select>
+          ${tierBadge}
         </span>
       </div>
       <button class="sm mon-rec-rm" data-key="${htmlEscape(e.key)}" title="Stop auto-recording this channel">✕</button>
@@ -11056,13 +11230,28 @@ async function renderSchedule() {
   });
 
   // Per-channel format/profile override — save on change (Task 4).
+  // Quality-tier badge data is embedded as JSON for JS lookup after render.
+  const monProfileTierData = {};
+  document.querySelectorAll(".mon-tier-badge").forEach((badge) => {
+    const profSel = badge.closest(".mon-fmt-row")?.querySelector('.mon-fmt-sel[data-field="profile"]');
+    if (profSel) monProfileTierData[badge.dataset.key] = { badge, profSel };
+  });
   document.querySelectorAll(".mon-fmt-sel").forEach((sel) => {
     sel.addEventListener("change", async () => {
       const key = sel.dataset.key;
-      const row = sel.closest(".task-row");
-      if (!row) return;
-      const fmtSel = row.querySelector('.mon-fmt-sel[data-field="format"]');
-      const profSel = row.querySelector('.mon-fmt-sel[data-field="profile"]');
+      const taskRow = sel.closest(".task-row");
+      if (!taskRow) return;
+      const fmtSel = taskRow.querySelector('.mon-fmt-sel[data-field="format"]');
+      const profSel = taskRow.querySelector('.mon-fmt-sel[data-field="profile"]');
+      // Update quality-tier badge if profile changed.
+      if (sel.dataset.field === "profile") {
+        const tierBadge = taskRow.querySelector(".mon-tier-badge");
+        if (tierBadge) {
+          const tierRaw = profSel ? (window._monProfileTiers || {})[profSel.value] || "" : "";
+          const TIER_LABEL_JS = { best: "Best", "1080p": "1080p", "720p": "720p", "480p": "480p", audio_only: "Audio only" };
+          tierBadge.textContent = tierRaw ? (TIER_LABEL_JS[tierRaw] || tierRaw) : "";
+        }
+      }
       try {
         await API.setAutoRecordFormat(key, fmtSel ? fmtSel.value : "", profSel ? profSel.value : "");
         Toast.success("Format saved");
@@ -11071,6 +11260,10 @@ async function renderSchedule() {
       }
     });
   });
+  // Expose profile→tier map for the change handler above.
+  window._monProfileTiers = Object.fromEntries(
+    (settings?.capture_profiles || []).map((p) => [p.name, p.quality_tier || ""])
+  );
 
   // Auto-download row delete + playlist edits.
   document.querySelectorAll(".mon-dl-rm").forEach((btn) => {
