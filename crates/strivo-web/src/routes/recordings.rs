@@ -69,7 +69,7 @@ async fn sniff_mime(path: &std::path::Path) -> Option<&'static str> {
         return None;
     }
     buf.truncate(n);
-    Some(detect_mime(&buf)?)
+    detect_mime(&buf)
 }
 
 /// Pure-byte signature dispatch — split out so it can be unit-tested

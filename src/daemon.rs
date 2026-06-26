@@ -693,6 +693,11 @@ pub async fn run_with_plugins(host: DaemonPluginHost) -> Result<()> {
                     // Fan out to all connected clients
                     let _ = broadcast_tx.send(de.clone());
 
+                    // Desktop banners (notify-rust). The NotificationsConfig
+                    // flags and DaemonEvent::Notification producers were wired
+                    // long before any dispatcher existed; this is it.
+                    dispatch_desktop_notification(&config.notifications, de);
+
                     // Auto VOD backfill: when a Twitch live recording
                     // ends cleanly, schedule a delayed download of the
                     // archive VOD so we get the first ~5 minutes the
@@ -1177,6 +1182,58 @@ fn process_daemon_plugin_actions(
 
 /// Persist a recording's lifecycle for crash-recovery. Best-effort — a sqlite
 /// hiccup never breaks the live event flow.
+/// Fire a desktop banner for notification-worthy daemon events, honouring
+/// the per-event [`NotificationsConfig`](crate::config::NotificationsConfig)
+/// flags. `notify-rust`'s `show()` can block on the platform notification
+/// bus, so it runs on a blocking thread; failures (e.g. no D-Bus session on
+/// a headless host) are swallowed.
+fn dispatch_desktop_notification(cfg: &crate::config::NotificationsConfig, event: &DaemonEvent) {
+    if !cfg.desktop_enabled {
+        return;
+    }
+    use crate::recording::job::RecordingState;
+    let (summary, body) = match event {
+        DaemonEvent::ChannelWentLive(ch) if cfg.on_go_live => (
+            "StriVo — channel live".to_string(),
+            format!("{} is now live", ch.display_name),
+        ),
+        DaemonEvent::RecordingFinished {
+            final_state, error, ..
+        } => {
+            let failed = error.is_some() || matches!(final_state, RecordingState::Failed);
+            if failed {
+                if !cfg.on_recording_failed {
+                    return;
+                }
+                (
+                    "StriVo — recording failed".to_string(),
+                    error.clone().unwrap_or_else(|| "recording ended in error".to_string()),
+                )
+            } else if matches!(final_state, RecordingState::Finished) {
+                if !cfg.on_recording_finished {
+                    return;
+                }
+                (
+                    "StriVo — recording finished".to_string(),
+                    "A recording completed successfully.".to_string(),
+                )
+            } else {
+                return;
+            }
+        }
+        // Generic notifications (bulk pulls, Patreon, schedule) carry their
+        // own copy; `on_vod_ready` and friends gate at the producer.
+        DaemonEvent::Notification { title, body } => (title.clone(), body.clone()),
+        _ => return,
+    };
+    tokio::task::spawn_blocking(move || {
+        let _ = notify_rust::Notification::new()
+            .summary(&summary)
+            .body(&body)
+            .show();
+    });
+}
+
 async fn persist_event(
     db: &crate::recording::persist::PersistDb,
     event: &DaemonEvent,

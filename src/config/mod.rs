@@ -965,8 +965,17 @@ impl AppConfig {
         }
 
         let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        std::fs::write(&path, contents)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        // Write to a sibling temp file then atomically rename into place, so a
+        // crash mid-write leaves the live config intact rather than truncated.
+        let tmp = {
+            let mut s = path.clone().into_os_string();
+            s.push(".tmp");
+            PathBuf::from(s)
+        };
+        std::fs::write(&tmp, contents)
+            .with_context(|| format!("Failed to write config to {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path)
+            .with_context(|| format!("Failed to persist config to {}", path.display()))?;
         Ok(())
     }
 }
