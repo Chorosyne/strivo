@@ -18,9 +18,11 @@ use tokio::io::AsyncReadExt;
 pub enum Outcome {
     /// File already a browser-playable container (EBML / MP4 / WebM).
     AlreadyOk,
-    /// Was MPEG-TS — remuxed in place; the pre-remux bytes survive at
-    /// `kept_original` as a safety copy the user can delete by hand.
-    Remuxed { kept_original: PathBuf },
+    /// Was MPEG-TS — remuxed in place.  When `kept_original` is `None` the
+    /// pre-remux `.orig` file was verified readable and deleted.  When it is
+    /// `Some(path)` the verification failed or the delete errored, so the
+    /// safety copy at `path` survives for manual inspection.
+    Remuxed { kept_original: Option<PathBuf> },
     /// Header too short / not a recognised signature — left alone.
     Skipped,
 }
@@ -87,7 +89,20 @@ pub async fn normalise_container(path: &Path) -> anyhow::Result<Outcome> {
         let _ = tokio::fs::remove_file(&tmp).await;
         anyhow::bail!("install remuxed: {e}");
     }
-    Ok(Outcome::Remuxed { kept_original: orig })
+
+    // Verify the remuxed file is non-empty before removing the safety copy.
+    // A zero-byte result from a bad ffmpeg run would otherwise silently
+    // destroy the original.
+    let remuxed_nonempty = tokio::fs::metadata(path)
+        .await
+        .map(|m| m.len() > 0)
+        .unwrap_or(false);
+    if remuxed_nonempty {
+        let _ = tokio::fs::remove_file(&orig).await;
+        Ok(Outcome::Remuxed { kept_original: None })
+    } else {
+        Ok(Outcome::Remuxed { kept_original: Some(orig) })
+    }
 }
 
 #[cfg(test)]
