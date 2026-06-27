@@ -102,15 +102,15 @@ ui-ux, backend) and `research/exemplars/`.
 | yt-dlp retry falls back to FFmpeg for YouTube live-from-start | ✅ | retry now re-spawns the original process kind (yt-dlp `--live-from-start`) |
 | `count_finished_recordings` O(N), undercounts >500/channel | ✅ | `persist.rs` — `SELECT COUNT(*) … WHERE channel_id=? AND state='finished'` |
 | `.orig.mkv` safety copies accumulate after every remux | ✅ | deleted after the remuxed file is verified non-empty; kept on failure |
-| IPC protocol unversioned — silent drop/deser failure across peer versions | ⬜ | MED. Add `version` to Hello/StateSnapshot or `#[serde(other)]`. (Cross-cuts daemon↔web — deferred from the fanout.) |
-| VOD backfill ignores the daemon CancellationToken (300 s sleep on shutdown) | ⬜ | LOW. (Couples to daemon shutdown wiring — deferred from the fanout.) |
+| IPC protocol unversioned — silent drop/deser failure across peer versions | ✅ | `src/ipc.rs` — `Hello {version:u32}`, `StateSnapshot {version:u32}`, `IPC_PROTOCOL_VERSION` constant, roundtrip tests. |
+| VOD backfill ignores the daemon CancellationToken (300 s sleep on shutdown) | ✅ | `d784480` — `CancellationToken` threaded into `vod_backfill::spawn`; shutdown no longer blocks 300 s. |
 
 ### Web UI — finish the clean PVR split
 | Item | State | Notes |
 |---|---|---|
 | `creator_enabled` exposed in `/api/v1/settings` | ✅ | the enabler for SPA gating |
 | SPA hides creator UI in the PVR build | ✅ | consumes `creator_enabled`: filters TOPNAV, bounces creator deep-links, hides the Recording-Info plugin actions, Settings→Plugins pane, and Monitor "Tandem downloads". Chat kept (client-side IRC) |
-| Build-time SPA split to drop dead creator JS (~30+ unused API methods) | ⬜ | LOW. Follow-up after runtime gating |
+| Build-time SPA split to drop dead creator JS (~30+ unused API methods) | ✅ | `7776179` — build-time strip confirmed; dead API methods excluded from PVR bundle. |
 
 ### PVR feature gaps vs *arr / streamerREC
 | Item | State | Notes |
@@ -120,8 +120,8 @@ ui-ux, backend) and `research/exemplars/`.
 | Outbound webhook / notification connectors | ✅ | `[notifications.webhook]` (enabled/url); `src/webhook.rs` POSTs streamerREC-shaped JSON off `DaemonEvent`. Discord/ntfy presets later |
 | Storage gauge in the UI | ✅ | three-segment disk bar on the System page from `/api/v1/storage` |
 | Concurrent-slot indicator ("N / M rec") | ✅ | topbar slot pill from `monitor_limits.max_concurrent_recordings` + live count |
-| Quality profiles (tiered) | ⬜ | Today only boolean transcode + container; grow `CaptureProfile` toward tiers |
-| Filename-token browser, JSON channel import/export | ⬜ | small, expected by competitors |
+| Quality profiles (tiered) | ✅ | `bd75f9c` + `0fa189e` — `QualityTier` enum in `CaptureProfile`; threaded through streamlink and yt-dlp. |
+| Filename-token browser, JSON channel import/export | ✅ | `bd75f9c` — token browser SPA pane + JSON import/export routes shipped. |
 
 ### DESIGN.md compliance ✅ (resolved — JellySkin is canonical)
 DESIGN.md previously mandated ElegantFin while the SPA shipped JellySkin. Owner
@@ -252,21 +252,21 @@ to the next phase when these land. Keep in sync with the tables above.
 
 <!-- revoy:begin -->
 ```toml
-phase = "PVR near-term (product-first, v0.5.x)"
+phase = "post-near-term hardening (v0.5.x)"
 
 [[todo]]
-line = "Quality profiles (tiered): grow CaptureProfile beyond boolean transcode + container"
-difficulty = 45
+line = "Verify Licence JWT ES256 signature (TODO(licence-verify) in routes/licence.rs) before any Creator Edition commercial launch"
+difficulty = 30
+priority = "HIGH"
+
+[[todo]]
+line = "Cache ffprobe results keyed by path+mtime to eliminate re-analysis on every /probe call"
+difficulty = 20
 priority = "MED"
 
 [[todo]]
-line = "Filename-token browser + JSON channel import/export (competitor-expected)"
-difficulty = 35
-priority = "MED"
-
-[[todo]]
-line = "Build-time SPA split to drop dead creator JS (~30+ unused API methods) from the PVR build"
-difficulty = 35
+line = "Clean 44 Creator-crate clippy warnings (across tool crates); gate on cargo clippy --features creator"
+difficulty = 25
 priority = "LOW"
 ```
 <!-- revoy:end -->
