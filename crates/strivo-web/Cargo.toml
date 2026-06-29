@@ -91,7 +91,7 @@ strivo-sidechain = { path = "../sidechain", optional = true }
 strivo-insert-fx = { path = "../insert-fx", optional = true }
 strivo-pitch = { path = "../pitch", optional = true }
 strivo-dataviz = { path = "../dataviz", optional = true }
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # HTTP
 axum = { version = "0.8", features = ["macros"] }
