@@ -124,7 +124,7 @@ cron = "0.15"
 
 # W3: cookie session HMAC
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]

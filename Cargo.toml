@@ -51,7 +51,7 @@ directories = "6"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # Licensing (machine-id hash, cache)
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 # Notifications
