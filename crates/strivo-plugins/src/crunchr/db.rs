@@ -227,7 +227,13 @@ pub fn insert_segments(
     )?;
     for (idx, start, end, text, speaker, confidence) in segments {
         stmt.execute(rusqlite::params![
-            video_id, *idx as i64, start, end, text, speaker, confidence
+            video_id,
+            *idx as i64,
+            start,
+            end,
+            text,
+            speaker,
+            confidence
         ])?;
     }
     Ok(())
@@ -242,7 +248,14 @@ pub fn insert_chunks(
         "INSERT OR REPLACE INTO chunks (video_id, chunk_index, text, start_sec, end_sec, token_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     )?;
     for (idx, text, start, end, tokens) in chunks {
-        stmt.execute(rusqlite::params![video_id, *idx as i64, text, start, end, *tokens as i64])?;
+        stmt.execute(rusqlite::params![
+            video_id,
+            *idx as i64,
+            text,
+            start,
+            end,
+            *tokens as i64
+        ])?;
     }
     Ok(())
 }
