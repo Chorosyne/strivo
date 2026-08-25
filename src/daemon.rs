@@ -363,19 +363,34 @@ pub async fn run_with_plugins_at(
         let tx = event_tx.clone();
         let notify = auth_notify.clone();
         tokio::spawn(async move {
-            let authenticated = twitch.read().await.authenticate().await;
-            match authenticated {
-                Ok(()) => {
-                    tracing::info!("Twitch authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
-                        kind: PlatformKind::Twitch,
-                    });
-                    notify.notify_one();
-                }
-                Err(e) => {
-                    tracing::warn!("Twitch auth failed: {e}");
-                    let _ = tx.send(DaemonEvent::Error(format!("Twitch auth: {e}")));
-                    return;
+            // The daemon routinely starts before the network is usable — the
+            // user unit waits on the Secret Service, not on DNS — so the very
+            // first `/oauth2/validate` can fail at the transport layer. That
+            // says nothing about the stored token, but returning here left
+            // Twitch unauthenticated for the whole process lifetime and never
+            // reached the hourly validation loop below, which already treats
+            // an outage as retryable. Back off and keep trying instead.
+            let mut backoff = std::time::Duration::from_secs(5);
+            const MAX_AUTH_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+            loop {
+                match twitch.read().await.authenticate().await {
+                    Ok(()) => {
+                        tracing::info!("Twitch authenticated");
+                        let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                            kind: PlatformKind::Twitch,
+                        });
+                        notify.notify_one();
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            retry_in_secs = backoff.as_secs(),
+                            "Twitch auth failed: {e}"
+                        );
+                        let _ = tx.send(DaemonEvent::Error(format!("Twitch auth: {e}")));
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(MAX_AUTH_BACKOFF);
+                    }
                 }
             }
 
