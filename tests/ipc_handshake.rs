@@ -14,6 +14,7 @@ use strivo_core::events::DaemonEvent;
 use strivo_core::ipc::{
     self, ClientMessage, Endpoint, Listener, ServerMessage, Stream as IpcStream,
 };
+use strivo_core::platform::PlatformKind;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 fn snapshot_stub() -> ServerMessage {
@@ -168,5 +169,50 @@ async fn connecting_to_a_nonexistent_pipe_fails() {
     assert!(
         result.is_err(),
         "connect must fail against a pipe nobody bound"
+    );
+}
+
+/// The webui's "save platform credentials" round trip: the command must cross
+/// the socket as a command-first connection (no Hello) and arrive naming the
+/// platform, because the daemon re-reads the secrets from config.toml itself.
+/// It carries no credentials — that is the point, and a regression that added
+/// them would be a leak onto the socket.
+#[tokio::test]
+async fn reload_platform_credentials_crosses_the_socket() {
+    let (endpoint, _tmp) = test_endpoint("reload-creds");
+    let mut listener = Listener::bind(&endpoint).await.unwrap();
+
+    let server = tokio::spawn(async move {
+        let stream = listener.accept().await.unwrap();
+        let (reader, _writer) = tokio::io::split(stream);
+        let mut buf = BufReader::new(reader);
+        let mut line = String::new();
+        buf.read_line(&mut line).await.unwrap();
+        let raw = line.trim().to_string();
+        let msg: ClientMessage = serde_json::from_str(&raw).unwrap();
+        (msg, raw)
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let stream = IpcStream::connect(&endpoint).await.unwrap();
+    let (_reader, mut writer) = tokio::io::split(stream);
+    let encoded = ipc::encode_message(&ClientMessage::ReloadPlatformCredentials {
+        kind: PlatformKind::Patreon,
+    })
+    .unwrap();
+    writer.write_all(encoded.as_bytes()).await.unwrap();
+
+    let (msg, raw) = server.await.unwrap();
+    match msg {
+        ClientMessage::ReloadPlatformCredentials { kind } => {
+            assert_eq!(kind, PlatformKind::Patreon)
+        }
+        other => panic!("expected ReloadPlatformCredentials, got {other:?}"),
+    }
+    let lowered = raw.to_ascii_lowercase();
+    assert!(
+        !lowered.contains("client_secret") && !lowered.contains("client_id"),
+        "credentials must never be written to the IPC socket: {raw}"
     );
 }

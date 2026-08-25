@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{ChannelEntry, Platform, PlatformKind, VodEntry};
+use crate::platform::{AppCredentials, ChannelEntry, Platform, PlatformKind, VodEntry};
 
 const YOUTUBE_API_URL: &str = "https://www.googleapis.com/youtube/v3";
 const GOOGLE_AUTH_URL: &str = "https://oauth2.googleapis.com";
@@ -129,8 +129,7 @@ enum Liveness {
 #[allow(dead_code)]
 pub struct YouTubePlatform {
     client: Client,
-    client_id: String,
-    client_secret: String,
+    creds: Arc<RwLock<AppCredentials>>,
     cookies_path: Option<std::path::PathBuf>,
     access_token: Arc<RwLock<Option<String>>>,
     refresh_token_value: Arc<RwLock<Option<String>>>,
@@ -160,8 +159,7 @@ impl YouTubePlatform {
     ) -> Self {
         Self {
             client: Client::new(),
-            client_id,
-            client_secret,
+            creds: AppCredentials::shared(client_id, client_secret),
             cookies_path,
             access_token: Arc::new(RwLock::new(None)),
             refresh_token_value: Arc::new(RwLock::new(None)),
@@ -174,6 +172,22 @@ impl YouTubePlatform {
 
     pub fn set_event_tx(&mut self, tx: tokio::sync::mpsc::UnboundedSender<DaemonEvent>) {
         self.event_tx = Some(tx);
+    }
+
+    pub(crate) async fn creds(&self) -> AppCredentials {
+        self.creds.read().await.clone()
+    }
+
+    /// Replace the OAuth application credentials in place — see
+    /// `TwitchPlatform::set_credentials` for why the keyring tokens are kept.
+    pub async fn set_credentials(&self, client_id: String, client_secret: String) {
+        *self.creds.write().await = AppCredentials {
+            client_id,
+            client_secret,
+        };
+        *self.access_token.write().await = None;
+        *self.subs_cache.write().await = None;
+        *self.pending_device_code.write().await = None;
     }
 
     pub async fn load_stored_tokens(&self) -> Result<bool> {
@@ -209,11 +223,12 @@ impl YouTubePlatform {
     }
 
     async fn device_code_flow(&self) -> Result<()> {
+        let creds = self.creds().await;
         let resp: DeviceCodeResponse = self
             .client
             .post(GOOGLE_DEVICE_URL)
             .form(&[
-                ("client_id", self.client_id.as_str()),
+                ("client_id", creds.client_id.as_str()),
                 ("scope", "https://www.googleapis.com/auth/youtube.readonly"),
             ])
             .send()
@@ -257,8 +272,8 @@ impl YouTubePlatform {
                 .client
                 .post(format!("{GOOGLE_AUTH_URL}/token"))
                 .form(&[
-                    ("client_id", self.client_id.as_str()),
-                    ("client_secret", self.client_secret.as_str()),
+                    ("client_id", creds.client_id.as_str()),
+                    ("client_secret", creds.client_secret.as_str()),
                     ("device_code", resp.device_code.as_str()),
                     ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ])
@@ -296,12 +311,13 @@ impl YouTubePlatform {
             bail!("No refresh token available");
         };
 
+        let creds = self.creds().await;
         let resp = self
             .client
             .post(format!("{GOOGLE_AUTH_URL}/token"))
             .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
+                ("client_id", creds.client_id.as_str()),
+                ("client_secret", creds.client_secret.as_str()),
                 ("refresh_token", refresh.as_str()),
                 ("grant_type", "refresh_token"),
             ])

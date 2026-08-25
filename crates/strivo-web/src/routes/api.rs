@@ -1494,9 +1494,13 @@ struct PlatformConfigPayload {
 }
 
 /// `POST /api/v1/settings/platform/<name>` — persist credentials for
-/// one of the three first-party platforms. Saves to config.toml and
-/// echoes the resulting "configured" flag so the SPA can update its
-/// status badge without a follow-up GET.
+/// one of the three first-party platforms. Saves to config.toml, tells the
+/// running daemon to pick them up, and echoes the resulting "configured" flag
+/// so the SPA can update its status badge without a follow-up GET.
+///
+/// The daemon builds its platform clients from the config it read at startup,
+/// so without that second step a saved credential change sat inert on disk
+/// until the next restart while this endpoint reported success.
 async fn set_platform(
     Path(name): Path<String>,
     headers: HeaderMap,
@@ -1519,14 +1523,19 @@ async fn set_platform(
     let cookies_opt = (!body.cookies_path.trim().is_empty())
         .then(|| std::path::PathBuf::from(body.cookies_path.clone()));
 
-    match name.as_str() {
-        "twitch" => {
+    let Some(kind) = parse_platform(&name) else {
+        return crate::problem::Problem::bad_request(format!("unknown platform: {name}"))
+            .into_response();
+    };
+
+    match kind {
+        PlatformKind::Twitch => {
             cfg.twitch = Some(strivo_core::config::TwitchConfig {
                 client_id: body.client_id,
                 client_secret: body.client_secret,
             });
         }
-        "youtube" => {
+        PlatformKind::YouTube => {
             cfg.youtube = Some(strivo_core::config::YouTubeConfig {
                 client_id: body.client_id,
                 client_secret: body.client_secret,
@@ -1535,7 +1544,7 @@ async fn set_platform(
                     .then(|| body.websub_callback_url.clone()),
             });
         }
-        "patreon" => {
+        PlatformKind::Patreon => {
             cfg.patreon = Some(strivo_core::config::PatreonConfig {
                 client_id: body.client_id,
                 client_secret: body.client_secret,
@@ -1547,19 +1556,31 @@ async fn set_platform(
                 cookies_path: cookies_opt,
             });
         }
-        other => {
-            return crate::problem::Problem::bad_request(format!("unknown platform: {other}"))
-                .into_response()
-        }
     }
 
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
+    drop(_config_guard);
+
+    // Apply them live. A daemon that is down is not an error here — the
+    // credentials are saved, and it will read them at its next start — but the
+    // response has to say which happened so the SPA can stop claiming the
+    // change took effect when it did not.
+    let applied = state
+        .ipc
+        .send_command(ClientMessage::ReloadPlatformCredentials { kind })
+        .await
+        .is_ok();
     (
         StatusCode::ACCEPTED,
-        Json(json!({ "ok": true, "platform": name, "configured": true })),
+        Json(json!({
+            "ok": true,
+            "platform": name,
+            "configured": true,
+            "applied": applied,
+        })),
     )
         .into_response()
 }

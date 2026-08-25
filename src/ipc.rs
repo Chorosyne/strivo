@@ -37,6 +37,13 @@ pub enum ClientMessage {
     /// Live-update the channel-poll interval without a restart (item 14b).
     /// Seconds; the daemon clamps to a sane minimum.
     SetPollInterval(u64),
+    /// Re-read the OAuth application credentials for one platform from
+    /// config.toml and apply them to the running daemon. Sent by the web UI
+    /// after `POST /api/v1/settings/platform/<name>` saves them, so a new
+    /// client id/secret takes effect without a daemon restart.
+    ReloadPlatformCredentials {
+        kind: PlatformKind,
+    },
     /// Graceful daemon shutdown
     Shutdown,
     /// Dispatch an actions-popup verb to a plugin via the host

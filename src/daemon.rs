@@ -347,8 +347,21 @@ pub async fn run_with_plugins_at(
 
     // Initialize platforms
     let mut platforms: Vec<Arc<RwLock<dyn Platform>>> = Vec::new();
+    const INITIAL_AUTH_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+    const MAX_AUTH_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+
     let mut twitch_handle: Option<Arc<RwLock<crate::platform::twitch::TwitchPlatform>>> = None;
     let mut youtube_handle: Option<Arc<RwLock<crate::platform::youtube::YouTubePlatform>>> = None;
+    let mut patreon_handle: Option<Arc<crate::platform::patreon::PatreonClient>> = None;
+
+    // Re-authentication signals. `ReloadPlatformCredentials` writes the new
+    // client id/secret into the platform and then pokes these; each platform's
+    // auth task owns authentication, so a reload never races a second
+    // device-code flow against the one already running — it cancels it.
+    let twitch_reauth = Arc::new(tokio::sync::Notify::new());
+    let youtube_reauth = Arc::new(tokio::sync::Notify::new());
+    let patreon_reauth = Arc::new(tokio::sync::Notify::new());
+    let reload_config_path = config_path.map(|p| p.to_path_buf());
 
     if let Some(ref twitch_config) = config.twitch {
         let mut twitch = crate::platform::twitch::TwitchPlatform::new(
@@ -362,6 +375,7 @@ pub async fn run_with_plugins_at(
 
         let tx = event_tx.clone();
         let notify = auth_notify.clone();
+        let reauth = twitch_reauth.clone();
         tokio::spawn(async move {
             // The daemon routinely starts before the network is usable — the
             // user unit waits on the Secret Service, not on DNS — so the very
@@ -370,11 +384,23 @@ pub async fn run_with_plugins_at(
             // Twitch unauthenticated for the whole process lifetime and never
             // reached the hourly validation loop below, which already treats
             // an outage as retryable. Back off and keep trying instead.
-            let mut backoff = std::time::Duration::from_secs(5);
-            const MAX_AUTH_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+            //
+            // `reauth` cuts any attempt short: new credentials have landed, so
+            // an in-flight device-code flow is polling for the wrong
+            // application and should be abandoned, not waited out.
+            let mut backoff = INITIAL_AUTH_BACKOFF;
             loop {
-                match twitch.read().await.authenticate().await {
-                    Ok(()) => {
+                let attempt = tokio::select! {
+                    biased;
+                    _ = reauth.notified() => None,
+                    result = async { twitch.read().await.authenticate().await } => Some(result),
+                };
+                match attempt {
+                    None => {
+                        tracing::info!("Twitch credentials replaced; re-authenticating");
+                        backoff = INITIAL_AUTH_BACKOFF;
+                    }
+                    Some(Ok(())) => {
                         tracing::info!("Twitch authenticated");
                         let _ = tx.send(DaemonEvent::PlatformAuthenticated {
                             kind: PlatformKind::Twitch,
@@ -382,14 +408,21 @@ pub async fn run_with_plugins_at(
                         notify.notify_one();
                         break;
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         tracing::warn!(
                             retry_in_secs = backoff.as_secs(),
                             "Twitch auth failed: {e}"
                         );
                         let _ = tx.send(DaemonEvent::Error(format!("Twitch auth: {e}")));
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(MAX_AUTH_BACKOFF);
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {
+                                backoff = (backoff * 2).min(MAX_AUTH_BACKOFF);
+                            }
+                            _ = reauth.notified() => {
+                                tracing::info!("Twitch credentials replaced; re-authenticating");
+                                backoff = INITIAL_AUTH_BACKOFF;
+                            }
+                        }
                     }
                 }
             }
@@ -399,7 +432,30 @@ pub async fn run_with_plugins_at(
             let mut auth_check = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
             auth_check.tick().await;
             loop {
-                auth_check.tick().await;
+                tokio::select! {
+                    _ = auth_check.tick() => {}
+                    _ = reauth.notified() => {
+                        // Credentials were replaced after we were already
+                        // authenticated: the stored session belongs to the old
+                        // application, so log in again rather than waiting for
+                        // the hourly check to notice.
+                        tracing::info!("Twitch credentials replaced; re-authenticating");
+                        match twitch.read().await.authenticate().await {
+                            Ok(()) => {
+                                let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                                    kind: PlatformKind::Twitch,
+                                });
+                            }
+                            Err(error) => {
+                                tracing::warn!("Twitch re-authentication failed: {error}");
+                                let _ = tx.send(DaemonEvent::Error(format!(
+                                    "Twitch auth: {error}"
+                                )));
+                            }
+                        }
+                        continue;
+                    }
+                }
                 let health = twitch
                     .read()
                     .await
@@ -456,19 +512,50 @@ pub async fn run_with_plugins_at(
 
         let tx = event_tx.clone();
         let notify = auth_notify.clone();
+        let reauth = youtube_reauth.clone();
         tokio::spawn(async move {
-            let platform = youtube.read().await;
-            match platform.authenticate().await {
-                Ok(()) => {
-                    tracing::info!("YouTube authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
-                        kind: PlatformKind::YouTube,
-                    });
-                    notify.notify_one();
-                }
-                Err(e) => {
-                    tracing::warn!("YouTube auth failed: {e}");
-                    let _ = tx.send(DaemonEvent::Error(format!("YouTube auth: {e}")));
+            // Same shape as Twitch above: retry rather than give up on a
+            // boot-time network error, and abandon an in-flight device-code
+            // flow the moment new credentials replace the ones it is using.
+            let mut backoff = INITIAL_AUTH_BACKOFF;
+            loop {
+                let attempt = tokio::select! {
+                    biased;
+                    _ = reauth.notified() => None,
+                    result = async { youtube.read().await.authenticate().await } => Some(result),
+                };
+                match attempt {
+                    None => {
+                        tracing::info!("YouTube credentials replaced; re-authenticating");
+                        backoff = INITIAL_AUTH_BACKOFF;
+                    }
+                    Some(Ok(())) => {
+                        tracing::info!("YouTube authenticated");
+                        let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                            kind: PlatformKind::YouTube,
+                        });
+                        notify.notify_one();
+                        // Stay alive to answer a later credential change.
+                        reauth.notified().await;
+                        tracing::info!("YouTube credentials replaced; re-authenticating");
+                        backoff = INITIAL_AUTH_BACKOFF;
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(
+                            retry_in_secs = backoff.as_secs(),
+                            "YouTube auth failed: {e}"
+                        );
+                        let _ = tx.send(DaemonEvent::Error(format!("YouTube auth: {e}")));
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {
+                                backoff = (backoff * 2).min(MAX_AUTH_BACKOFF);
+                            }
+                            _ = reauth.notified() => {
+                                tracing::info!("YouTube credentials replaced; re-authenticating");
+                                backoff = INITIAL_AUTH_BACKOFF;
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -481,35 +568,86 @@ pub async fn run_with_plugins_at(
             patreon_config.client_secret.clone(),
         );
         patreon_client.set_event_tx(event_tx.clone());
+        let patreon_client = Arc::new(patreon_client);
+        patreon_handle = Some(patreon_client.clone());
 
         let tx = event_tx.clone();
         let rec_tx = recording_tx.clone();
         let cfg = config.clone();
         let cancel_clone = cancel.clone();
+        let reauth = patreon_reauth.clone();
         tokio::spawn(async move {
-            match patreon_client.authorize().await {
-                Ok(()) => {
-                    tracing::info!("Patreon authenticated");
-                    let _ = tx.send(DaemonEvent::PlatformAuthenticated {
-                        kind: PlatformKind::Patreon,
-                    });
-
-                    let monitor = crate::monitor::patreon::PatreonMonitor::new(
-                        patreon_client,
-                        cfg,
-                        tx,
-                        rec_tx,
-                        cancel_clone,
-                    );
-                    monitor.run().await;
+            let mut backoff = INITIAL_AUTH_BACKOFF;
+            loop {
+                let attempt = tokio::select! {
+                    biased;
+                    _ = reauth.notified() => None,
+                    result = patreon_client.authorize() => Some(result),
+                };
+                match attempt {
+                    None => {
+                        tracing::info!("Patreon credentials replaced; re-authenticating");
+                        backoff = INITIAL_AUTH_BACKOFF;
+                        continue;
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(
+                            retry_in_secs = backoff.as_secs(),
+                            "Patreon auth failed: {e}"
+                        );
+                        let _ = tx.send(DaemonEvent::Error(format!("Patreon auth: {e}")));
+                        tokio::select! {
+                            _ = tokio::time::sleep(backoff) => {
+                                backoff = (backoff * 2).min(MAX_AUTH_BACKOFF);
+                            }
+                            _ = reauth.notified() => {
+                                tracing::info!("Patreon credentials replaced; re-authenticating");
+                                backoff = INITIAL_AUTH_BACKOFF;
+                            }
+                        }
+                        continue;
+                    }
+                    Some(Ok(())) => {}
                 }
-                Err(e) => {
-                    tracing::warn!("Patreon auth failed: {e}");
-                    let _ = tx.send(DaemonEvent::Error(format!("Patreon auth: {e}")));
+
+                tracing::info!("Patreon authenticated");
+                let _ = tx.send(DaemonEvent::PlatformAuthenticated {
+                    kind: PlatformKind::Patreon,
+                });
+                backoff = INITIAL_AUTH_BACKOFF;
+
+                // The monitor consumes itself when it runs, so it is rebuilt
+                // whenever credentials change. `new()` reloads the per-campaign
+                // last-checked map from the state file, so the restart doesn't
+                // re-pull anything already seen.
+                let monitor = crate::monitor::patreon::PatreonMonitor::new(
+                    patreon_client.clone(),
+                    cfg.clone(),
+                    tx.clone(),
+                    rec_tx.clone(),
+                    cancel_clone.clone(),
+                );
+                tokio::select! {
+                    _ = monitor.run() => break,
+                    _ = reauth.notified() => {
+                        tracing::info!("Patreon credentials replaced; re-authenticating");
+                    }
                 }
             }
         });
     }
+
+    // Bundle the live platform handles so a client connection can apply
+    // credentials saved by the web UI without restarting the daemon.
+    let platform_control = PlatformControl {
+        config_path: reload_config_path,
+        twitch: twitch_handle.clone(),
+        youtube: youtube_handle.clone(),
+        patreon: patreon_handle.clone(),
+        twitch_reauth: twitch_reauth.clone(),
+        youtube_reauth: youtube_reauth.clone(),
+        patreon_reauth: patreon_reauth.clone(),
+    };
 
     // Spawn recording manager
     let rec_config = config.clone();
@@ -873,6 +1011,7 @@ pub async fn run_with_plugins_at(
                         let client_recordings = state.recordings.clone();
                         let client_event_tx = event_tx.clone();
                         let client_persist_db = persist_db.clone();
+                        let client_platform_control = platform_control.clone();
                         tokio::spawn(async move {
                             // Held for the connection's lifetime; released on drop.
                             let _permit = permit;
@@ -890,6 +1029,7 @@ pub async fn run_with_plugins_at(
                                 poll_notify,
                                 interval_ctl,
                                 client_persist_db,
+                                client_platform_control,
                                 cancel_ref,
                             ).await {
                                 tracing::debug!("Client disconnected: {e}");
@@ -1003,6 +1143,71 @@ pub async fn run_with_plugins_at(
     Ok(())
 }
 
+/// Live platform handles and their re-authentication signals, so a client
+/// connection can push saved credentials into the running daemon.
+///
+/// A struct rather than seven more parameters on `handle_client`, and it keeps
+/// the reload logic in one testable place instead of inline in the dispatch.
+#[derive(Clone)]
+struct PlatformControl {
+    config_path: Option<std::path::PathBuf>,
+    twitch: Option<Arc<RwLock<crate::platform::twitch::TwitchPlatform>>>,
+    youtube: Option<Arc<RwLock<crate::platform::youtube::YouTubePlatform>>>,
+    patreon: Option<Arc<crate::platform::patreon::PatreonClient>>,
+    twitch_reauth: Arc<tokio::sync::Notify>,
+    youtube_reauth: Arc<tokio::sync::Notify>,
+    patreon_reauth: Arc<tokio::sync::Notify>,
+}
+
+impl PlatformControl {
+    /// Re-read `config.toml` and push that platform's client id/secret into
+    /// the running platform, then wake its auth task.
+    ///
+    /// The credentials are read from disk rather than carried in the IPC
+    /// message so secrets never cross the socket. Returns `false` when the
+    /// platform has no live handle — it wasn't configured when the daemon
+    /// started, so there is no task to hand them to.
+    async fn apply_saved_credentials(&self, kind: PlatformKind) -> Result<bool> {
+        let fresh = AppConfig::load(self.config_path.as_deref())?;
+        Ok(match kind {
+            PlatformKind::Twitch => match (&fresh.twitch, &self.twitch) {
+                (Some(cfg), Some(platform)) => {
+                    platform
+                        .read()
+                        .await
+                        .set_credentials(cfg.client_id.clone(), cfg.client_secret.clone())
+                        .await;
+                    self.twitch_reauth.notify_one();
+                    true
+                }
+                _ => false,
+            },
+            PlatformKind::YouTube => match (&fresh.youtube, &self.youtube) {
+                (Some(cfg), Some(platform)) => {
+                    platform
+                        .read()
+                        .await
+                        .set_credentials(cfg.client_id.clone(), cfg.client_secret.clone())
+                        .await;
+                    self.youtube_reauth.notify_one();
+                    true
+                }
+                _ => false,
+            },
+            PlatformKind::Patreon => match (&fresh.patreon, &self.patreon) {
+                (Some(cfg), Some(platform)) => {
+                    platform
+                        .set_credentials(cfg.client_id.clone(), cfg.client_secret.clone())
+                        .await;
+                    self.patreon_reauth.notify_one();
+                    true
+                }
+                _ => false,
+            },
+        })
+    }
+}
+
 async fn handle_client(
     stream: ipc::Stream,
     snapshot: ServerMessage,
@@ -1017,6 +1222,7 @@ async fn handle_client(
     poll_notify: Option<Arc<tokio::sync::Notify>>,
     interval_ctl: Option<(Arc<std::sync::atomic::AtomicU64>, Arc<tokio::sync::Notify>)>,
     persist_db: Option<Arc<crate::recording::persist::PersistDb>>,
+    platform_control: PlatformControl,
     cancel: CancellationToken,
 ) -> Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
@@ -1118,6 +1324,17 @@ async fn handle_client(
                     atomic.store(secs, std::sync::atomic::Ordering::Relaxed);
                     notify.notify_one();
                     tracing::info!("Applied live poll interval: {secs}s");
+                }
+            }
+            ClientMessage::ReloadPlatformCredentials { kind } => {
+                match platform_control.apply_saved_credentials(kind).await {
+                    Ok(true) => tracing::info!(%kind, "applied new platform credentials"),
+                    Ok(false) => tracing::warn!(
+                        %kind,
+                        "credentials saved, but the platform was not configured when the \
+                         daemon started — restart to enable it"
+                    ),
+                    Err(e) => tracing::warn!(%kind, "applying new credentials failed: {e}"),
                 }
             }
             ClientMessage::Shutdown => {
@@ -1638,6 +1855,152 @@ mod tests {
     use super::*;
     use crate::platform::PlatformKind;
     use crate::recording::job::{RecordingJob, RecordingState};
+
+    /// Write a config.toml carrying one platform's credentials and return its
+    /// path, so the reload path can be driven through the real
+    /// `AppConfig::load` rather than a hand-built struct.
+    fn config_with_credentials(
+        dir: &std::path::Path,
+        section: &str,
+        client_id: &str,
+        client_secret: &str,
+    ) -> std::path::PathBuf {
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "recording_dir = \"{}\"\n\n[{section}]\nclient_id = \"{client_id}\"\nclient_secret = \"{client_secret}\"\n",
+                dir.join("recordings").display()
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    fn control_for(config_path: std::path::PathBuf) -> PlatformControl {
+        PlatformControl {
+            config_path: Some(config_path),
+            twitch: None,
+            youtube: None,
+            patreon: None,
+            twitch_reauth: Arc::new(tokio::sync::Notify::new()),
+            youtube_reauth: Arc::new(tokio::sync::Notify::new()),
+            patreon_reauth: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn reload_replaces_twitch_credentials_and_wakes_the_auth_task() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = config_with_credentials(dir.path(), "twitch", "new-id", "new-secret");
+
+        let twitch = Arc::new(RwLock::new(crate::platform::twitch::TwitchPlatform::new(
+            "stale-id".into(),
+            "stale-secret".into(),
+        )));
+        let mut control = control_for(path);
+        control.twitch = Some(twitch.clone());
+
+        // The auth task waits on this; the reload has to wake it, otherwise
+        // the new credentials sit unused until the next hourly check.
+        let reauth = control.twitch_reauth.clone();
+        let woken = tokio::spawn(async move { reauth.notified().await });
+        tokio::task::yield_now().await;
+
+        assert!(control
+            .apply_saved_credentials(PlatformKind::Twitch)
+            .await
+            .unwrap());
+
+        let creds = twitch.read().await.creds().await;
+        assert_eq!(creds.client_id, "new-id");
+        assert_eq!(creds.client_secret, "new-secret");
+        tokio::time::timeout(std::time::Duration::from_secs(5), woken)
+            .await
+            .expect("reload must wake the auth task")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_replaces_youtube_credentials() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = config_with_credentials(dir.path(), "youtube", "yt-id", "yt-secret");
+
+        let youtube = Arc::new(RwLock::new(crate::platform::youtube::YouTubePlatform::new(
+            "stale-id".into(),
+            "stale-secret".into(),
+            None,
+        )));
+        let mut control = control_for(path);
+        control.youtube = Some(youtube.clone());
+
+        assert!(control
+            .apply_saved_credentials(PlatformKind::YouTube)
+            .await
+            .unwrap());
+        assert_eq!(youtube.read().await.creds().await.client_id, "yt-id");
+    }
+
+    #[tokio::test]
+    async fn reload_replaces_patreon_credentials() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = config_with_credentials(dir.path(), "patreon", "pt-id", "pt-secret");
+
+        let patreon = Arc::new(crate::platform::patreon::PatreonClient::new(
+            "stale-id".into(),
+            "stale-secret".into(),
+        ));
+        let mut control = control_for(path);
+        control.patreon = Some(patreon.clone());
+
+        assert!(control
+            .apply_saved_credentials(PlatformKind::Patreon)
+            .await
+            .unwrap());
+        assert_eq!(patreon.creds().await.client_id, "pt-id");
+    }
+
+    #[tokio::test]
+    async fn reload_reports_a_platform_the_daemon_never_started() {
+        // Credentials for a platform that was absent from config at boot: it
+        // has no live handle, so the caller must be told a restart is needed
+        // rather than being left to assume it took effect.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = config_with_credentials(dir.path(), "twitch", "new-id", "new-secret");
+        let control = control_for(path);
+
+        assert!(!control
+            .apply_saved_credentials(PlatformKind::Twitch)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn reload_leaves_credentials_alone_when_the_config_is_unreadable() {
+        // `AppConfig::load` falls back to defaults on a malformed file rather
+        // than failing, so the reload sees a config with no `[twitch]` at all.
+        // It must report "nothing applied" and leave the running credentials
+        // intact — overwriting them with the fallback's emptiness would take
+        // down a working platform on a stray edit to config.toml.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "this is not = valid toml [[[").unwrap();
+
+        let twitch = Arc::new(RwLock::new(crate::platform::twitch::TwitchPlatform::new(
+            "live-id".into(),
+            "live-secret".into(),
+        )));
+        let mut control = control_for(path);
+        control.twitch = Some(twitch.clone());
+
+        assert!(!control
+            .apply_saved_credentials(PlatformKind::Twitch)
+            .await
+            .unwrap());
+        let creds = twitch.read().await.creds().await;
+        assert_eq!(creds.client_id, "live-id");
+        assert_eq!(creds.client_secret, "live-secret");
+    }
 
     fn empty_state() -> DaemonState {
         DaemonState {

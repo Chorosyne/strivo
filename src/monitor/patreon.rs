@@ -12,7 +12,9 @@ use crate::platform::PlatformKind;
 use crate::recording::RecordingCommand;
 
 pub struct PatreonMonitor {
-    client: PatreonClient,
+    /// Shared with the daemon's auth task so a credential reload reaches the
+    /// same client this monitor is polling with.
+    client: std::sync::Arc<PatreonClient>,
     config: AppConfig,
     event_tx: mpsc::UnboundedSender<DaemonEvent>,
     recording_tx: mpsc::UnboundedSender<RecordingCommand>,
@@ -25,7 +27,7 @@ pub struct PatreonMonitor {
 
 impl PatreonMonitor {
     pub fn new(
-        client: PatreonClient,
+        client: std::sync::Arc<PatreonClient>,
         config: AppConfig,
         event_tx: mpsc::UnboundedSender<DaemonEvent>,
         recording_tx: mpsc::UnboundedSender<RecordingCommand>,

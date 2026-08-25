@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{PlatformKind, VodEntry};
+use crate::platform::{AppCredentials, PlatformKind, VodEntry};
 
 const PATREON_API_URL: &str = "https://www.patreon.com/api/oauth2/v2";
 const PATREON_AUTH_URL: &str = "https://www.patreon.com/oauth2/authorize";
@@ -73,8 +73,7 @@ impl PatreonCreator {
 
 pub struct PatreonClient {
     client: Client,
-    client_id: String,
-    client_secret: String,
+    creds: Arc<RwLock<AppCredentials>>,
     access_token: Arc<RwLock<Option<String>>>,
     refresh_token_value: Arc<RwLock<Option<String>>>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<DaemonEvent>>,
@@ -84,8 +83,7 @@ impl PatreonClient {
     pub fn new(client_id: String, client_secret: String) -> Self {
         Self {
             client: Client::new(),
-            client_id,
-            client_secret,
+            creds: AppCredentials::shared(client_id, client_secret),
             access_token: Arc::new(RwLock::new(None)),
             refresh_token_value: Arc::new(RwLock::new(None)),
             event_tx: None,
@@ -94,6 +92,20 @@ impl PatreonClient {
 
     pub fn set_event_tx(&mut self, tx: tokio::sync::mpsc::UnboundedSender<DaemonEvent>) {
         self.event_tx = Some(tx);
+    }
+
+    pub(crate) async fn creds(&self) -> AppCredentials {
+        self.creds.read().await.clone()
+    }
+
+    /// Replace the OAuth application credentials in place — see
+    /// `TwitchPlatform::set_credentials` for why the keyring tokens are kept.
+    pub async fn set_credentials(&self, client_id: String, client_secret: String) {
+        *self.creds.write().await = AppCredentials {
+            client_id,
+            client_secret,
+        };
+        *self.access_token.write().await = None;
     }
 
     /// Try to load and validate stored tokens, returning true if successful.
@@ -149,7 +161,7 @@ impl PatreonClient {
 
         let auth_url = format!(
             "{PATREON_AUTH_URL}?response_type=code&client_id={}&redirect_uri={}&scope=identity%20identity.memberships",
-            self.client_id,
+            self.creds().await.client_id,
             urlencoding(&redirect_uri),
         );
 
@@ -172,14 +184,15 @@ impl PatreonClient {
         .map_err(|_| anyhow::anyhow!("Patreon auth timed out"))??;
 
         // Exchange code for tokens
+        let creds = self.creds().await;
         let resp = self
             .client
             .post(PATREON_TOKEN_URL)
             .form(&[
                 ("code", code.as_str()),
                 ("grant_type", "authorization_code"),
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
+                ("client_id", creds.client_id.as_str()),
+                ("client_secret", creds.client_secret.as_str()),
                 ("redirect_uri", redirect_uri.as_str()),
             ])
             .send()
@@ -213,14 +226,15 @@ impl PatreonClient {
             bail!("No Patreon refresh token");
         };
 
+        let creds = self.creds().await;
         let resp = self
             .client
             .post(PATREON_TOKEN_URL)
             .form(&[
                 ("grant_type", "refresh_token"),
                 ("refresh_token", refresh.as_str()),
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
+                ("client_id", creds.client_id.as_str()),
+                ("client_secret", creds.client_secret.as_str()),
             ])
             .send()
             .await?;

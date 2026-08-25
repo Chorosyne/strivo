@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{ChannelEntry, Platform, PlatformKind, VodEntry};
+use crate::platform::{AppCredentials, ChannelEntry, Platform, PlatformKind, VodEntry};
 
 const TWITCH_AUTH_URL: &str = "https://id.twitch.tv/oauth2";
 const TWITCH_API_URL: &str = "https://api.twitch.tv/helix";
@@ -107,8 +107,7 @@ struct StreamsResponse {
 
 pub struct TwitchPlatform {
     client: Client,
-    client_id: String,
-    client_secret: String,
+    creds: Arc<RwLock<AppCredentials>>,
     access_token: Arc<RwLock<Option<String>>>,
     refresh_token_value: Arc<RwLock<Option<String>>>,
     user_id: Arc<RwLock<Option<String>>>,
@@ -133,8 +132,7 @@ impl TwitchPlatform {
     pub fn new(client_id: String, client_secret: String) -> Self {
         Self {
             client: Client::new(),
-            client_id,
-            client_secret,
+            creds: AppCredentials::shared(client_id, client_secret),
             access_token: Arc::new(RwLock::new(None)),
             refresh_token_value: Arc::new(RwLock::new(None)),
             user_id: Arc::new(RwLock::new(None)),
@@ -146,6 +144,29 @@ impl TwitchPlatform {
 
     pub fn set_event_tx(&mut self, tx: tokio::sync::mpsc::UnboundedSender<DaemonEvent>) {
         self.event_tx = Some(tx);
+    }
+
+    pub(crate) async fn creds(&self) -> AppCredentials {
+        self.creds.read().await.clone()
+    }
+
+    /// Replace the OAuth application credentials in place, so a save in the
+    /// web UI takes effect without restarting the daemon.
+    ///
+    /// Session state derived from the old application (access token, resolved
+    /// user id, cached follows) is dropped. The keyring tokens are left alone
+    /// on purpose: if only the secret was rotated they are still valid, and if
+    /// the client id changed `/oauth2/validate` reports the mismatch and the
+    /// next `authenticate()` falls through to a fresh device login.
+    pub async fn set_credentials(&self, client_id: String, client_secret: String) {
+        *self.creds.write().await = AppCredentials {
+            client_id,
+            client_secret,
+        };
+        *self.access_token.write().await = None;
+        *self.user_id.write().await = None;
+        *self.channels_cache.write().await = None;
+        *self.pending_device_code.write().await = None;
     }
 
     /// Shared handle to the current access token, for the EventSub client to
@@ -196,7 +217,7 @@ impl TwitchPlatform {
             .json()
             .await
             .context("decode Twitch token validation response")?;
-        if validation.client_id != self.client_id {
+        if validation.client_id != self.creds().await.client_id {
             tracing::warn!(
                 "stored Twitch token belongs to a different client_id; refresh or login required"
             );
@@ -268,12 +289,13 @@ impl TwitchPlatform {
             .await
             .clone()
             .context("no twitch access_token loaded; authenticate first")?;
+        let creds = self.creds().await;
         let resp: UsersResponse = self
             .client
             .get(format!("{TWITCH_API_URL}/users"))
             .query(&[("login", login)])
             .header("Authorization", format!("Bearer {token}"))
-            .header("Client-Id", &self.client_id)
+            .header("Client-Id", &creds.client_id)
             .send()
             .await?
             .json()
@@ -290,11 +312,12 @@ impl TwitchPlatform {
         let Some(token) = token else {
             bail!("No access token");
         };
+        let creds = self.creds().await;
         let resp: UsersResponse = self
             .client
             .get(format!("{TWITCH_API_URL}/users"))
             .header("Authorization", format!("Bearer {token}"))
-            .header("Client-Id", &self.client_id)
+            .header("Client-Id", &creds.client_id)
             .send()
             .await?
             .json()
@@ -306,12 +329,13 @@ impl TwitchPlatform {
     }
 
     async fn device_code_flow(&self) -> Result<()> {
+        let creds = self.creds().await;
         // Step 1: Request device code
         let resp: DeviceCodeResponse = self
             .client
             .post(format!("{TWITCH_AUTH_URL}/device"))
             .form(&[
-                ("client_id", self.client_id.as_str()),
+                ("client_id", creds.client_id.as_str()),
                 ("scopes", "user:read:follows"),
             ])
             .send()
@@ -357,8 +381,8 @@ impl TwitchPlatform {
                 .client
                 .post(format!("{TWITCH_AUTH_URL}/token"))
                 .form(&[
-                    ("client_id", self.client_id.as_str()),
-                    ("client_secret", self.client_secret.as_str()),
+                    ("client_id", creds.client_id.as_str()),
+                    ("client_secret", creds.client_secret.as_str()),
                     ("device_code", resp.device_code.as_str()),
                     ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ])
@@ -403,12 +427,13 @@ impl TwitchPlatform {
             bail!("No refresh token available");
         };
 
+        let creds = self.creds().await;
         let resp = self
             .client
             .post(format!("{TWITCH_AUTH_URL}/token"))
             .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
+                ("client_id", creds.client_id.as_str()),
+                ("client_secret", creds.client_secret.as_str()),
                 ("refresh_token", refresh.as_str()),
                 ("grant_type", "refresh_token"),
             ])
@@ -441,11 +466,12 @@ impl TwitchPlatform {
             let Some(token) = token else {
                 bail!("Not authenticated");
             };
+            let creds = self.creds().await;
             let resp = self
                 .client
                 .get(url)
                 .header("Authorization", format!("Bearer {token}"))
-                .header("Client-Id", &self.client_id)
+                .header("Client-Id", &creds.client_id)
                 .send()
                 .await?;
             let status = resp.status().as_u16();

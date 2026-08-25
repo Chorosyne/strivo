@@ -62,6 +62,45 @@ impl std::fmt::Display for PlatformKind {
     }
 }
 
+/// The OAuth *application* credentials for one platform — the client id and
+/// secret from the platform's developer console, not the user's tokens.
+///
+/// Every platform holds these behind a lock rather than as plain fields so the
+/// web UI can save a new pair while the daemon runs. A lock inside the
+/// platform (rather than taking `&mut` through the platform's own `RwLock`) is
+/// deliberate: `authenticate()` can hold that outer read lock for the length
+/// of a device-code flow — up to 30 minutes — and a writer queued behind it
+/// would starve exactly when the user is trying to fix their credentials.
+#[derive(Clone)]
+pub struct AppCredentials {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl AppCredentials {
+    /// The shared form every platform stores.
+    pub fn shared(
+        client_id: String,
+        client_secret: String,
+    ) -> std::sync::Arc<tokio::sync::RwLock<Self>> {
+        std::sync::Arc::new(tokio::sync::RwLock::new(Self {
+            client_id,
+            client_secret,
+        }))
+    }
+}
+
+/// Hand-written so the secret can never reach a log through a `{:?}` on this
+/// struct — or on any of the platform structs that hold it.
+impl std::fmt::Debug for AppCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppCredentials")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelEntry {
     pub id: String,

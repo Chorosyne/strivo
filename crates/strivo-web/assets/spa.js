@@ -13106,8 +13106,17 @@ function openPlatformWizard(platform) {
       body[f.name] = e.target.elements[f.name].value.trim();
     });
     try {
-      await API.setPlatform(platform, body);
-      Toast.success(`${spec.title.replace("Configure ", "")} saved`);
+      const name = spec.title.replace("Configure ", "");
+      const res = await API.setPlatform(platform, body);
+      // `applied` is false when the daemon isn't reachable, or when it started
+      // without this platform configured. The credentials are on disk either
+      // way, but they aren't live yet — say so rather than letting the green
+      // badge imply the change took effect.
+      if (res && res.applied === false) {
+        Toast.info(`${name} saved — restart the daemon to start using it.`);
+      } else {
+        Toast.success(`${name} saved`);
+      }
       close();
       // Re-render the Settings page so the status badge flips green.
       render();
