@@ -7,8 +7,8 @@ security fixes; older tags are not patched.
 
 | Version | Supported |
 |---------|-----------|
-| 0.3.x   | ✅ (current) |
-| < 0.3   | ❌ |
+| 0.6.x   | ✅ (current) |
+| < 0.6   | ❌ |
 
 ## Reporting a vulnerability
 
