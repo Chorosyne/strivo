@@ -71,7 +71,7 @@ const API = {
       // Pro gate — extract the plugin name + detail so callers can
       // render a polished upsell card instead of the raw JSON. Detail
       // shape from problem.rs: { detail, instance, status, title, type }.
-      let detail = "Strivo Pro plugin — activate or start a 3-day trial.";
+      let detail = "Creator functionality is unavailable in this release.";
       let plugin = null;
       try {
         const j = await res.json();
@@ -8520,42 +8520,13 @@ const PRO_UPSELL_PITCH = {
 };
 
 function renderProUpsell(plugin, licence) {
-  const pitch = PRO_UPSELL_PITCH[plugin] || "Unlock this plugin's analytics, automation, and editor features.";
-  const trial = licence && licence.trial;
-  const hasTrialUsed = trial && trial.used;
-  // `implemented` is false only when the server explicitly says no licence
-  // backend is configured (STRIVO_LICENCE_URL unset) — self-hosted default.
-  const implemented = !licence || licence.implemented !== false;
-  const notConfiguredAttrs = ' disabled aria-disabled="true" title="No licence service configured for this install"';
-  const trialNote = !implemented
-    ? "No licence service configured for this install."
-    : hasTrialUsed
-    ? "Your 3-day trial has already been used on this machine."
-    : "Start a free 3-day trial — no card needed.";
-  const trialBtn = !implemented
-    ? `<button class="btn-primary"${notConfiguredAttrs}>▶ Start 3-day trial</button>`
-    : hasTrialUsed
-    ? `<button class="btn-primary" disabled title="trial already used">Trial used</button>`
-    : `<button class="btn-primary pg-upsell-trial">▶ Start 3-day trial</button>`;
-  const activateBtn = !implemented
-    ? `<button class="sm"${notConfiguredAttrs}>Activate</button>`
-    : `<button class="sm pg-upsell-activate">Activate</button>`;
   return `
     <div class="pg-upsell-card">
       <div class="pg-upsell-icon">★</div>
       <div class="pg-upsell-body">
-        <h2 class="pg-upsell-title">${htmlEscape(toTitleCase(plugin))} is a Strivo Pro plugin</h2>
-        <p class="pg-upsell-pitch">${htmlEscape(pitch)}</p>
-        <p class="pg-upsell-trial-note pg-cap-hint">${htmlEscape(trialNote)}</p>
-        <div class="pg-upsell-actions">
-          ${trialBtn}
-          <span class="pg-upsell-sep">or</span>
-          <input type="text" class="pg-upsell-key" placeholder="paste licence key…" aria-label="licence key"${implemented ? "" : " disabled"}/>
-          ${activateBtn}
-        </div>
-        <p class="pg-upsell-foot pg-cap-hint">
-          Already a subscriber? Find your key in your Strivo account.
-        </p>
+        <h2 class="pg-upsell-title">${htmlEscape(toTitleCase(plugin))} is unavailable</h2>
+        <p class="pg-upsell-pitch">Creator Edition work is not released or supported.</p>
+        <p class="pg-upsell-trial-note pg-cap-hint">No trial, activation, or purchase path is available.</p>
       </div>
     </div>`;
 }
@@ -9227,29 +9198,14 @@ function renderMarketplaceSection(payload) {
 // Activation and trial endpoints report actionable backend errors when
 // the deployment has not configured the external licence service.
 function renderUpgradeCard(licence) {
-  if (!licence || licence.entitled) return ""; // dev unlock + future paid users
-  // `implemented` is false only when the server explicitly says no licence
-  // backend is configured (STRIVO_LICENCE_URL unset) — self-hosted default.
-  const implemented = licence.implemented !== false;
-  const notConfiguredAttrs = implemented
-    ? ""
-    : ' disabled aria-disabled="true" title="No licence service configured for this install"';
+  if (!licence || licence.entitled) return "";
   return `
     <section class="upgrade-card" data-tier="${htmlEscape(licence.tier || "free")}">
       <img class="upgrade-logo" src="/assets/img/strivo-mark.svg" alt="StriVo" />
       <div class="upgrade-body">
-        <h2 class="upgrade-title">Strivo Pro</h2>
-        <p class="upgrade-tagline">Unlock every plugin — Crunchr, Archiver, Viewguard, Insights — and everything we ship next.</p>
-        <ul class="upgrade-bullets">
-          <li>One-time <strong>$25</strong> — no subscription, no recurring fees.</li>
-          <li>Single-machine licence with auto-refresh every 72h (works offline).</li>
-          <li>3-day free trial — no card required.</li>
-        </ul>
-        <div class="upgrade-actions">
-          <button class="upgrade-trial btn-primary"${notConfiguredAttrs}>Start 3-day trial</button>
-          <button class="upgrade-activate btn-ghost"${notConfiguredAttrs}>I have a key</button>
-        </div>
-        ${implemented ? "" : `<p class="upgrade-hint">No licence service configured for this install.</p>`}
+        <h2 class="upgrade-title">Creator Edition unavailable</h2>
+        <p class="upgrade-tagline">Creator/research tooling is experimental development work and is not released or supported.</p>
+        <p class="upgrade-hint">No activation, trial, or purchase path is available.</p>
       </div>
     </section>
   `;

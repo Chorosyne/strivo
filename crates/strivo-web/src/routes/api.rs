@@ -514,9 +514,10 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
                 "twitch_configured": cfg.twitch.is_some(),
                 "youtube_configured": cfg.youtube.is_some(),
                 "patreon_configured": cfg.patreon.is_some(),
-                // Edition flag: false in the pure-PVR build so the SPA can hide
-                // creator-only nav/actions instead of linking to absent routes.
-                "creator_enabled": cfg!(feature = "creator"),
+                // Creator work is not publicly available, including in a
+                // feature-enabled build. Keep the SPA on the released PVR
+                // surface until the product clears its security/release gate.
+                "creator_enabled": false,
             });
             // Creator Edition surfaces the Archiver config section.
             #[cfg(feature = "creator")]

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Backward-compatible developer shortcut: Creator Edition from this checkout.
+# Creator Edition installation is intentionally unavailable until it passes
+# security and release review.
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/install.sh" --edition creator "$@"
+echo "Creator Edition is unavailable and cannot be installed from this checkout." >&2
+exit 2

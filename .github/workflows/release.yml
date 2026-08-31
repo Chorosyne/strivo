@@ -214,8 +214,9 @@ jobs:
             for the human-curated release notes and [ROADMAP.md](https://github.com/revoydotdev/strivo/blob/main/ROADMAP.md)
             for what is shipped versus planned.
 
-            The attached builds are the **default edition** — the pure live-stream PVR.
-            Creator Edition is a source build: `cargo build --release -p strivo-bin --features creator`.
+            The attached builds are the released live-stream PVR edition. Creator Edition work is
+            experimental and unavailable in this release: no Creator binary, container, activation,
+            or purchase path is published.
 
             Platform artifacts are listed under **Assets** below. Each carries its own
             `.sha256` manifest — verify with `sha256sum -c` (Linux/macOS) or `Get-FileHash` (Windows).

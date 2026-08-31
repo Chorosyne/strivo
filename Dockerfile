@@ -6,11 +6,10 @@
 # runtime stage that carries only strivo plus the external tools it shells
 # out to (ffmpeg/ffprobe, mpv, streamlink, yt-dlp).
 #
-# EDITION: this image builds the default free PVR edition — plain
-# `cargo build --release` with no `--features creator`, matching the
-# release tarballs and the AUR package (see Cargo.toml `default-members`).
-# Pass `--build-arg EDITION=creator` to build the Creator Edition instead;
-# never make that the default tag.
+# This image builds only the released PVR edition — plain `cargo build
+# --release` with no Creator feature. Creator work is intentionally not
+# distributed in a container while its security and release criteria remain
+# open.
 #
 # PROCESS MODEL: one container, two supervised processes — `strivo daemon`
 # and `strivo serve --bind 0.0.0.0:...`, started and monitored by
@@ -25,8 +24,6 @@
 # the /config volume (src/ipc.rs socket_path()) — no split across
 # containers, no socket volume to wire up separately. See strivo-run.sh
 # for the supervision (signal forwarding, exit-together) details.
-
-ARG EDITION=pvr
 
 ########################################
 # Build stage
@@ -46,14 +43,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY . .
 
-ARG EDITION
-RUN set -eu; \
-    if [ "$EDITION" = "creator" ]; then \
-        cargo build --release -p strivo-bin --features creator; \
-    else \
-        cargo build --release; \
-    fi; \
-    cp target/release/strivo /build/strivo
+RUN cargo build --release --locked \
+    && cp target/release/strivo /build/strivo
 
 ########################################
 # Runtime stage

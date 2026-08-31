@@ -52,27 +52,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
-      - name: Build and push (pvr edition — default)
+      - name: Build and push (released PVR edition)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          build-args: |
-            EDITION=pvr
           push: ${{ github.event_name == 'push' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push (creator edition)
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          build-args: |
-            EDITION=creator
-          push: ${{ github.event_name == 'push' || inputs.push }}
-          tags: |
-            ${{ format('ghcr.io/{0}:{1}-creator', github.repository, steps.meta.outputs.version) }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

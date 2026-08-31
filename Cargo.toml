@@ -69,7 +69,7 @@ tracing-appender = "0.2"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 
 # Misc
-uuid = { version = "1", features = ["v4", "v5"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 async-trait = "0.1"

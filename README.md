@@ -18,40 +18,30 @@ library—not a hosted streaming service.
 > the dynamic-plugin ABI are not yet stable. Read the [changelog](CHANGELOG.md)
 > before upgrading, and keep a copy of your configuration and recordings.
 
-## The two editions
+## Release boundary
 
 The default build is the focused **PVR edition**. It contains the capture,
 library, scheduling, monitoring, playback, and web-control surfaces.
 
-The optional **Creator Edition** is built from the same workspace with the
-`creator` feature. It adds the first-party creator and research tooling,
-including transcription, clip and cue discovery, an edit-decision-list editor,
-durable creator pipelines, and Coding Studio / archive-research surfaces. The
-roadmap distinguishes features that are wired end-to-end from work that is
-still being developed; it is the authoritative scope document for this edition.
-
-```text
-PVR edition        cargo build --release --locked
-Creator Edition    cargo build --release -p strivo-bin --features creator --locked
-```
-
-Tagged binary archives and the default Docker image are the PVR edition.
+The repository contains an experimental Creator Edition code path for internal
+development and test coverage. It is **not released or supported**: no Creator
+binary, Docker image, licence service, activation, trial, or purchase path is
+available. Tagged archives and the Docker image are PVR-only. Do not rely on
+Creator functionality for production work.
 
 ## What you can do today
 
 - Monitor configured Twitch, YouTube, and Patreon channels and record when
   they are live; use per-channel auto-recording, capture profiles, schedules,
   and concurrency / disk safeguards.
-- Pull a creator's back catalog into the same library, with deduplication and
-  optional Creator Edition transcription hand-off.
+- Pull a creator's back catalog into the same library, with deduplication.
 - Browse, filter, seek, and play completed recordings in the local web UI.
   The recording pipeline persists its journal, recovers interrupted jobs on
   restart, and can normalize browser-hostile MPEG-TS captures to Matroska.
 - Keep capture operations running as a foreground process or a user service,
   and check the daemon, media tools, paths, and configured platforms from the
   command line.
-- In Creator Edition, work with transcript and signal data, research projects,
-  coding and export tools, and the creator processing pipeline.
+- Creator/research tooling is not available in a released build.
 
 ## Platforms
 
@@ -118,7 +108,6 @@ To install from a checkout under `~/.local`, use the maintained installer:
 ```bash
 scripts/install.sh --check
 scripts/install.sh --edition pvr
-# Or: scripts/install.sh --edition creator
 ```
 
 It supports `--prefix`, `--debug`, and `--uninstall`; it does not remove user
@@ -139,7 +128,7 @@ docker run -d --name strivo \
 
 Open <http://localhost:8181>. The image runs the daemon and web server as two
 supervised processes and exposes a health endpoint. For credentials, volumes,
-the healthcheck, and a source-built Creator image, read [the Docker guide](docs/DOCKER.md).
+the healthcheck, read [the Docker guide](docs/DOCKER.md).
 
 ## First launch and everyday use
 
@@ -217,12 +206,11 @@ Twitch / YouTube / Patreon
              ▼
   monitor + schedules ──► recording manager ──► local media library
              │                    │                       │
-             │                    ├── journal / recovery   ├── browser playback
-             │                    └── Creator pipelines*   └── search / repair
+             │                    └── journal / recovery   ├── browser playback
+             │                                             └── search / repair
              ▼
         daemon IPC ◄──────────── web UI
 
-* Creator Edition only
 ```
 
 The Rust workspace keeps `strivo-core` (platforms, configuration, monitoring,
@@ -246,9 +234,8 @@ Unix sockets on Unix-like systems and a named pipe on Windows.
 
 - [First run](docs/FIRST-RUN.md) — setup, paths, logs, and common failures
 - [Docker](docs/DOCKER.md) — container process model, credentials, and volumes
-- [Pipeline](docs/PIPELINE.md) — Creator Edition scheduler and execution model
-- [Research data](docs/RESEARCH-DATA.md) — Creator Edition data contract
-- [Creator / research roadmap](docs/RESEARCH-PLATFORM-ROADMAP.md) — longer-term development plan
+- [Creator Edition release hold](docs/LICENCE-BACKEND-DEPLOY.md) — unavailable
+  experimental work and the conditions required to reopen it
 - [Project roadmap](ROADMAP.md) and [changelog](CHANGELOG.md) — shipped work, constraints, and migrations
 
 Contributions are welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md).

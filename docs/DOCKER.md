@@ -40,10 +40,9 @@ what's needed to run it:
 
 - the `strivo` binary itself — **default (free) PVR edition**, i.e. plain
   `cargo build --release` with no `--features creator`, matching the
-  release tarballs and the AUR package. Build with
-  `--build-arg EDITION=creator` for the Creator Edition (transcription/
-  analytics toolkit); the published GHCR tags carry this as a `-creator`
-  suffix, never as `latest` — see the workflow.
+  release tarballs and the AUR package. Creator work is not packaged in an
+  image or supported for deployment while its security and release criteria
+  remain open.
 - `ffmpeg` / `ffprobe`, `mpv`, `streamlink`, `yt-dlp` — the external tools
   `strivo doctor` checks for (`crates/strivo-bin/src/main.rs`). `yt-dlp`
   and `streamlink` are installed via `pip` into an isolated venv rather

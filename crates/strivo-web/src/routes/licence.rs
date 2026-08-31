@@ -6,11 +6,10 @@
 //!            persist a 3-day token.
 //! refresh  — POST {} → backend, re-sign + extend last_refreshed.
 //!
-//! Backend URL is taken from the `STRIVO_LICENCE_URL` env var (or
-//! `[licence].backend_url` in config.toml — Phase 4). When unset the
-//! mutating routes return 501 so a self-hosted user without a Pro
-//! account sees a clean "backend not configured" rather than a
-//! confusing network error.
+//! Creator/Pro activation is intentionally unavailable. These routes remain
+//! fail-closed during internal development; neither an environment variable
+//! nor a cached key may activate a public build before the product has passed
+//! its security and release review.
 //!
 //! Tokens are verified as ES256 JWTs before persistence. Verification
 //! covers issuer, machine binding, expiry, licence expiry, and signed tier.
@@ -67,14 +66,12 @@ async fn status() -> Json<LicenceStatus> {
         trial,
         expires_at,
         machine_id: Some(mh),
-        implemented: backend_url().is_some(),
+        implemented: false,
     })
 }
 
 fn backend_url() -> Option<String> {
-    std::env::var("STRIVO_LICENCE_URL")
-        .ok()
-        .filter(|v| !v.is_empty())
+    None
 }
 
 #[derive(Deserialize)]

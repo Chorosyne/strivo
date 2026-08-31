@@ -10,8 +10,6 @@ services:
   strivo:
     build:
       context: .
-      # args:
-      #   EDITION: creator   # uncomment for the Creator Edition build
     image: strivo:latest
     container_name: strivo
     restart: unless-stopped

@@ -5,25 +5,19 @@
 //!
 //! Decision order:
 //!
-//!   1. **Dev override** — `STRIVO_DEV_UNLOCK_ALL=1` short-circuits to
-//!      entitled. Mirrors the env the licence-status route already
-//!      reads so the SPA and the gate agree.
-//!   2. **Cache** — read `~/.local/share/strivo/licence.json`. If
-//!      present, entitled, AND bound to this machine (hash match),
-//!      return true. Cache survives reboots and offline use — the
-//!      72h refresh is enforced server-side at the next contact, not
-//!      by killing entitlement client-side.
-//!   3. **Default** — free tier, no Pro features.
+//!   1. **Debug-only override** — `STRIVO_DEV_UNLOCK_ALL=1` can enable
+//!      development tests in a debug build.
+//!   2. **Default** — Creator/Pro functionality is unavailable. The former
+//!      licence-cache path is deliberately disabled until the product has a
+//!      reviewed, secure release and purchase design.
 //!
 //! The set of "Pro" plugin names is hard-coded for now — it's a tiny
 //! list and won't churn. When we ship a third-party plugin SDK
 //! (post-1.0) this becomes a manifest lookup.
 
-use super::cache::{Licence, LicenceCache};
-use super::machine_id::hashed_machine_id;
-
 /// First-party Pro plugins. Anything not in this list is treated as
-/// free and ungated.
+/// free and ungated. Creator/Pro plugins are not publicly available yet;
+/// only a debug build may opt in for development coverage.
 pub const PRO_PLUGINS: &[&str] = &["crunchr", "archiver", "viewguard", "insights"];
 
 pub fn is_pro_plugin(name: &str) -> bool {
@@ -40,38 +34,21 @@ pub fn is_entitled(plugin: &str) -> bool {
     if dev_unlock() {
         return true;
     }
-    entitled_from_cache()
+    false
 }
 
 /// Whole-app entitlement (used by the upgrade card, the licence
 /// status route, etc.) — true iff *any* Pro feature is unlocked on
 /// this machine right now.
 pub fn entitled() -> bool {
-    dev_unlock() || entitled_from_cache()
+    dev_unlock()
 }
 
 fn dev_unlock() -> bool {
-    std::env::var("STRIVO_DEV_UNLOCK_ALL")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-fn entitled_from_cache() -> bool {
-    match LicenceCache::load() {
-        Ok(Some(lic)) => bound_and_active(&lic),
-        _ => false,
-    }
-}
-
-fn bound_and_active(lic: &Licence) -> bool {
-    if !lic.is_entitled() {
-        return false;
-    }
-    // A cache lifted off another machine carries that machine's hash.
-    // Refuse it. This is a soft guard — the activation server is the
-    // hard one, signing tokens per machine_hash — but it stops the
-    // accidental copy-the-file case immediately.
-    lic.machine_hash == hashed_machine_id() && super::verify::verify_token(&lic.token).is_ok()
+    cfg!(debug_assertions)
+        && std::env::var("STRIVO_DEV_UNLOCK_ALL")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
 }
 
 #[cfg(test)]
