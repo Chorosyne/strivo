@@ -2550,7 +2550,13 @@ async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> imp
 /// SPA renders this as the cross-plugin pipeline graph and lets
 /// users discover "who does what".
 #[cfg(feature = "creator")]
-async fn plugin_capabilities() -> impl IntoResponse {
+async fn plugin_capabilities(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     use strivo_core::plugin::capability as cap;
     // (capability, [(plugin, status)]) where status is "available"
     // if the plugin is shipped or "roadmap" if the slot is reserved
@@ -2617,7 +2623,7 @@ async fn plugin_capabilities() -> impl IntoResponse {
         { "capability": "x.pipelines_dag",   "providers": [{"plugin": "pipelines-dag", "status": "available"}] },
         { "capability": "x.marketplace",     "providers": [{"plugin": "marketplace",   "status": "available"}] },
     ]);
-    Json(matrix)
+    Json(matrix).into_response()
 }
 
 // ── W2: plugin RPC ───────────────────────────────────────────────────
@@ -2956,8 +2962,13 @@ async fn pipelines_chains_save(
 /// `DELETE /api/v1/pipelines/chains/<id>` — drop a chain.
 #[cfg(feature = "creator")]
 async fn pipelines_chains_delete(
+    headers: HeaderMap,
+    State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     let Some(path) = chain_path(&id) else {
         return Problem::bad_request("chain id must be alphanumeric/dash/underscore")
             .into_response();
@@ -2972,7 +2983,10 @@ async fn pipelines_chains_delete(
 }
 
 #[cfg(feature = "creator")]
-async fn pipelines_dag() -> impl IntoResponse {
+async fn pipelines_dag(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     let pipelines = strivo_pipelines_dag::default_pipelines();
     // Bundle each pipeline with its topological order so the SPA can
     // lay nodes left-to-right deterministically.
@@ -2990,7 +3004,7 @@ async fn pipelines_dag() -> impl IntoResponse {
             })
         })
         .collect();
-    Json(json!({ "pipelines": payload }))
+    Json(json!({ "pipelines": payload })).into_response()
 }
 
 #[cfg(feature = "creator")]
