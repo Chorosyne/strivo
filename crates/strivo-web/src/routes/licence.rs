@@ -15,6 +15,7 @@
 //! covers issuer, machine binding, expiry, licence expiry, and signed tier.
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -109,7 +110,10 @@ async fn activate(
     persist_and_reply(resp, Tier::Pro, body.key).await
 }
 
-async fn trial(State(_state): State<AppState>) -> impl IntoResponse {
+async fn trial(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if crate::routes::login::check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
     if let Some(url) = backend_url() {
         // Backend live — go through the proper activation server.
         let resp = match post_backend(
