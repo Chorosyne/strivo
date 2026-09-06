@@ -48,6 +48,28 @@ impl AppState {
     pub fn config_path(&self) -> Option<&std::path::Path> {
         self.config_path.as_deref().map(|path| path.as_path())
     }
+
+    /// Build an `AppState` for route-shape tests: real auth/routing logic,
+    /// wired to an `IpcClient` bound to a socket that never connects. Any
+    /// handler that touches IPC will observe a connection failure (a 503,
+    /// or in `recordings::download`'s case a "not found" from `lookup_path`)
+    /// rather than panicking — that's expected and is what lets tests
+    /// assert "reached the handler, not authorized" without a live daemon.
+    /// Not `#[cfg(test)]`-gated: `tests/routes.rs` links this crate as an
+    /// ordinary dependency (no `cfg(test)`), so the constructor needs to be
+    /// reachable from there too.
+    pub fn test_state(api_key: &str) -> Self {
+        Self {
+            ipc: Arc::new(crate::ipc_client::IpcClient::disconnected()),
+            api_key: ApiKey(api_key.to_string()),
+            config_path: None,
+            config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            session_secret: "route-shape-test-session-secret".to_string(),
+            login_limiter: crate::ratelimit::LoginLimiter::new(),
+            probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +126,28 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
     };
 
+    let app = build_router(state);
+
+    let listener = tokio::net::TcpListener::bind(cfg.bind)
+        .await
+        .with_context(|| format!("bind {}", cfg.bind))?;
+
+    tracing::info!(addr = %cfg.bind, "strivo-web listening");
+    // ConnectInfo carries the peer IP into the login rate limiter.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Compose the full HTTP router — every route merged, plus the auth/CSRF/
+/// telemetry/compression middleware stack — for the given `state`. `serve`
+/// calls this for the production binary; route-shape tests call it directly
+/// with `AppState::test_state(..)` to exercise the real router (auth
+/// included) without a live daemon.
+pub fn build_router(state: AppState) -> Router {
     // The SPA (served by assets::router at / and /app) is the webui; it
     // talks to the daemon exclusively through the JSON api + events + auth
     // routers. The legacy askama/htmx page routers (dashboard, channels,
@@ -143,7 +187,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
     let compression_predicate = DefaultPredicate::new()
         .and(NotForContentType::const_new("video/"))
         .and(NotForContentType::const_new("audio/"));
-    let app = guarded
+    guarded
         .merge(routes::websub::router())
         .layer(CompressionLayer::new().compress_when(compression_predicate))
         // CE-Fusion F3: content-free per-route latency/reliability
@@ -159,20 +203,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         .layer(middleware::from_fn(performance_timing))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(cfg.bind)
-        .await
-        .with_context(|| format!("bind {}", cfg.bind))?;
-
-    tracing::info!(addr = %cfg.bind, "strivo-web listening");
-    // ConnectInfo carries the peer IP into the login rate limiter.
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
-    Ok(())
+        .with_state(state)
 }
 
 async fn performance_timing(

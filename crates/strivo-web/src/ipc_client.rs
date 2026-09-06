@@ -12,7 +12,6 @@
 //!   for every subsequent broadcast. Wired into the `/events` SSE
 //!   endpoint so HTMX `hx-sse` clients see live updates.
 
-#[cfg(test)]
 use std::path::PathBuf;
 use std::pin::Pin;
 
@@ -56,11 +55,13 @@ impl IpcClient {
     }
 
     /// Test-only: an `IpcClient` bound to a socket path that never exists,
-    /// so router-level tests can build a full `AppState` without a running
-    /// daemon. Only safe for handlers under test that never touch the IPC
-    /// socket (e.g. `telemetry::telemetry_handler`).
-    #[cfg(test)]
-    pub(crate) fn disconnected() -> Self {
+    /// so router-level tests (including this crate's `tests/routes.rs`
+    /// integration tests, which link the lib without `cfg(test)`) can build
+    /// a full `AppState` without a running daemon. Only safe for handlers
+    /// under test that never touch the IPC socket, or that are expected to
+    /// observe an IPC failure (e.g. `telemetry::telemetry_handler`, or an
+    /// auth check that must run before any IPC call).
+    pub fn disconnected() -> Self {
         Self {
             endpoint: Endpoint::Path(PathBuf::from("/nonexistent-strivo-test-socket")),
         }
