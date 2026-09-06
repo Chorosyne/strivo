@@ -84,6 +84,21 @@ const RECORDINGS = {
     },
   ],
 };
+// R01 e2e coverage — push enough filler rows past the default page size
+// (500, mirroring the real PageQuery clamp in
+// crates/strivo-web/src/routes/api.rs) that /recordings genuinely needs a
+// second page. Dated well before the three named fixtures above so they
+// always sort (started_at desc, same as the backend) onto page one.
+for (let i = 0; i < 499; i++) {
+  RECORDINGS.recordings.push({
+    id: `filler-${String(i).padStart(4, "0")}`,
+    channel_name: "FillerChan",
+    stream_title: `Filler recording ${i}`,
+    state: "Finished",
+    started_at: `2019-01-01T00:00:${String(i % 60).padStart(2, "0")}Z`,
+    bytes_written: 1000,
+  });
+}
 
 // ── Research kernel fixtures (Coding Studio: codebook/corpus/notebook) ──
 const RESEARCH_PROJECT_ID = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -388,7 +403,24 @@ const server = createServer(async (req, res) => {
           },
         ],
       });
-    if (p === "/recordings" && req.method === "GET") return json(res, 200, RECORDINGS);
+    if (p === "/recordings" && req.method === "GET") {
+      // R01 — mirror the real PageQuery contract: no `limit` param means
+      // the legacy full snapshot; a `limit` opts into cursor pagination,
+      // sorted newest-first same as the backend.
+      const all = [...RECORDINGS.recordings].sort(
+        (a, b) => new Date(b.started_at) - new Date(a.started_at),
+      );
+      const total = all.length;
+      if (!url.searchParams.has("limit")) return json(res, 200, { recordings: all, total });
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 500, 1), 500);
+      const cursor = Math.min(Number(url.searchParams.get("cursor")) || 0, total);
+      const end = Math.min(cursor + limit, total);
+      return json(res, 200, {
+        recordings: all.slice(cursor, end),
+        total,
+        next_cursor: end < total ? end : null,
+      });
+    }
     {
       const m = p.match(/^\/recordings\/([0-9a-fA-F-]{8,})$/);
       if (m && req.method === "GET") {

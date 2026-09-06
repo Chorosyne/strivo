@@ -623,6 +623,9 @@ const patreonState = { creators: [], posts: {} };
 let recSort = { col: "started", dir: "desc" };
 let recFilter = "";
 let recCache = [];
+// R01 — recordings pagination cursor, mirrors histNextCursor/history's
+// "Load more" pattern. null = no further pages.
+let recNextCursor = null;
 // Item 22 — recordings index density (compact|comfortable) + multi-select.
 let recDensity = localStorage.getItem("strivo-rec-density") || "comfortable";
 let recSelected = new Set();
@@ -2963,6 +2966,7 @@ async function renderRecordings() {
   try {
     const data = await API.recordings();
     recordings = data.recordings || [];
+    recNextCursor = data.next_cursor ?? null;
   } catch (e) {
     if (e.message.includes("unauthorized")) return;
     root.innerHTML = chrome(
@@ -3028,6 +3032,7 @@ async function renderRecordings() {
       </thead>
       <tbody id="rec-body"></tbody>
     </table>
+    ${recNextCursor != null ? `<button id="rec-load-more" class="button secondary" type="button">Load more recordings</button>` : ""}
   `);
   setupChromeHandlers();
   paintRecordings();
@@ -3099,6 +3104,28 @@ async function renderRecordings() {
       }
       renderRecordings().catch((e) => Toast.error(e.message)); // re-render header arrows + body
     });
+  });
+  document.getElementById("rec-load-more")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Loading…";
+    try {
+      const page = await API.recordings({ cursor: recNextCursor, limit: 500 });
+      recCache.push(...(page.recordings || []));
+      recNextCursor = page.next_cursor ?? null;
+      seedVodDownloadStateFromRecCache();
+      if (recNextCursor == null) button.remove();
+      else {
+        button.disabled = false;
+        button.textContent = "Load more recordings";
+      }
+      paintRecStateChips();
+      paintRecordings();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Load more recordings";
+      Toast.error(`Recordings load failed: ${error.message}`);
+    }
   });
 }
 
