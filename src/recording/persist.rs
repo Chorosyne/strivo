@@ -1,4 +1,4 @@
-//! Sqlite-backed persistence for recording jobs, catalog dedupe, and Crunchr queue.
+//! Sqlite-backed persistence for recording jobs and catalog dedupe.
 //!
 //! Single file at `{data_dir}/jobs.db`. All writes go through a single
 //! `tokio::sync::Mutex<rusqlite::Connection>` to keep the schema migration story
@@ -40,19 +40,6 @@ CREATE TABLE IF NOT EXISTS catalog (
     PRIMARY KEY (platform, channel_id, vod_id)
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_recorded ON catalog(recorded_at);
-
-CREATE TABLE IF NOT EXISTS crunchr_queue (
-    job_id       TEXT PRIMARY KEY,
-    episode_dir  TEXT NOT NULL,
-    backend      TEXT NOT NULL,
-    diarize      INTEGER NOT NULL DEFAULT 0,
-    state        TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL,
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    last_error   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_crunchr_state ON crunchr_queue(state);
 
 CREATE TABLE IF NOT EXISTS blocklist (
     platform    TEXT NOT NULL,
@@ -247,7 +234,7 @@ impl PersistDb {
         Ok(rows)
     }
 
-    /// Mark a VOD as transcribed (after Crunchr finishes its pipeline).
+    /// Mark a VOD as transcribed (after a transcription plugin finishes its pipeline).
     pub async fn mark_vod_transcribed(
         &self,
         platform: PlatformKind,
@@ -430,64 +417,6 @@ impl PersistDb {
         Ok(n as usize)
     }
 
-    pub async fn upsert_crunchr_queue(&self, entry: &CrunchrQueueEntry) -> Result<()> {
-        let conn = self.inner.lock().await;
-        let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO crunchr_queue (job_id, episode_dir, backend, diarize, state, created_at, updated_at, attempts, last_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, COALESCE((SELECT created_at FROM crunchr_queue WHERE job_id=?1), ?6), ?6, ?7, ?8)
-             ON CONFLICT(job_id) DO UPDATE SET
-                episode_dir=excluded.episode_dir,
-                backend=excluded.backend,
-                diarize=excluded.diarize,
-                state=excluded.state,
-                updated_at=excluded.updated_at,
-                attempts=excluded.attempts,
-                last_error=excluded.last_error",
-            params![
-                entry.job_id,
-                entry.episode_dir.to_string_lossy(),
-                entry.backend,
-                entry.diarize as i64,
-                entry.state,
-                now,
-                entry.attempts,
-                entry.last_error,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub async fn load_crunchr_queue_pending(&self) -> Result<Vec<CrunchrQueueEntry>> {
-        let conn = self.inner.lock().await;
-        let mut stmt = conn.prepare(
-            "SELECT job_id, episode_dir, backend, diarize, state, attempts, last_error
-             FROM crunchr_queue WHERE state IN ('queued', 'running', 'interrupted')",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(CrunchrQueueEntry {
-                job_id: row.get(0)?,
-                episode_dir: PathBuf::from(row.get::<_, String>(1)?),
-                backend: row.get(2)?,
-                diarize: row.get::<_, i64>(3)? != 0,
-                state: row.get(4)?,
-                attempts: row.get(5)?,
-                last_error: row.get(6)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
-    }
-
-    pub async fn delete_crunchr_queue_entry(&self, job_id: &str) -> Result<()> {
-        let conn = self.inner.lock().await;
-        conn.execute("DELETE FROM crunchr_queue WHERE job_id=?1", params![job_id])?;
-        Ok(())
-    }
-
     /// Hard-delete a Recording row from the journal. The recording manager
     /// handles trashing the file separately; this just drops the audit row
     /// after that succeeds (or after the file is already gone).
@@ -547,12 +476,6 @@ impl PersistDb {
              WHERE state IN ('running', 'queued')",
             params![now],
         )?;
-        // Same for crunchr queue.
-        conn.execute(
-            "UPDATE crunchr_queue SET state='interrupted', updated_at=?1
-             WHERE state IN ('running')",
-            params![now],
-        )?;
         Ok(rows as u64)
     }
 }
@@ -580,17 +503,6 @@ fn map_journal_state(s: &str) -> Option<crate::recording::job::RecordingState> {
         "failed" | "interrupted" => Some(S::Failed),
         _ => None,
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CrunchrQueueEntry {
-    pub job_id: String,
-    pub episode_dir: PathBuf,
-    pub backend: String,
-    pub diarize: bool,
-    pub state: String,
-    pub attempts: i64,
-    pub last_error: Option<String>,
 }
 
 #[cfg(test)]

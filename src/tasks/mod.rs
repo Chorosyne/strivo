@@ -1,13 +1,13 @@
 //! Async task registry — substrate for the M4 yazi-grade polish.
 //!
 //! Tracks every long-running operation the TUI cares about: live
-//! recordings, transcoding, archiver back-catalog pulls, Crunchr
+//! recordings, transcoding, back-catalog pulls, post-processing
 //! analyses, theme imports. Each [`Task`] carries a typed
 //! [`Progress`] snapshot the status bar / future "Tasks" pane renders;
 //! cancellation is cooperative through a [`tokio_util::sync::CancellationToken`].
 //!
 //! Adoption is incremental. M4.1.a wires the scaffold + the recording
-//! pipeline as the first consumer; archiver / Crunchr / transcode
+//! pipeline as the first consumer; catalog-pull / post-process / transcode
 //! migrate to TaskRegistry-driven progress in follow-up commits.
 //!
 //! Yazi audit reference: §4 "Async task manager".
@@ -43,8 +43,8 @@ impl Default for TaskId {
 pub enum TaskKind {
     Record,
     Transcode,
-    ArchiverPull,
-    CrunchrAnalyze,
+    CatalogPull,
+    PostProcess,
     ThemeImport,
 }
 
@@ -53,8 +53,8 @@ impl TaskKind {
         match self {
             Self::Record => "rec",
             Self::Transcode => "trans",
-            Self::ArchiverPull => "pull",
-            Self::CrunchrAnalyze => "crunchr",
+            Self::CatalogPull => "pull",
+            Self::PostProcess => "post",
             Self::ThemeImport => "theme",
         }
     }
@@ -283,7 +283,7 @@ mod tests {
     fn cancel_propagates_through_token() {
         let mut r = TaskRegistry::new();
         let cancel = CancellationToken::new();
-        let id = r.start(TaskKind::CrunchrAnalyze, "x", cancel.clone());
+        let id = r.start(TaskKind::PostProcess, "x", cancel.clone());
         r.cancel(id);
         assert!(cancel.is_cancelled());
     }
