@@ -8,6 +8,18 @@ import { test, expect } from "@playwright/test";
 // address, and repaints that reload streams the user never touched) were
 // therefore invisible to CI.
 
+// S12 — "starting one tile does not disturb another" and "play-all starts
+// the rest..." (below) drive back-to-back UI actions (a play click, then
+// immediately another) and read player-controller state right after the
+// resulting DOM count settles. Under CPU contention (this config's
+// `fullyParallel: true` runs every test in this file in its own worker),
+// the fake-player mount/repaint work those actions trigger can still be
+// draining a microtask/rAF queue at the exact moment the next action or
+// read fires, which the implicit `toHaveCount` settle doesn't cover.
+// Serialising this file removes the contention between its OWN tests
+// (each gets the CPU to itself) without touching any assertion.
+test.describe.configure({ mode: "serial" });
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("strivo-tour-done", "1");
