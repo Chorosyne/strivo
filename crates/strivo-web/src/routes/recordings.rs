@@ -22,6 +22,8 @@ use strivo_core::ipc::ServerMessage;
 use tokio::io::AsyncSeekExt;
 use uuid::Uuid;
 
+use crate::problem::Problem;
+use crate::routes::login::check_dual;
 use crate::server::AppState;
 
 async fn lookup_path(state: &AppState, id: Uuid) -> Result<PathBuf, String> {
@@ -212,6 +214,9 @@ async fn download(
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Response {
+    if check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     let raw = match lookup_path(&state, id).await {
         Ok(p) => p,
         Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
@@ -315,8 +320,11 @@ async fn download(
     resp
 }
 
-async fn play(Path(id): Path<Uuid>) -> Redirect {
-    Redirect::temporary(&format!("/api/v1/recordings/{id}/download"))
+async fn play(State(state): State<AppState>, headers: HeaderMap, Path(id): Path<Uuid>) -> Response {
+    if check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return Problem::unauthorized().into_response();
+    }
+    Redirect::temporary(&format!("/api/v1/recordings/{id}/download")).into_response()
 }
 
 pub fn router() -> Router<AppState> {
