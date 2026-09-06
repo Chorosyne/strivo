@@ -7,6 +7,7 @@
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
+    "test:real": "playwright test -c playwright.real.config.ts",
     "install-browser": "playwright install chromium"
   },
   "devDependencies": {

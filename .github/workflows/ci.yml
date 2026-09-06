@@ -102,3 +102,16 @@ jobs:
           npm ci
           npx playwright install chromium
           npm test
+
+      # S04 — the lane above drives the SPA against mock-server.mjs (a Node
+      # stub), which proves nothing about the real strivo-web binary or its
+      # auth wiring. This lane boots the actual compiled server (daemon +
+      # web, sandboxed under a throwaway $HOME by real-server.sh so it can't
+      # collide with a real installation) and drives a real login ->
+      # recordings round-trip plus an unauthenticated-request check over an
+      # actual HTTP socket. Needs the PVR-edition release binary built above.
+      - name: Web UI real-server e2e
+        working-directory: crates/strivo-web/e2e
+        env:
+          STRIVO_BIN: ${{ github.workspace }}/target/release/strivo
+        run: npm run test:real
