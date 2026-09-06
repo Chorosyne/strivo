@@ -164,6 +164,11 @@ const API = {
   settings: () => API._fetch("/settings"),
   patreon: () => API._fetch("/patreon"),
   gantt: () => API._fetch("/gantt"),
+  // Read-only plugin list — used both by the Creator plugin hub/pane
+  // wiring below AND by the (edition-agnostic) recording-info modal to
+  // decide which per-plugin action buttons to show, so it must survive
+  // PVR stripping.
+  plugins: () => API._fetch("/plugins"),
   /* @creator-start */
   pluginRpc: (plugin, verb, body) =>
     API._fetch(`/plugins/${encodeURIComponent(plugin)}/${encodeURIComponent(verb)}`, {
@@ -171,7 +176,6 @@ const API = {
       body,
     }),
   // ── Plugin data (read-only, served from each plugin's SQLite DB) ──
-  plugins: () => API._fetch("/plugins"),
   crunchrRecordings: () => API._fetch("/plugins/crunchr/recordings"),
   crunchrRecording: (id) =>
     API._fetch(`/plugins/crunchr/recordings/${encodeURIComponent(id)}`),
@@ -298,6 +302,7 @@ const API = {
       method: "POST",
       body: { room, text },
     }),
+  chatRooms: () => API._fetch("/plugins/chat/rooms"),
   /* @creator-start */
   chatDensityCompute: (recordingId, body) =>
     API._fetch(`/plugins/chat-density/${encodeURIComponent(recordingId)}`, {
@@ -406,7 +411,6 @@ const API = {
     const qs = p.toString() ? `?${p.toString()}` : "";
     return API._fetch(`/plugins/deadair/${encodeURIComponent(recordingId)}${qs}`, { method: "POST" });
   },
-  chatRooms: () => API._fetch("/plugins/chat/rooms"),
   chatParseBatch: (lines) =>
     API._fetch("/plugins/chat/parse", { method: "POST", body: { lines: lines.join("\n") } }),
   structureClassify: (recordingId, body) =>
@@ -1045,6 +1049,7 @@ async function render() {
     case "schedule":
       await renderSchedule();
       break;
+  /* @creator-start */
     case "pipelines":
       await renderPipelines();
       break;
@@ -1060,18 +1065,21 @@ async function render() {
     case "publish":
       await renderProApp("publish");
       break;
+  /* @creator-end */
     case "watch":
       await renderWatch();
       break;
     case "viewer":
       await renderViewer();
       break;
+  /* @creator-start */
     case "dataviz":
       await renderDataviz();
       break;
     case "archive":
       await renderArchive();
       break;
+  /* @creator-end */
     case "chat":
       await renderChat();
       break;
@@ -3872,6 +3880,7 @@ function renderGantt(items) {
   `;
 }
 
+  /* @creator-start */
 // ── Pipelines (W5 — read PluginRpc dispatch state from daemon) ────────
 // Plugins that have a dedicated SPA sub-route. Clicking a node routes
 // there; everything else goes to the plugin hub so users land on the
@@ -4116,6 +4125,7 @@ function openRecordingPickerForPipeline(pipe, recs) {
     });
   });
 }
+  /* @creator-end */
 
 // ── Plugins (W5 — mirror the TUI's Shift+P browser) ────────────────────
 // Top-level Plugins route. Sub-routes select a plugin and its sub-views:
@@ -5258,6 +5268,7 @@ async function renderChat() {
   });
 }
 
+  /* @creator-start */
 // Data viz / analytics route — research-grade aggregation +
 // experiment runner over a corpus of transcribed recordings.
 // User picks recordings to assemble a corpus, picks an experiment,
@@ -5458,7 +5469,9 @@ function renderDatavizChart(series, host) {
   }).join("");
   host.innerHTML = `<svg width="${ww}" height="${svgH}" viewBox="0 0 ${ww} ${svgH}">${rows}</svg>`;
 }
+  /* @creator-end */
 
+  /* @creator-start */
 // ── Archive route (CE-Fusion F4/F5) ───────────────────────────────────
 //
 // The creator-vocabulary surface over the research kernel: search the
@@ -6047,6 +6060,7 @@ function openAddMomentModal() {
   });
   modal.querySelector("#arc-mom-source, #arc-mom-cancel")?.focus();
 }
+  /* @creator-end */
 
 // Viewer route — single stream embed + collapsible chat sidepane.
 // Reuses the existing chat plumbing (connectChatRoom, paintChatBody,
@@ -8503,9 +8517,11 @@ function renderSlot(slot, path, streams) {
     </div>`;
 }
 
+  /* @creator-start */
 function toTitleCase(slug) {
   return slug.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
+  /* @creator-end */
 
 // Single source of truth for the plugin set across the Settings →
 // Plugins manager AND the hub. Every shipped plugin appears once with
@@ -8553,6 +8569,7 @@ const PLUGIN_REGISTRY = [
   { name: "marketplace",   label: "Marketplace",   category: "Reports", route: "#/plugins",   proGated: true, description: "Third-party plugin catalog stub." },
 ];
 
+  /* @creator-start */
 // Per-plugin pitch lines for the upsell card. Keyed by plugin name so the
 // CTA copy stays specific instead of generic. Defaults to the plugin's
 // description fetched from the marketplace catalog when present.
@@ -9285,7 +9302,9 @@ function wireUpgradeCard() {
     });
   }
 }
+  /* @creator-end */
 
+  /* @creator-start */
 // ── Schedule optimizer ────────────────────────────────────────────────
 // 7×24 heatmap + top-slot recommender driven by the iter-44 backend.
 // The iter ships with a synthetic dataset baked in so users can see the
@@ -9660,7 +9679,9 @@ function paintScheduleOptimizer() {
     </div>
   `;
 }
+  /* @creator-end */
 
+  /* @creator-start */
 // ── Crunchr ──────────────────────────────────────────────────────────
 async function renderCrunchr() {
   const resp = await API.crunchrRecordings();
@@ -10161,7 +10182,9 @@ async function renderCrunchrRecording(id) {
     }
   });
 }
+  /* @creator-end */
 
+  /* @creator-start */
 // ── Archiver ─────────────────────────────────────────────────────────
 async function renderArchiver() {
   const resp = await API.archiverChannels();
@@ -10505,6 +10528,7 @@ async function dispatchVerb(plugin, verb, selection, btn) {
     }
   }
 }
+  /* @creator-end */
 
 // mm:ss / h:mm:ss from a float-seconds value.
 function fmtClock(sec) {
@@ -10791,6 +10815,7 @@ async function openRecordingInfo(jobId, opts = {}) {
     closeRecordingModals();
     if (jobId) window.location.hash = `#/watch?recording=${encodeURIComponent(jobId)}&fresh=1`;
   });
+  /* @creator-start */
   overlay.querySelector("[data-action=rec-info-cuepoints]")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     await withBusy(btn, "Detecting…", async () => {
@@ -12101,6 +12126,7 @@ async function openRecordingInfo(jobId, opts = {}) {
       Toast.success(`Probed ${tracks.length} track(s)`);
     }).catch((err) => Toast.error(`Probe failed: ${err.message}`));
   });
+  /* @creator-end */
 
   overlay.querySelector("[data-action=rec-info-remux]")?.addEventListener("click", async (e) => {
     if (!(await confirmDialog(
@@ -12136,6 +12162,7 @@ async function openRecordingInfo(jobId, opts = {}) {
         () => Toast.error("Couldn't copy to clipboard"),
       );
     }));
+  /* @creator-start */
   overlay.querySelectorAll("[data-action=rec-info-verb]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await withBusy(btn, "Queued…", async () => {
@@ -12144,6 +12171,7 @@ async function openRecordingInfo(jobId, opts = {}) {
       }).catch((err) => Toast.error(`${btn.dataset.verb} failed: ${err.message}`));
     });
   });
+  /* @creator-end */
 
   // CE-Fusion F5: an Archive deep link opens straight into the EDL editor
   // rather than making the user find + click the button themselves.
@@ -12520,6 +12548,7 @@ function wireSettingsControls() {
       Toast.success("Layout preference saved");
     });
   });
+  /* @creator-start */
   // Per-plugin Size / Clear actions — wired here so all plugin rows
   // pick up the handlers via a single querySelectorAll regardless of
   // which section painted them.
@@ -12547,6 +12576,7 @@ function wireSettingsControls() {
       }
     });
   });
+  /* @creator-end */
   // Filename template live preview — updates #stg-fn-preview as user types.
   const fnInput = pane.querySelector('[data-stg-path="recording.filename_template"]');
   const fnPreview = pane.querySelector("#stg-fn-preview");
@@ -14100,6 +14130,7 @@ async function renderSchedule() {
     (settings?.capture_profiles || []).map((p) => [p.name, p.quality_tier || ""])
   );
 
+  /* @creator-start */
   // Auto-download row delete + playlist edits.
   document.querySelectorAll(".mon-dl-rm").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -14147,6 +14178,7 @@ async function renderSchedule() {
       Toast.error(`Couldn't enable: ${err.message}`);
     }
   });
+  /* @creator-end */
   // Cron entry delete (still works for power users).
   document.querySelectorAll(".sch-del").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -15471,7 +15503,12 @@ events.on((event) => {
       });
     }
   }
-  if (event.PipelineUpdated && currentRoute() === "pipelines") {
+  // renderPipelines is stripped from the PVR bundle along with the rest of
+  // the Pipelines pane (build.rs @creator-start), and the "pipelines" route
+  // never actually renders there (render() bounces it to #/library) — but
+  // this SSE handler runs regardless of edition, so guard the call the same
+  // way teardownDataviz/teardownArchive do above.
+  if (event.PipelineUpdated && currentRoute() === "pipelines" && typeof renderPipelines === "function") {
     renderPipelines().catch(() => {});
   }
 });
