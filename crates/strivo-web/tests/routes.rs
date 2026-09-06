@@ -1,26 +1,52 @@
-//! Smoke tests for the strivo-web router (webui phase 10).
+//! Route-shape tests for the strivo-web router (webui phase 10 / web-auth
+//! remediation).
 //!
-//! These do not require a running daemon — they exercise the route
-//! shape (auth, status codes) by talking to the test-mode Router
-//! axum exposes. Tests that hit IPC return 503; we assert on that
-//! rather than spawning a real daemon, keeping the test fast.
+//! These build the REAL router via `strivo_web::server::build_router`, fed
+//! an `AppState` whose `IpcClient` is bound to a socket that never connects
+//! (`AppState::test_state`). No daemon required: a handler that reaches the
+//! IPC call after an (absent) auth check observes a connection failure —
+//! typically a 503, or in `recordings::download`'s case a 404 from
+//! `lookup_path` — rather than panicking. Critically, a 503/404 from that
+//! path still proves the handler ran (i.e. auth did NOT block it), which is
+//! exactly the signal these tests need.
 
 use axum::body::to_bytes;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use strivo_web::auth::ApiKey;
+use strivo_web::server::{build_router, AppState};
 
 fn key() -> ApiKey {
     ApiKey("test-key-12345".into())
 }
 
-fn router() -> axum::Router {
-    // Best-effort: if no daemon is running, IpcClient::connect_or_err
-    // returns Err so we can't realistically build the full server.
-    // We test API key handling in isolation via ApiKey::matches.
-    axum::Router::new()
+/// The real, fully-wired router (every route + the auth/CSRF middleware
+/// stack from `server::build_router`), backed by a disconnected IPC client.
+fn app() -> axum::Router {
+    build_router(AppState::test_state("route-shape-test-key"))
+}
+
+/// Send `method path` through `router` with an `X-Api-Key: bogus-key-value`
+/// header (never a valid key — see `key()`/`AppState::test_state`, which
+/// use different literals). State-changing methods carry a JSON body so
+/// axum's `Json<T>` extractor doesn't short-circuit with 400/415 before the
+/// handler's own auth check ever runs.
+async fn send_bogus_key(router: axum::Router, method: &str, path: &str) -> StatusCode {
+    let m = Method::from_bytes(method.to_ascii_uppercase().as_bytes()).unwrap();
+    let mut builder = Request::builder()
+        .method(m)
+        .uri(path)
+        .header("x-api-key", "bogus-key-value");
+    let body = if matches!(method, "post" | "put" | "delete" | "patch") {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+        Body::from("{}")
+    } else {
+        Body::empty()
+    };
+    let req = builder.body(body).unwrap();
+    router.oneshot(req).await.unwrap().status()
 }
 
 #[test]
@@ -40,18 +66,35 @@ fn api_key_generate_is_alphanumeric() {
     assert!(s.chars().all(|c| c.is_ascii_alphanumeric()));
 }
 
+/// The real router's catch-all 404 fallback still fires for a path that
+/// matches nothing — replaces the old placeholder test that asserted 404
+/// against a deliberately-empty stub `Router` (which proved the stub was
+/// empty, not that the app's fallback works).
 #[tokio::test]
-async fn router_empty_404s() {
-    // Trivially: a router with no routes returns 404 for anything.
-    // Real route coverage requires the AppState IPC handle and
-    // therefore a daemon; covered in the README quickstart instead.
-    let app = router();
+async fn router_unmatched_path_404s() {
+    let app = app();
     let req = Request::builder()
-        .uri("/api/v1/health")
+        .uri("/api/v1/totally-bogus-nonexistent-route")
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// `GET /api/v1/health` is the one documented no-auth route on the always-
+/// compiled surface; confirm the real router still serves it without a key
+/// (the S08 sweep below skips it — this is its positive-path complement).
+/// It reports 503 rather than 200 against this test's disconnected IPC
+/// client (a real "daemon unreachable" liveness signal, not an auth
+/// rejection) — assert not-401 rather than a specific 2xx/5xx.
+#[tokio::test]
+async fn health_is_public() {
+    let req = Request::builder()
+        .uri("/api/v1/health")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app().oneshot(req).await.unwrap();
+    assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -63,6 +106,408 @@ async fn body_to_bytes_helper_compiles() {
     let body = Body::from("hello");
     let bytes = to_bytes(body, usize::MAX).await.unwrap();
     assert_eq!(&bytes[..], b"hello");
+}
+
+// ── S01/S02 acceptance: bogus X-Api-Key must yield 401, specifically ─────
+//
+// A bare "not 200" assertion would pass against a guard that's never
+// reached at all (e.g. a 404/503/307 from further down the handler). These
+// assert the literal 401.
+
+#[cfg(feature = "creator")]
+#[tokio::test]
+async fn s01_pipelines_chains_delete_rejects_bogus_key() {
+    let status = send_bogus_key(app(), "delete", "/api/v1/pipelines/chains/s01-test-chain").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "DELETE /api/v1/pipelines/chains/{{id}} must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+#[tokio::test]
+async fn s02_recording_download_rejects_bogus_key() {
+    let id = uuid::Uuid::nil();
+    let status = send_bogus_key(app(), "get", &format!("/api/v1/recordings/{id}/download")).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "GET /api/v1/recordings/{{id}}/download must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+#[tokio::test]
+async fn s02_recording_play_rejects_bogus_key() {
+    let id = uuid::Uuid::nil();
+    let status = send_bogus_key(app(), "get", &format!("/api/v1/recordings/{id}/play")).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "GET /api/v1/recordings/{{id}}/play must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+#[tokio::test]
+async fn s06_licence_trial_rejects_bogus_key() {
+    let status = send_bogus_key(app(), "post", "/api/v1/licence/trial").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "POST /api/v1/licence/trial must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+#[cfg(feature = "creator")]
+#[tokio::test]
+async fn s07_plugin_capabilities_rejects_bogus_key() {
+    let status = send_bogus_key(app(), "get", "/api/v1/plugins/capabilities").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "GET /api/v1/plugins/capabilities must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+#[cfg(feature = "creator")]
+#[tokio::test]
+async fn s07_pipelines_dag_rejects_bogus_key() {
+    let status = send_bogus_key(app(), "get", "/api/v1/pipelines/dag").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "GET /api/v1/pipelines/dag must reject a bogus X-Api-Key with 401, got {status}"
+    );
+}
+
+// ── S08: route-level auth invariant ───────────────────────────────────────
+//
+// Enumerates every route registration this crate's routers make (grepped
+// from the `.route(...)` call sites in `src/routes/*.rs`; kept in sync by
+// hand — axum 0.8's `Router` has no runtime route-listing API) and asserts
+// each rejects a bogus `X-Api-Key` with 401, except an explicit allowlist of
+// intentionally public routes.
+//
+// A route requiring a JSON body (`Json<T>` extractor) rejects a malformed/
+// mismatched body with 400/415/422 *before* the handler's own auth check
+// ever runs — this is inherent to how axum resolves extractors, not a
+// choice this test makes. `{}` satisfies handlers typed `Json<Value>` or
+// with all-optional fields but not ones with required fields; those cases
+// are recorded as INCONCLUSIVE (printed, not asserted) rather than guessed
+// at, so this test never reports a false vulnerability from body-shape
+// friction. Genuine violations — a route that returns something other than
+// 401 or a body-shape rejection (e.g. 200, 402, 500, 503, 307) — ARE
+// asserted on and will fail this test; see the module-level report for
+// which routes that turned out to be.
+
+/// Public by design — see server.rs's module doc / the remediation brief.
+/// `/app` is not named explicitly in that brief but serves the exact same
+/// `spa_shell` handler as `/` with no auth of its own, so it's treated as
+/// part of "the SPA shell" here.
+const ALLOWLIST: &[(&str, &str)] = &[
+    ("get", "/api/v1/health"),
+    ("get", "/"),
+    ("get", "/app"),
+    ("get", "/assets/{*path}"),
+    ("get", "/yt-websub"),
+    ("post", "/yt-websub"),
+    ("post", "/api/v1/auth/login"),
+];
+
+/// Always-compiled surface (PVR + Creator builds both mount these).
+const ALWAYS_ROUTES: &[(&str, &str)] = &[
+    ("get", "/api/v1/health/checks"),
+    ("get", "/api/v1/telemetry"),
+    ("get", "/api/v1/channels"),
+    ("get", "/api/v1/patreon"),
+    ("get", "/api/v1/recordings"),
+    ("post", "/api/v1/recordings"),
+    ("delete", "/api/v1/recordings/{id}"),
+    ("get", "/api/v1/recordings/{id}"),
+    ("get", "/api/v1/recordings/{id}/thumb"),
+    ("get", "/api/v1/recordings/{id}/probe"),
+    ("post", "/api/v1/recordings/stop_all"),
+    ("post", "/api/v1/recordings/clear_errored"),
+    ("delete", "/api/v1/recordings/{id}/file"),
+    ("post", "/api/v1/recordings/{id}/remux"),
+    ("get", "/api/v1/schedule"),
+    ("post", "/api/v1/schedule"),
+    ("delete", "/api/v1/schedule/{index}"),
+    ("get", "/api/v1/settings"),
+    ("post", "/api/v1/poll_now"),
+    ("post", "/api/v1/settings/poll_interval"),
+    ("post", "/api/v1/settings/update"),
+    ("post", "/api/v1/settings/platform/{name}"),
+    ("get", "/api/v1/logs"),
+    ("get", "/api/v1/history"),
+    ("post", "/api/v1/backup"),
+    ("get", "/api/v1/backups"),
+    ("post", "/api/v1/backups/{name}/restore"),
+    ("get", "/api/v1/backups/{name}/download"),
+    ("delete", "/api/v1/blocklist"),
+    ("get", "/api/v1/blocklist"),
+    ("post", "/api/v1/blocklist"),
+    ("put", "/api/v1/channels/{channel_key}/auto_record"),
+    ("get", "/api/v1/monitor"),
+    ("post", "/api/v1/capture_profiles"),
+    ("delete", "/api/v1/capture_profiles/{name}"),
+    ("put", "/api/v1/capture_profiles/{name}"),
+    ("get", "/api/v1/channels/export"),
+    ("post", "/api/v1/channels/import"),
+    ("get", "/api/v1/storage"),
+    ("get", "/api/v1/gantt"),
+    ("post", "/api/v1/channels/{channel_id}/bulk"),
+    ("post", "/api/v1/channels/{channel_id}/playlists"),
+    ("post", "/api/v1/channels/{channel_id}/vods"),
+    ("post", "/api/v1/patreon/pull"),
+    ("post", "/api/v1/vods/download"),
+    ("post", "/api/v1/channels/resolve"),
+    ("get", "/events"),
+    ("get", "/api/v1/licence/status"),
+    ("post", "/api/v1/licence/activate"),
+    ("post", "/api/v1/licence/trial"),
+    ("post", "/api/v1/licence/refresh"),
+    ("post", "/api/v1/auth/logout"),
+    ("get", "/api/v1/multistream/tiles"),
+    ("get", "/api/v1/recordings/{id}/download"),
+    ("get", "/api/v1/recordings/{id}/play"),
+];
+
+/// Creator Edition only (`--features creator`): api.rs's pipeline/
+/// marketplace/archiver/capabilities block plus the whole of
+/// `routes::plugins`.
+#[cfg(feature = "creator")]
+const CREATOR_ROUTES: &[(&str, &str)] = &[
+    ("get", "/api/v1/pipelines/dag"),
+    ("get", "/api/v1/pipelines/runs"),
+    ("post", "/api/v1/pipelines/runs"),
+    ("post", "/api/v1/pipelines/runs/{id}/cancel"),
+    ("post", "/api/v1/pipelines/stages/{id}/retry"),
+    (
+        "get",
+        "/api/v1/pipelines/runs/{pipeline_id}/stages/{stage_id}/artifacts/{index}",
+    ),
+    ("get", "/api/v1/pipelines/chains"),
+    ("post", "/api/v1/pipelines/chains"),
+    ("delete", "/api/v1/pipelines/chains/{id}"),
+    ("get", "/api/v1/marketplace/catalog"),
+    ("put", "/api/v1/channels/{channel_key}/archiver_tandem"),
+    ("put", "/api/v1/channels/{channel_key}/archiver_playlists"),
+    ("get", "/api/v1/plugins/capabilities"),
+    ("post", "/api/v1/plugins/{plugin}/{verb}"),
+    ("get", "/api/v1/plugins"),
+    ("get", "/api/v1/plugins/crunchr/recordings"),
+    ("get", "/api/v1/plugins/crunchr/recordings/{id}"),
+    ("get", "/api/v1/plugins/crunchr/search"),
+    ("get", "/api/v1/plugins/archiver/channels"),
+    (
+        "get",
+        "/api/v1/plugins/archiver/channels/{channel_id}/videos",
+    ),
+    ("get", "/api/v1/plugins/viewguard/verdicts"),
+    (
+        "get",
+        "/api/v1/plugins/viewguard/channels/{channel_id}/samples",
+    ),
+    ("get", "/api/v1/plugins/insights/words"),
+    ("get", "/api/v1/plugins/insights/topics"),
+    ("get", "/api/v1/plugins/insights/recordings/{id}/speakers"),
+    ("get", "/api/v1/plugins/insights/export"),
+    ("get", "/api/v1/recordings/{id}/captions.vtt"),
+    ("post", "/api/v1/plugins/chapters/{id}"),
+    ("post", "/api/v1/plugins/cuepoints/{id}"),
+    ("post", "/api/v1/plugins/clipper/{id}/analyze"),
+    ("post", "/api/v1/plugins/clipper/{id}/extract"),
+    ("get", "/api/v1/plugins/clipper/{id}/clips"),
+    ("post", "/api/v1/plugins/thumbnails/{id}"),
+    ("get", "/api/v1/plugins/thumbnails/{id}/{stem}"),
+    ("get", "/api/v1/plugins/thumbnails/file"),
+    ("get", "/api/v1/plugins/insights/compare"),
+    ("get", "/api/v1/plugins/insights/retention/{id}"),
+    ("get", "/api/v1/plugins/captions/{id}"),
+    ("get", "/api/v1/plugins/captions/{id}/style"),
+    ("post", "/api/v1/plugins/captions/{id}/style"),
+    ("get", "/api/v1/plugins/multitrack/{id}"),
+    ("post", "/api/v1/plugins/multitrack/{id}/extract"),
+    ("get", "/api/v1/plugins/brandsafe/{id}"),
+    ("post", "/api/v1/plugins/reuse/{id}/generate"),
+    ("get", "/api/v1/plugins/reuse/{id}"),
+    ("get", "/api/v1/plugins/casebook/{id}"),
+    ("get", "/api/v1/plugins/heatmap/{id}"),
+    ("get", "/api/v1/plugins/editor/{id}"),
+    ("post", "/api/v1/plugins/editor/{id}"),
+    ("post", "/api/v1/plugins/editor/{id}/render"),
+    ("get", "/api/v1/plugins/editor/{id}/revisions"),
+    (
+        "post",
+        "/api/v1/plugins/editor/{id}/revisions/{rev_id}/restore",
+    ),
+    ("get", "/api/v1/plugins/viewguard/trend"),
+    ("post", "/api/v1/plugins/broll/{id}"),
+    ("post", "/api/v1/plugins/chat-density/{id}"),
+    ("post", "/api/v1/plugins/deadair/{id}"),
+    ("get", "/api/v1/plugins/branding/{id}"),
+    ("post", "/api/v1/plugins/branding/{id}"),
+    ("get", "/api/v1/plugins/chat/rooms"),
+    ("post", "/api/v1/plugins/chat/parse"),
+    ("post", "/api/v1/chat/send"),
+    ("post", "/api/v1/dataviz/run"),
+    ("get", "/api/v1/research/projects"),
+    ("post", "/api/v1/research/projects"),
+    ("get", "/api/v1/research/projects/{id}"),
+    ("get", "/api/v1/research/projects/{id}/codes"),
+    ("post", "/api/v1/research/projects/{id}/codes"),
+    ("get", "/api/v1/research/projects/{id}/sources"),
+    ("post", "/api/v1/research/projects/{id}/sources"),
+    ("get", "/api/v1/research/projects/{id}/cases"),
+    ("post", "/api/v1/research/projects/{id}/cases"),
+    (
+        "post",
+        "/api/v1/research/projects/{id}/cases/{case_id}/sources",
+    ),
+    ("get", "/api/v1/research/projects/{id}/codings"),
+    ("post", "/api/v1/research/projects/{id}/codings"),
+    ("get", "/api/v1/research/projects/{id}/memos"),
+    ("post", "/api/v1/research/projects/{id}/memos"),
+    ("get", "/api/v1/research/projects/{id}/relationships"),
+    ("post", "/api/v1/research/projects/{id}/relationships"),
+    ("get", "/api/v1/research/projects/{id}/agreement"),
+    ("get", "/api/v1/research/projects/{id}/export"),
+    ("get", "/api/v1/research/projects/{id}/signals"),
+    ("get", "/api/v1/research/projects/{id}/search"),
+    ("get", "/api/v1/research/projects/{id}/moments"),
+    ("post", "/api/v1/research/projects/{id}/moments"),
+    ("post", "/api/v1/research/projects/{id}/migrate/crunchr"),
+    ("post", "/api/v1/research/projects/{id}/migrate/legacy"),
+    ("post", "/api/v1/plugins/loudness/{id}"),
+    ("post", "/api/v1/plugins/structure/{id}"),
+    ("get", "/api/v1/plugins/automation/{id}"),
+    ("post", "/api/v1/plugins/automation/{id}"),
+    ("get", "/api/v1/plugins/scenes/{id}"),
+    ("post", "/api/v1/plugins/scenes/{id}"),
+    ("post", "/api/v1/plugins/scenes/{id}/{scene_id}/restore"),
+    ("delete", "/api/v1/plugins/scenes/{id}/{scene_id}"),
+    ("post", "/api/v1/plugins/schedule-optimizer/{id}"),
+    ("post", "/api/v1/plugins/beat-detect/{id}"),
+    ("post", "/api/v1/plugins/vad/{id}"),
+    ("post", "/api/v1/plugins/sidechain/{id}"),
+    ("get", "/api/v1/plugins/insert-fx/{id}"),
+    ("post", "/api/v1/plugins/insert-fx/{id}"),
+    ("post", "/api/v1/plugins/insert-fx/{id}/preset/{bus}"),
+    ("get", "/api/v1/plugins/pitch/{id}"),
+    ("post", "/api/v1/plugins/pitch/{id}"),
+    ("post", "/api/v1/plugins/pitch/{id}/fit"),
+    ("get", "/api/v1/plugins/ab-render/{id}"),
+    ("post", "/api/v1/plugins/ab-render/{id}/{slot}"),
+    ("post", "/api/v1/plugins/ab-render/{id}/compare"),
+    ("get", "/api/v1/plugins/submix/{id}"),
+    ("post", "/api/v1/plugins/submix/{id}"),
+    ("delete", "/api/v1/plugin-storage/{name}"),
+    ("get", "/api/v1/plugin-storage/{name}"),
+];
+
+/// Fill every `{token}` path segment with a value that parses as both a
+/// `Uuid` and a `String` (so we don't need to know each handler's extractor
+/// type), except tokens that look like a numeric index, which get `"0"`.
+/// `{*path}` wildcards (only the allowlisted assets route uses one) get a
+/// harmless literal.
+fn fill_path(template: &str) -> String {
+    let mut out = String::new();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut token = String::new();
+            for c2 in chars.by_ref() {
+                if c2 == '}' {
+                    break;
+                }
+                token.push(c2);
+            }
+            if token.starts_with('*') {
+                out.push('x');
+            } else if token.contains("index") {
+                out.push('0');
+            } else {
+                out.push_str("00000000-0000-0000-0000-000000000000");
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Body-shape rejections happen before a handler's auth check ever runs
+/// (axum resolves every extractor, `Json<T>` included, before invoking the
+/// handler body) — not a signal about auth at all. Treat as inconclusive.
+fn is_body_shape_rejection(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::BAD_REQUEST
+            | StatusCode::UNSUPPORTED_MEDIA_TYPE
+            | StatusCode::UNPROCESSABLE_ENTITY
+    )
+}
+
+async fn check_table(table: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
+    let mut violations = Vec::new();
+    let mut inconclusive = Vec::new();
+    for &(method, path) in table {
+        if ALLOWLIST.contains(&(method, path)) {
+            continue;
+        }
+        let filled = fill_path(path);
+        let status = send_bogus_key(app(), method, &filled).await;
+        if status == StatusCode::UNAUTHORIZED {
+            continue;
+        }
+        if is_body_shape_rejection(status) {
+            inconclusive.push(format!(
+                "{} {path} -> {status} (body-shape rejection before auth check; inconclusive)",
+                method.to_ascii_uppercase()
+            ));
+            continue;
+        }
+        violations.push(format!(
+            "{} {path} -> {status} (expected 401)",
+            method.to_ascii_uppercase()
+        ));
+    }
+    (violations, inconclusive)
+}
+
+#[tokio::test]
+async fn s08_always_routes_require_auth() {
+    let (violations, inconclusive) = check_table(ALWAYS_ROUTES).await;
+    if !inconclusive.is_empty() {
+        eprintln!(
+            "s08_always_routes_require_auth: {} inconclusive (body-shape) result(s):\n{}",
+            inconclusive.len(),
+            inconclusive.join("\n")
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "route(s) reachable without auth (bogus X-Api-Key did not get 401):\n{}",
+        violations.join("\n")
+    );
+}
+
+#[cfg(feature = "creator")]
+#[tokio::test]
+async fn s08_creator_routes_require_auth() {
+    let (violations, inconclusive) = check_table(CREATOR_ROUTES).await;
+    if !inconclusive.is_empty() {
+        eprintln!(
+            "s08_creator_routes_require_auth: {} inconclusive (body-shape) result(s):\n{}",
+            inconclusive.len(),
+            inconclusive.join("\n")
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "route(s) reachable without auth (bogus X-Api-Key did not get 401):\n{}",
+        violations.join("\n")
+    );
 }
 
 // ── Channel export/import round-trip (task 4) ─────────────────────────
