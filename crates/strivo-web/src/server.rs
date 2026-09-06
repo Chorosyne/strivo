@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
-use axum::http::{header, HeaderValue, Request};
-use axum::{middleware, response::Response, Router};
+use axum::extract::State;
+use axum::http::{header, HeaderValue, Method, Request};
+use axum::{middleware, response::IntoResponse, response::Response, Router};
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
@@ -166,6 +167,18 @@ pub fn build_router(state: AppState) -> Router {
     #[cfg(feature = "creator")]
     let guarded = guarded.merge(routes::plugins::router());
     let guarded = guarded
+        // S16: authenticate ahead of body/query extraction. `route_layer`
+        // (unlike `layer`) wraps only routes already registered on `guarded`
+        // above, not its 404 fallback — so an unmatched path still falls
+        // through to a plain 404 instead of a 401, and this can't silently
+        // start covering routes merged in later (e.g. the public websub
+        // router below, which is deliberately merged after this point).
+        // Wrapping the route service directly means require_auth's own body
+        // runs before axum resolves that route's `Json`/`Query` extractors,
+        // closing the "malformed body 422s before auth check ever runs"
+        // class of bug for every route under this router in one place,
+        // rather than relying on each handler to remember its own check.
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             routes::login::session_refresh,
@@ -204,6 +217,43 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// The only routes reachable with no credential at all: the SPA shell
+/// (`/`, `/app`), its static bundle (`/assets/*`), the health probe the
+/// SPA polls before it knows whether it's logged in, and the login POST
+/// itself. Every other route under `guarded` requires a valid session
+/// cookie or `X-Api-Key` (see `require_auth`). `/yt-websub` is public too,
+/// but it's merged onto the router *after* `require_auth`'s `route_layer`
+/// runs, so it never reaches this check at all — see `build_router`.
+fn is_public_route(method: &Method, path: &str) -> bool {
+    matches!(
+        (method, path),
+        (&Method::GET, "/api/v1/health") | (&Method::GET, "/") | (&Method::GET, "/app")
+    ) || (*method == Method::POST && path == "/api/v1/auth/login")
+        || path.starts_with("/assets/")
+}
+
+/// S16: auth gate applied via `route_layer` (see `build_router`) so it runs
+/// on every already-registered route before axum resolves that route's own
+/// extractors — including `Json`/`Query`, which otherwise reject a
+/// malformed request with 400/422 before a handler's own auth check gets a
+/// chance to run at all. A handler may still carry its own `check_key`/
+/// `check_dual` call (several do, for defense in depth); this layer is what
+/// makes that check load-bearing for every route rather than opt-in per
+/// handler.
+async fn require_auth(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    if is_public_route(req.method(), req.uri().path()) {
+        return next.run(req).await;
+    }
+    if routes::login::check_dual(req.headers(), &state.api_key, &state.session_secret).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    next.run(req).await
 }
 
 async fn performance_timing(
