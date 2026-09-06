@@ -1212,7 +1212,7 @@ pub fn sanitize_path_component(s: &str) -> String {
 }
 
 /// Per-episode metadata sidecar. Written next to `video.mkv` after a catalog-pull
-/// recording finishes so downstream tools (Crunchr, archiver, etc.) have provenance
+/// recording finishes so downstream tools have provenance
 /// without parsing filenames.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EpisodeMetadata {

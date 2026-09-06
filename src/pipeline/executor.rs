@@ -24,8 +24,8 @@ const MAX_PIPELINE_HISTORY: usize = 500;
 /// How long a stage waits to acquire a resource permit before failing
 /// with a transient, auto-retried error (F-37).
 ///
-/// This bounds *acquisition* only, not stage execution: Crunchr's own
-/// subprocess timeout (`whisper_timeout_secs`, default 7200s / 2h) is the
+/// This bounds *acquisition* only, not stage execution: a plugin's own
+/// subprocess timeout (e.g. `whisper_timeout_secs`, default 7200s / 2h) is the
 /// long pole for how long a GPU permit can legitimately stay held, so this
 /// value sits an order of magnitude below that — a queued GPU stage is not
 /// expected to wait anywhere near a full transcode's length under normal

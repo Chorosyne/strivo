@@ -9,11 +9,11 @@
 //!   tuples → temp XML → mkvpropedit subprocess
 //! - `every_n_minutes(duration_secs, n)` — utility for generating
 //!   time-based chapters at fixed intervals when no semantic source
-//!   (Crunchr topics) is available
+//!   (plugin-supplied topics) is available
 //!
-//! The Crunchr-driven topic-to-time chaptering still needs a schema
+//! The plugin-driven topic-to-time chaptering still needs a schema
 //! change (chapters per topic), so this commit lands the substrate;
-//! the wire-up follows once Crunchr stores topic timestamps.
+//! the wire-up follows once a plugin stores topic timestamps.
 
 use std::io::Write;
 use std::path::Path;

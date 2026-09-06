@@ -61,7 +61,7 @@ pub fn pipeline_from_edl(doc: &EdlDoc, _resources: &ResourceRegistry) -> Pipelin
     p
 }
 
-/// Build a [`Pipeline`] from a Crunchr preset name + list of input
+/// Build a [`Pipeline`] from a plugin preset name + list of input
 /// recordings. Plugins land on this when fanning a batch out across
 /// the host DAG engine. (C1 phase 2.)
 ///
@@ -77,16 +77,15 @@ pub fn pipeline_from_edl(doc: &EdlDoc, _resources: &ResourceRegistry) -> Pipelin
 /// across pipelines. `analyze` carries a bounded
 /// [`ResourceLock::Api`] for the OpenRouter quota.
 ///
-/// `preset_stages` is the typed sequence built from
-/// [`CrunchrPreset::stages`]; the caller flattens that out of the
-/// plugin crate before calling us so this crate doesn't grow a
-/// strivo-plugins dependency.
+/// `preset_stages` is the typed sequence built from the plugin's own
+/// preset type; the caller flattens that out of the plugin crate before
+/// calling us so this crate doesn't grow a strivo-plugins dependency.
 pub fn pipeline_from_preset_stages(
     preset_name: &str,
     inputs: &[(String, std::path::PathBuf)],
     preset_stages: &[PresetStageBridge],
 ) -> Pipeline {
-    let mut p = Pipeline::new(format!("crunchr::{preset_name}"));
+    let mut p = Pipeline::new(preset_name.to_string());
     for (vod_id, _path) in inputs {
         let mut prev: Option<StageId> = None;
         // Every input chain starts with audio extraction.
@@ -159,7 +158,7 @@ pub fn pipeline_from_preset_stages(
 }
 
 /// Stage shape consumed by [`pipeline_from_preset_stages`]. This is
-/// the data crate's mirror of `strivo_plugins::crunchr::presets::CrunchrStage`;
+/// the data crate's mirror of a plugin's own preset stage type;
 /// the plugin builds and passes one of these per stage so we don't
 /// pull strivo-plugins into the host crate.
 #[derive(Debug, Clone)]

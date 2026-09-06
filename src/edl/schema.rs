@@ -25,7 +25,7 @@ pub enum EdlKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdlInput {
     /// Stable identifier within this StriVo install (recording uuid or
-    /// archiver video_id).
+    /// a back-catalog pull's video_id).
     pub vod_id: String,
     /// Path to the source media. Optional — preset EDLs leave this empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,7 +70,7 @@ pub enum EdlOp {
         clips: Vec<usize>,
         output: String,
     },
-    /// Pull a VOD via Archiver/yt-dlp. Used by batch EDLs that wire
+    /// Pull a VOD via yt-dlp. Used by batch EDLs that wire
     /// "pull-then-transcribe" through a single Pipeline.
     Archive {
         url: String,

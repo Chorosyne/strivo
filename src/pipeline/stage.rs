@@ -56,7 +56,7 @@ pub enum StageKind {
     ExportClip,
     /// Lossless concat of N clips into one file.
     Concat,
-    /// Pull a single VOD via Archiver/yt-dlp.
+    /// Pull a single VOD via yt-dlp.
     Archive,
     /// Plugin-provided stage. Carries an opaque identifier the plugin
     /// registers a dispatcher for.
@@ -204,8 +204,8 @@ impl Stage {
         self
     }
 
-    /// Backoff between attempts: 5s, 10s, 30s. Same shape Crunchr's
-    /// pipeline.rs uses today for transcription retries.
+    /// Backoff between attempts: 5s, 10s, 30s. Same shape a plugin's own
+    /// retry logic uses today for its long-running stages.
     pub fn backoff_after(attempt: u8) -> Duration {
         match attempt {
             0 => Duration::from_secs(0),
@@ -337,7 +337,7 @@ impl Pipeline {
         }
     }
 
-    /// Sum of stage cost estimates. Used by the Crunchr cost dashboard +
+    /// Sum of stage cost estimates. Used by a plugin's cost dashboard +
     /// pre-submit budget warning.
     pub fn total_cost_cents(&self) -> u32 {
         self.stages.iter().map(|s| s.cost_cents_estimate).sum()

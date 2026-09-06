@@ -37,7 +37,7 @@ pub enum ItemKind {
 /// Where a plugin command applies. (D5+X5.)
 ///
 /// - `Global` is the historical default — a global keybinding the
-///   plugin owns. Kept for back-compat with existing Crunchr / Archiver
+///   plugin owns. Kept for back-compat with existing pre-1.0 plugin
 ///   commands.
 /// - `Pane` scopes the command to a specific plugin pane.
 /// - `Item` registers the command as a *verb* in the actions popup,
@@ -102,7 +102,7 @@ pub enum PluginAction {
     /// Play a file in mpv.
     PlayFile(PathBuf),
     /// Play a file in mpv starting at a position (seconds). M5.2 —
-    /// transcript-scoped seek: Enter on a Crunchr chunk hands the
+    /// transcript-scoped seek: Enter on a transcript chunk hands the
     /// chunk's start_sec along with the recording path.
     PlayFileAt(PathBuf, f64),
     /// Request the host to update a plugin's config section and persist to disk.
@@ -424,7 +424,8 @@ pub struct VerbContext<'a> {
 }
 
 pub trait Plugin: Send {
-    /// Unique name for this plugin (e.g., "crunchr").
+    /// Unique name for this plugin (lowercase, stable — plugins key
+    /// config, entitlement, and on-disk state off it).
     fn name(&self) -> &'static str;
 
     /// Human-readable display name.

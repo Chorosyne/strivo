@@ -306,7 +306,7 @@ pub async fn run_with_plugins_at(
         });
     let pipelines = std::sync::Arc::new(tokio::sync::Mutex::new(pipeline_registry));
 
-    // Open the persistence db (jobs / catalog / crunchr_queue) and recover any
+    // Open the persistence db (jobs / catalog) and recover any
     // jobs that were marked running when the daemon last died. Recovery is
     // intentionally minimal: we mark orphans as 'interrupted' so the audit log
     // is honest. Catalog-pull resumption is automatic — the catalog dedupe
