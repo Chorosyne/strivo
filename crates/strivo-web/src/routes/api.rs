@@ -2919,7 +2919,13 @@ fn chain_path(id: &str) -> Option<std::path::PathBuf> {
 
 /// `GET /api/v1/pipelines/chains` — every persisted recipe chain.
 #[cfg(feature = "creator")]
-async fn pipelines_chains_list() -> impl IntoResponse {
+async fn pipelines_chains_list(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     let dir = chains_dir();
     let mut out: Vec<strivo_pipelines_dag::RecipeChain> = vec![];
     if let Ok(rd) = std::fs::read_dir(&dir) {
@@ -2937,8 +2943,13 @@ async fn pipelines_chains_list() -> impl IntoResponse {
 /// `POST /api/v1/pipelines/chains` — upsert a chain by `id`.
 #[cfg(feature = "creator")]
 async fn pipelines_chains_save(
+    headers: HeaderMap,
+    State(state): State<AppState>,
     Json(body): Json<strivo_pipelines_dag::RecipeChain>,
 ) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return Problem::unauthorized().into_response();
+    }
     if let Err(e) = body.validate() {
         return Problem::bad_request(e).into_response();
     }
