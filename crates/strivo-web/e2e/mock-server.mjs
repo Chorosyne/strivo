@@ -609,6 +609,29 @@ const server = createServer(async (req, res) => {
         });
     }
 
+    // ── R02 — B-roll finder ────────────────────────────────────────────
+    {
+      const m = p.match(/^\/plugins\/broll\/([^/]+)$/);
+      if (m && req.method === "POST") {
+        const id = decodeURIComponent(m[1]);
+        const body = await readBody(req);
+        const assets = (body.library && body.library.assets) || [];
+        const suggestions = assets.slice(0, body.top_k || 12).map((a, i) => ({
+          time_sec: 10 + i * 5,
+          asset_id: a.id,
+          asset_path: a.path,
+          duration_sec: a.duration_sec,
+          score: 0.42,
+          matched_tags: a.tags || [],
+        }));
+        return json(res, 200, {
+          recording_id: id,
+          suggestions,
+          library_size: assets.length,
+        });
+      }
+    }
+
     // ── A/B render compare ────────────────────────────────────────────
     {
       const m = p.match(/^\/plugins\/ab-render\/([^/]+)$/);

@@ -249,6 +249,11 @@ const API = {
     API._fetch(`/plugins/thumbnails/${encodeURIComponent(recordingId)}/${encodeURIComponent(stem)}`),
   thumbnailFileUrl: (absPath) =>
     `/api/v1/plugins/thumbnails/file?p=${encodeURIComponent(absPath)}`,
+  // R02 — B-roll finder. Backend expects the streamer-curated library
+  // inline on every call (it stays stateless); the SPA persists the raw
+  // JSON in localStorage so it survives reloads (see rec-info-broll).
+  brollSuggest: (recordingId, body) =>
+    API._fetch(`/plugins/broll/${encodeURIComponent(recordingId)}`, { method: "POST", body }),
   insightsCompare: (recordingA, recordingB) =>
     API._fetch(`/plugins/insights/compare?recs=${encodeURIComponent(recordingA + "," + recordingB)}`),
   insightsRetention: (recordingId, bucketSecs = 30) =>
@@ -10733,6 +10738,7 @@ async function openRecordingInfo(jobId, opts = {}) {
       ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
+      ${isFinished ? `<button class="sm rec-info-broll-btn" data-action="rec-info-broll" title="Suggest B-roll cuts from a tagged local library based on transcript topics">🎞 B-roll suggestions</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
       ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
@@ -10740,6 +10746,7 @@ async function openRecordingInfo(jobId, opts = {}) {
       <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
       <div class="rec-clipper" id="rec-clipper" hidden></div>
       <div class="rec-thumbs" id="rec-thumbs" hidden></div>
+      <div class="rec-broll" id="rec-broll" hidden></div>
       <div class="rec-tracks" id="rec-tracks" hidden></div>
       <div class="rec-reuse" id="rec-reuse" hidden></div>
       <div class="rec-casebook" id="rec-casebook" hidden></div>
@@ -10927,6 +10934,71 @@ async function openRecordingInfo(jobId, opts = {}) {
         </div>`;
       Toast.success(`Generated ${candidates.length} thumbnail candidate(s)`);
     }).catch((err) => Toast.error(`Thumbnails failed: ${err.message}`));
+  });
+
+  // R02 — B-roll finder. The backend takes the streamer's tagged asset
+  // library inline on every request (it stays stateless); there's no
+  // library-management page in StriVo yet, so the library is the same
+  // hand-curated JSON the crate's own docs describe, edited in a textarea
+  // and persisted to localStorage so it survives reloads.
+  overlay.querySelector("[data-action=rec-info-broll]")?.addEventListener("click", (e) => {
+    const host = document.getElementById("rec-broll");
+    if (!host) return;
+    host.hidden = false;
+    const stored = localStorage.getItem("strivo-broll-library") || "";
+    host.innerHTML = `
+      <h4 class="rec-cp-title">B-roll library <span class="pg-cap-hint">JSON — {"assets":[{"id","path","duration_sec","tags":[]}]}</span></h4>
+      <textarea id="rec-broll-lib" rows="4"
+        placeholder='{"assets":[{"id":"a1","path":"/media/broll/city.mp4","duration_sec":8,"tags":["city","night"]}]}'
+      >${htmlEscape(stored)}</textarea>
+      <button class="sm" id="rec-broll-run" type="button">Suggest B-roll</button>
+      <div id="rec-broll-results"></div>
+    `;
+    document.getElementById("rec-broll-run")?.addEventListener("click", async (ev) => {
+      const runBtn = ev.currentTarget;
+      const raw = document.getElementById("rec-broll-lib")?.value.trim() || "";
+      let library;
+      try {
+        library = raw ? JSON.parse(raw) : { assets: [] };
+      } catch (err) {
+        Toast.error(`Library JSON invalid: ${err.message}`);
+        return;
+      }
+      localStorage.setItem("strivo-broll-library", raw);
+      await withBusy(runBtn, "Matching…", async () => {
+        const resp = await API.brollSuggest(jobId, { library, top_k: 12 });
+        const results = document.getElementById("rec-broll-results");
+        if (!results) return;
+        const suggestions = resp.suggestions || [];
+        if (!suggestions.length) {
+          results.innerHTML = '<div class="empty sm">No B-roll matches above the score threshold.</div>';
+          return;
+        }
+        results.innerHTML = `
+          <div class="rec-hl-list">
+            ${suggestions
+              .map(
+                (s) => `<div class="rec-hl-row">
+                  <button class="rec-hl-jump" data-seek="${s.time_sec}" title="Jump to ${fmtClock(s.time_sec)}">${fmtClock(s.time_sec)}</button>
+                  <span class="rec-hl-score" title="Score ${s.score.toFixed(2)}">
+                    <span class="rec-hl-bar" style="--rec-hl-pct:${(s.score * 100).toFixed(0)}%"></span>
+                    <span>${Math.round(s.score * 100)}%</span>
+                  </span>
+                  <span class="rec-hl-meta" title="${htmlEscape(s.asset_path)}">${htmlEscape(s.asset_id)} · ${htmlEscape((s.matched_tags || []).join(", "))}</span>
+                </div>`,
+              )
+              .join("")}
+          </div>`;
+        results.querySelectorAll(".rec-hl-jump").forEach((el) => {
+          el.addEventListener("click", (e2) => {
+            e2.preventDefault();
+            closeRecordingModals();
+            openRecordingPlayer(jobId, { seekTo: parseFloat(el.dataset.seek || "0") });
+          });
+        });
+        Toast.success(`Found ${suggestions.length} B-roll suggestion(s)`);
+      }).catch((err) => Toast.error(`B-roll suggest failed: ${err.message}`));
+    });
   });
 
   overlay.querySelector("[data-action=rec-info-editor]")?.addEventListener("click", async (e) => {

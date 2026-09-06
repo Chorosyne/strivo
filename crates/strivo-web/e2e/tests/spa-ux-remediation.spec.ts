@@ -77,3 +77,29 @@ test("R03: Tab focuses the skip link first; activating it focuses #content", asy
   await page.keyboard.press("Enter");
   await expect(page.locator("#content")).toBeFocused();
 });
+
+// R02 — the B-roll finder plugin is catalogued and auth-gated on the
+// backend but had no trigger anywhere in the SPA. Verifies the Info-modal
+// action genuinely calls /plugins/broll/<id> and renders real suggestions.
+test("R02: B-roll suggestions run from the recording Info modal", async ({ page }) => {
+  await page.goto("/app#/recordings");
+  const row = page.locator("tr[data-rec-row]", { hasText: "Zebra stream" });
+  await row.locator("[data-action=rec-info]").click();
+  const modal = page.locator("#rec-info-modal");
+  await expect(modal).toBeVisible();
+
+  await modal.locator("[data-action=rec-info-broll]").click();
+  const host = modal.locator("#rec-broll");
+  await expect(host).toBeVisible();
+
+  const lib = JSON.stringify({
+    assets: [{ id: "a1", path: "/media/broll/city.mp4", duration_sec: 8, tags: ["city"] }],
+  });
+  await host.locator("#rec-broll-lib").fill(lib);
+  await host.locator("#rec-broll-run").click();
+
+  await expect(host.locator("#rec-broll-results")).toContainText("a1");
+  // Library persists across modal reopens (localStorage), matching the
+  // backend's "streamer-curated JSON" contract.
+  await expect(host.locator("#rec-broll-lib")).toHaveValue(lib);
+});
