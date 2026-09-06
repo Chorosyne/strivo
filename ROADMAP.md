@@ -110,7 +110,7 @@ ui-ux, backend) and `research/exemplars/`.
 |---|---|---|
 | `creator_enabled` exposed in `/api/v1/settings` | ✅ | the enabler for SPA gating |
 | SPA hides creator UI in the PVR build | ✅ | consumes `creator_enabled`: filters TOPNAV, bounces creator deep-links, hides the Recording-Info plugin actions, Settings→Plugins pane, and Monitor "Tandem downloads". Chat kept (client-side IRC) |
-| Build-time SPA split to drop dead creator JS (~30+ unused API methods) | ✅ | `7776179` — build-time strip confirmed; dead API methods excluded from PVR bundle. |
+| Build-time SPA split to drop dead creator JS (~30+ unused API methods) | ✅ | `7776179` only stripped the `API` object's method bodies; every Creator UI pane (Studio/Analytics/Publish/Pipelines/Plugins/Dataviz/Archive) and ~90 of their call sites into those stripped methods still shipped and threw on navigation in a PVR build (finding S10). Fixed in the docs-edition remediation branch: creator markers now also cover the panes/call sites, and `assets/spa.js` no longer defines `chatRooms`/`plugins` (needed by edition-agnostic routes) inside a stripped block. Regression-guarded by `e2e/check-pvr-bundle.mjs` (`npm test`'s `pretest`), which builds the real PVR artifact and asserts zero surviving calls into stripped definitions. |
 
 ### PVR feature gaps vs *arr / streamerREC
 | Item | State | Notes |
@@ -130,6 +130,14 @@ were rewritten to JellySkin (tokens mirror `spa.css`), the SPA font is Montserra
 and `spa.css` font loading moved Google Fonts → Bunny Fonts (privacy). The SPA
 uses JellySkin purple/cyan; brand cyan `#00E5FF` stays the TUI/marketing accent.
 The stale ElegantFin reference CSS under `docs/reference/` was archived.
+
+> **Note (design authority location):** `DESIGN.md` is intentionally
+> `.gitignore`d ("Internal docs — kept local only") and is not present in any
+> fresh clone, CI checkout, or `git worktree` — only on the owner's own
+> machine. The §"Web UI Theme" reference above (and CLAUDE.md's "always read
+> DESIGN.md" instruction) are therefore unresolvable from source control
+> alone; treat the design authority as maintained out-of-tree until the owner
+> decides whether to track it. See finding S11.
 
 ---
 
