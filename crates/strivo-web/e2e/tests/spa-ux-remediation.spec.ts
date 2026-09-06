@@ -62,3 +62,18 @@ test("R04: focusing a sortable header and pressing Enter/Space re-sorts the tabl
   // now leads, so the row is no longer Alpha.
   await expect(firstRowChannel()).not.toHaveText("Alpha");
 });
+
+// R03 — skip link. Must be the first focusable element in `chrome()`, and
+// activating it must move real keyboard focus to #content.
+test("R03: Tab focuses the skip link first; activating it focuses #content", async ({ page }) => {
+  await page.goto("/app#/library");
+  await expect(page.locator("#channel-list")).toBeVisible();
+
+  await page.keyboard.press("Tab");
+  const skip = page.locator(".skip-link");
+  await expect(skip).toBeFocused();
+  await expect(skip).toHaveText("Skip to content");
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#content")).toBeFocused();
+});

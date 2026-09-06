@@ -280,6 +280,24 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* R03 — skip link: the first focusable element in `chrome()`, hidden until
+ * keyboard focus lands on it so sighted mouse users never see it. */
+.skip-link {
+  position: absolute;
+  top: -1000px;
+  left: 0;
+  z-index: 200;
+  padding: 0.6rem 1rem;
+  background: var(--bg-lighter);
+  color: var(--fg);
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip-link:focus-visible {
+  top: 0;
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* W6 — keyboard help overlay (? key). */
 .kbd-help {
   position: fixed;
@@ -569,6 +587,13 @@ th[data-sort]:hover {
   grid-area: content;
   padding: 1.5rem;
   overflow-y: auto;
+}
+/* R03 — #content is the skip-link's landing target (tabindex="-1" in
+ * chrome() so it's programmatically focusable without joining tab order);
+ * give it the same focus ring as every other interactive element. */
+.content:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 /* ElegantFin section title: white, with a short leading bar. */

@@ -1203,6 +1203,7 @@ function chrome(content) {
   }).join("");
   return `
     <div class="chrome">
+      <a class="skip-link" href="#content">Skip to content</a>
       <header class="topbar" role="banner">
         <a class="brand" href="#/library" id="brand-home" title="Home">StriVo</a>
         <span id="conn-status" class="conn-status" role="status" hidden
@@ -1225,7 +1226,7 @@ function chrome(content) {
         </button>
       </header>
       <nav class="leftrail" id="channel-list" aria-label="Channels"></nav>
-      <main class="content" id="content">${content}</main>
+      <main class="content" id="content" tabindex="-1">${content}</main>
     </div>
   `;
 }
