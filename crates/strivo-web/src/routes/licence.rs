@@ -38,7 +38,20 @@ struct LicenceStatus {
     implemented: bool,
 }
 
-async fn status() -> Json<LicenceStatus> {
+/// `GET /api/v1/licence/status` — reports the hashed machine id, tier and
+/// trial expiry, so it's gated like the rest of this router. The SPA's
+/// only callers (`renderPluginHub`, `renderArchive`, the plugin-gate 402
+/// upsell path) fetch it after route dispatch has already required a
+/// successful login — `renderLogin` never calls it — so gating does not
+/// break the anonymous upgrade-card flow (there isn't one).
+async fn status(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if crate::routes::login::check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    status_body().await.into_response()
+}
+
+async fn status_body() -> Json<LicenceStatus> {
     let mh = machine_id::hashed_machine_id();
     let entitled = gate::entitled();
     let cache = LicenceCache::load().ok().flatten();
@@ -88,9 +101,13 @@ struct BackendTokenResponse {
 }
 
 async fn activate(
-    State(_state): State<AppState>,
+    headers: HeaderMap,
+    State(state): State<AppState>,
     Json(body): Json<ActivateRequest>,
 ) -> impl IntoResponse {
+    if crate::routes::login::check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
     let Some(url) = backend_url() else {
         return crate::problem::Problem::unavailable("licence backend not configured")
             .into_response();
@@ -133,7 +150,10 @@ async fn trial(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
     .into_response()
 }
 
-async fn refresh(State(_state): State<AppState>) -> impl IntoResponse {
+async fn refresh(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
+    if crate::routes::login::check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
     let Some(url) = backend_url() else {
         return crate::problem::Problem::unavailable("licence backend not configured")
             .into_response();
