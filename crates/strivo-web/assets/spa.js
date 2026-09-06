@@ -3095,7 +3095,7 @@ async function renderRecordings() {
     paintRecordings();
   });
   document.querySelectorAll("th[data-sort]").forEach((th) => {
-    th.addEventListener("click", () => {
+    const sortBy = () => {
       const col = th.dataset.sort;
       if (recSort.col === col) {
         recSort.dir = recSort.dir === "asc" ? "desc" : "asc";
@@ -3103,6 +3103,15 @@ async function renderRecordings() {
         recSort = { col, dir: "asc" };
       }
       renderRecordings().catch((e) => Toast.error(e.message)); // re-render header arrows + body
+    };
+    th.addEventListener("click", sortBy);
+    // R04 — Enter/Space activate sort for keyboard users (headers carry
+    // tabindex="0" + role="button" from recHeader()).
+    th.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        sortBy();
+      }
     });
   });
   document.getElementById("rec-load-more")?.addEventListener("click", async (event) => {
@@ -3210,7 +3219,13 @@ function recHeader(key, label) {
     recSort.col === key
       ? (recSort.dir === "asc" ? " ▲" : " ▼")
       : ' <span class="rec-th-sort-hint" aria-hidden="true">↕</span>';
-  return `<th data-sort="${key}" class="rec-th-sortable">${label}${arrow}</th>`;
+  // R04 — headers are keyboard-operable: tabbable + role="button" so
+  // Enter/Space (wired where the click handler is bound) can sort, not
+  // just a mouse click.
+  const ariaSort = recSort.col === key
+    ? (recSort.dir === "asc" ? "ascending" : "descending")
+    : "none";
+  return `<th data-sort="${key}" class="rec-th-sortable" tabindex="0" role="button" aria-sort="${ariaSort}">${label}${arrow}</th>`;
 }
 
 // Apply the live filter + sort to recCache and repaint the table body.
