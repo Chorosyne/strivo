@@ -5,10 +5,12 @@
   "description": "Playwright E2E for the StriVo web UI (W7)",
   "type": "module",
   "scripts": {
+    "pretest": "node check-pvr-bundle.mjs",
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:real": "playwright test -c playwright.real.config.ts",
-    "install-browser": "playwright install chromium"
+    "install-browser": "playwright install chromium",
+    "check:pvr-bundle": "node check-pvr-bundle.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0"
