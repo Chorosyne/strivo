@@ -184,26 +184,30 @@ async fn s07_pipelines_dag_rejects_bogus_key() {
 // Enumerates every route registration this crate's routers make (grepped
 // from the `.route(...)` call sites in `src/routes/*.rs`; kept in sync by
 // hand — axum 0.8's `Router` has no runtime route-listing API) and asserts
-// each rejects a bogus `X-Api-Key` with 401, except an explicit allowlist of
-// intentionally public routes.
+// EXACT-MATCH against `KNOWN_PUBLIC`, the one place every intentionally
+// unauthenticated route is declared: every route in `KNOWN_PUBLIC` is
+// skipped, and every route NOT in it must reject a bogus `X-Api-Key` with
+// literal 401. A route added to `ALWAYS_ROUTES`/`CREATOR_ROUTES` (or a new
+// `.route(...)` call site not yet added to either table) that isn't also
+// declared in `KNOWN_PUBLIC` fails the build the moment it stops requiring
+// auth — that's the point: an ungated route can no longer hide.
 //
-// A route requiring a JSON body (`Json<T>` extractor) rejects a malformed/
-// mismatched body with 400/415/422 *before* the handler's own auth check
-// ever runs — this is inherent to how axum resolves extractors, not a
-// choice this test makes. `{}` satisfies handlers typed `Json<Value>` or
-// with all-optional fields but not ones with required fields; those cases
-// are recorded as INCONCLUSIVE (printed, not asserted) rather than guessed
-// at, so this test never reports a false vulnerability from body-shape
-// friction. Genuine violations — a route that returns something other than
-// 401 or a body-shape rejection (e.g. 200, 402, 500, 503, 307) — ARE
-// asserted on and will fail this test; see the module-level report for
-// which routes that turned out to be.
+// S16 (see server.rs's `require_auth`) closed the one legitimate escape
+// hatch this test used to have: a route requiring a JSON body used to
+// reject a malformed/mismatched body with 400/415/422 *before* the
+// handler's own auth check ever ran, because axum resolves `Json<T>`
+// before invoking the handler. Auth now runs in `route_layer` middleware
+// ahead of every extractor, so that class of result can't occur here any
+// more — `is_body_shape_rejection` below is kept only as a hard assertion
+// (zero tolerance, not a printed warning) so a regression that reopens it
+// fails loudly instead of being silently absorbed as "inconclusive".
 
-/// Public by design — see server.rs's module doc / the remediation brief.
+/// Public by design — see server.rs's `is_public_route` (the same list,
+/// enforced at runtime by `require_auth`) and the remediation brief.
 /// `/app` is not named explicitly in that brief but serves the exact same
 /// `spa_shell` handler as `/` with no auth of its own, so it's treated as
 /// part of "the SPA shell" here.
-const ALLOWLIST: &[(&str, &str)] = &[
+const KNOWN_PUBLIC: &[(&str, &str)] = &[
     ("get", "/api/v1/health"),
     ("get", "/"),
     ("get", "/app"),
@@ -266,6 +270,9 @@ const ALWAYS_ROUTES: &[(&str, &str)] = &[
     ("post", "/api/v1/licence/activate"),
     ("post", "/api/v1/licence/trial"),
     ("post", "/api/v1/licence/refresh"),
+    // S15: gated (not KNOWN_PUBLIC) even though it only clears the
+    // caller's own cookies — no reason for an unauthenticated caller to
+    // reach it, and require_auth's allowlist doesn't special-case it.
     ("post", "/api/v1/auth/logout"),
     ("get", "/api/v1/multistream/tiles"),
     ("get", "/api/v1/recordings/{id}/download"),
@@ -289,6 +296,10 @@ const CREATOR_ROUTES: &[(&str, &str)] = &[
     ("get", "/api/v1/pipelines/chains"),
     ("post", "/api/v1/pipelines/chains"),
     ("delete", "/api/v1/pipelines/chains/{id}"),
+    // S15: gated. The handler's doc comment calls this "public" meaning
+    // not Pro-gated (free builds still see the upgrade path) — that's
+    // orthogonal to authentication, which is required like every other
+    // route here.
     ("get", "/api/v1/marketplace/catalog"),
     ("put", "/api/v1/channels/{channel_key}/archiver_tandem"),
     ("put", "/api/v1/channels/{channel_key}/archiver_playlists"),
@@ -452,7 +463,7 @@ async fn check_table(table: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
     let mut violations = Vec::new();
     let mut inconclusive = Vec::new();
     for &(method, path) in table {
-        if ALLOWLIST.contains(&(method, path)) {
+        if KNOWN_PUBLIC.contains(&(method, path)) {
             continue;
         }
         let filled = fill_path(path);
@@ -478,16 +489,16 @@ async fn check_table(table: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
 #[tokio::test]
 async fn s08_always_routes_require_auth() {
     let (violations, inconclusive) = check_table(ALWAYS_ROUTES).await;
-    if !inconclusive.is_empty() {
-        eprintln!(
-            "s08_always_routes_require_auth: {} inconclusive (body-shape) result(s):\n{}",
-            inconclusive.len(),
-            inconclusive.join("\n")
-        );
-    }
+    assert!(
+        inconclusive.is_empty(),
+        "route(s) gave a body-shape rejection before auth ran (S16 regression — the auth \
+         gate must run ahead of every extractor, not just some):\n{}",
+        inconclusive.join("\n")
+    );
     assert!(
         violations.is_empty(),
-        "route(s) reachable without auth (bogus X-Api-Key did not get 401):\n{}",
+        "route(s) reachable without auth (bogus X-Api-Key did not get 401) — gate it, or add \
+         it to KNOWN_PUBLIC with a one-line rationale:\n{}",
         violations.join("\n")
     );
 }
@@ -496,16 +507,16 @@ async fn s08_always_routes_require_auth() {
 #[tokio::test]
 async fn s08_creator_routes_require_auth() {
     let (violations, inconclusive) = check_table(CREATOR_ROUTES).await;
-    if !inconclusive.is_empty() {
-        eprintln!(
-            "s08_creator_routes_require_auth: {} inconclusive (body-shape) result(s):\n{}",
-            inconclusive.len(),
-            inconclusive.join("\n")
-        );
-    }
+    assert!(
+        inconclusive.is_empty(),
+        "route(s) gave a body-shape rejection before auth ran (S16 regression — the auth \
+         gate must run ahead of every extractor, not just some):\n{}",
+        inconclusive.join("\n")
+    );
     assert!(
         violations.is_empty(),
-        "route(s) reachable without auth (bogus X-Api-Key did not get 401):\n{}",
+        "route(s) reachable without auth (bogus X-Api-Key did not get 401) — gate it, or add \
+         it to KNOWN_PUBLIC with a one-line rationale:\n{}",
         violations.join("\n")
     );
 }
