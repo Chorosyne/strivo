@@ -18,6 +18,14 @@
 /// First-party Pro plugins. Anything not in this list is treated as
 /// free and ungated. Creator/Pro plugins are not publicly available yet;
 /// only a debug build may opt in for development coverage.
+///
+/// These are all Creator Edition plugin names, so this list is itself
+/// Creator vocabulary living in core — flagged, not fixed, in this pass:
+/// `crates/strivo-web/src/routes/plugins.rs` calls `gate_pro("crunchr")`
+/// (and friends) at 30+ sites, so the specific strings here are load-bearing
+/// for a file out of scope for this workstream. Moving entitlement
+/// ownership to the Creator side is CE06 in ADR 0001 — a decision to make
+/// deliberately, not a side effect of a naming cleanup.
 pub const PRO_PLUGINS: &[&str] = &["crunchr", "archiver", "viewguard", "insights"];
 
 pub fn is_pro_plugin(name: &str) -> bool {

@@ -5,8 +5,15 @@ use uuid::Uuid;
 use super::stage::ResourceLock;
 use super::{Pipeline, Stage, StageDispatch, StageKind};
 
-/// The first production Creator workflow. Crunchr implements the capability
-/// as an idempotent stage while the host supplies orchestration guarantees.
+/// The first production Creator workflow. A Creator Edition plugin
+/// implements the capability as an idempotent stage while the host
+/// supplies orchestration guarantees.
+///
+/// The dispatch target's plugin identifier below (`"crunchr"`) is a real,
+/// externally-visible name — it's also what strivo-web's route handlers
+/// and licence gate match on (`gate_pro("crunchr")`, the plugin registry's
+/// `name()`) — so it can't be renamed to something more generic without
+/// touching those call sites too. See ADR 0001.
 ///
 /// Keeping this template in core ensures manual web runs, plugin-triggered
 /// runs, and future schedule/API triggers produce byte-for-byte equivalent
