@@ -47,6 +47,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub schedule: Vec<ScheduleEntry>,
 
+    // `CrunchrConfig`/`ArchiverConfig` are Creator Edition's own types and
+    // belong in the Creator repo, not here — but `crates/strivo-web/src/
+    // routes/api.rs` reads and writes `cfg.crunchr.*` / `cfg.archiver.*` by
+    // field directly at 15+ call sites (settings GET/PATCH). Replacing
+    // these with a generic `extensions: BTreeMap<String, serde_json::Value>`
+    // table would break that file, which is out of scope for this pass
+    // (owned by a sibling workstream). See ADR 0001 for the target shape.
     #[cfg(feature = "creator")]
     #[serde(default, alias = "sloptube")]
     pub crunchr: CrunchrConfig,
@@ -963,6 +970,25 @@ impl AppConfig {
         self.capture_profile_for(platform, channel_id)
             .and_then(|p| p.transcode)
             .unwrap_or(self.recording.transcode)
+    }
+
+    /// Marker filenames a catalog pull should touch in each landed episode
+    /// directory, so callers of [`crate::recording::catalog::run_pull`]
+    /// don't need to know what optional (e.g. Creator Edition) config, if
+    /// any, is compiled in. `suppress` lets a caller opt this pull out (a
+    /// CLI flag, say) without needing to know what the markers mean either.
+    /// Empty in the pure-PVR build.
+    pub fn post_pull_markers(&self, suppress: bool) -> Vec<String> {
+        if suppress {
+            return Vec::new();
+        }
+        #[cfg(feature = "creator")]
+        {
+            if self.crunchr.enabled {
+                return vec![".crunchr-auto".to_string()];
+            }
+        }
+        Vec::new()
     }
 
     /// Lint the config for pathological capture-profile / auto-record setups

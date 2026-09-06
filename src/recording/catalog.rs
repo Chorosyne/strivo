@@ -33,14 +33,21 @@ pub struct CatalogPullOptions {
     pub format: ResolvedFormat,
     pub cookies_path: Option<PathBuf>,
     pub force: bool,
-    /// When true, emit a `crunchr_auto` marker file so the Crunchr plugin picks
-    /// the episode up automatically without per-channel tandem config. Always
-    /// present (a plain bool) — gating the field tripped Cargo feature
-    /// unification under `--workspace` (strivo-plugins turns on
-    /// `strivo-core/creator`, but strivo-bin's own `creator` stays off, so its
-    /// struct literal would omit a then-present field). In the pure-PVR build
-    /// callers always set this `false`, so the marker is never written.
-    pub crunchr_auto: bool,
+    /// Empty marker files to touch in the episode directory once the
+    /// recording and its metadata sidecar have landed. Core has no opinion
+    /// on what these mean; it just creates the named files verbatim so an
+    /// external tool (e.g. a Creator Edition plugin) can pick the episode
+    /// up without polling or per-channel tandem config. Callers decide the
+    /// filenames (and whether the list is empty) from their own config.
+    ///
+    /// Always a plain, feature-independent field — gating the *field itself*
+    /// with `cfg(feature = "creator")` tripped Cargo feature unification
+    /// under `--workspace` (strivo-plugins turns on `strivo-core/creator`,
+    /// but strivo-bin's own `creator` feature stays off, so its struct
+    /// literal would then omit a field the compiled core structurally has).
+    /// Keep the field always-present; only the *value* a caller assigns may
+    /// vary by that caller's own feature flag.
+    pub post_pull_markers: Vec<String>,
 }
 
 /// Channel for live progress events. Use unbounded — events are tiny and the
@@ -177,12 +184,11 @@ pub async fn run_pull(
                 if let Err(e) = write_metadata_json(&ep_dir, &meta) {
                     tracing::warn!("catalog: metadata.json write failed: {e}");
                 }
-                // `crunchr_auto` is only ever true in Creator Edition builds
-                // (PVR callers hard-set it false), so this marker write is a
-                // no-op there without needing a cfg guard.
-                if opts.crunchr_auto {
-                    // Marker the Crunchr plugin can grep for in lieu of tandem config.
-                    let _ = std::fs::write(ep_dir.join(".crunchr-auto"), b"");
+                // The list is empty in the pure-PVR build (callers there
+                // never populate it), so this loop is a no-op without
+                // needing a cfg guard.
+                for marker in &opts.post_pull_markers {
+                    let _ = std::fs::write(ep_dir.join(marker), b"");
                 }
                 if let Err(e) = db
                     .mark_vod_recorded(vod.platform, &vod.channel_id, &vod.id, &ep_dir)

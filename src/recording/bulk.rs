@@ -314,10 +314,7 @@ async fn run_channel_pull(
         format: resolved,
         cookies_path,
         force: false,
-        #[cfg(feature = "creator")]
-        crunchr_auto: config.crunchr.enabled,
-        #[cfg(not(feature = "creator"))]
-        crunchr_auto: false,
+        post_pull_markers: config.post_pull_markers(false),
     };
 
     let db_path = AppConfig::data_dir().join("jobs.db");

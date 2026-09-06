@@ -448,21 +448,17 @@ async fn handle_pull(
     }
     println!("Discovered {} VOD(s).", vods.len());
 
-    // `--no-transcribe` only gates the Crunchr tandem hook, which exists in
-    // Creator Edition; in the pure-PVR build the flag is accepted but inert.
-    #[cfg(not(feature = "creator"))]
-    let _ = no_transcribe;
-
     let opts = CatalogPullOptions {
         root: config.recording_dir.clone(),
         channel_name: channel_id.to_string(),
         format: resolved,
         cookies_path,
         force,
-        #[cfg(feature = "creator")]
-        crunchr_auto: !no_transcribe && config.crunchr.enabled,
-        #[cfg(not(feature = "creator"))]
-        crunchr_auto: false,
+        // `--no-transcribe` only gates whichever optional post-pull hook is
+        // compiled in (Creator Edition's tandem transcription today); in the
+        // pure-PVR build it's accepted but inert since the marker list is
+        // always empty there regardless.
+        post_pull_markers: config.post_pull_markers(no_transcribe),
     };
 
     let report = catalog::run_pull(&db, vods, &opts, None, None).await?;
