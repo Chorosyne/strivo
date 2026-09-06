@@ -44,17 +44,19 @@ impl SessionToken {
     /// Parse a cookie value, verify the HMAC, and check the expiry.
     /// Returns `None` on any failure — the caller treats every failure
     /// shape identically (401).
+    ///
+    /// The HMAC is checked with `Mac::verify_slice`, which compares in
+    /// constant time by construction — the same property `ApiKey::matches`
+    /// hand-rolls above, but here we get it from the primitive itself
+    /// rather than reimplementing it.
     pub fn decode_verify(cookie_value: &str, secret: &str) -> Option<Self> {
         let (payload_b64, sig_b64) = cookie_value.split_once('.')?;
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).ok()?;
         mac.update(payload_b64.as_bytes());
-        let expected_sig = mac.finalize().into_bytes();
         let actual_sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(sig_b64)
             .ok()?;
-        if expected_sig.as_slice() != actual_sig.as_slice() {
-            return None;
-        }
+        mac.verify_slice(&actual_sig).ok()?;
         let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload_b64)
             .ok()?;
@@ -150,6 +152,19 @@ mod tests {
         let mut bytes: Vec<char> = encoded.chars().collect();
         let last = bytes.len() - 1;
         bytes[last] = if bytes[last] == 'A' { 'B' } else { 'A' };
+        let tampered: String = bytes.into_iter().collect();
+        assert!(SessionToken::decode_verify(&tampered, &secret).is_none());
+    }
+
+    #[test]
+    fn session_tampered_payload_rejected() {
+        let secret = generate_session_secret();
+        let tok = SessionToken::new(60);
+        let encoded = tok.encode(&secret);
+        // Flip a character in the payload half, before the '.'.
+        let dot = encoded.find('.').unwrap();
+        let mut bytes: Vec<char> = encoded.chars().collect();
+        bytes[dot - 1] = if bytes[dot - 1] == 'A' { 'B' } else { 'A' };
         let tampered: String = bytes.into_iter().collect();
         assert!(SessionToken::decode_verify(&tampered, &secret).is_none());
     }
