@@ -24,13 +24,34 @@
 //! Storage is in [`store`]; the editor crate is pure-data + thin
 //! ffmpeg wrapper.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub mod store;
+
+/// RAII guard for the `.edl-temp` scratch directory. Removes the directory
+/// on drop — including on early `?` returns and panics from the per-cut
+/// loop — so a failed render never leaves sub-clip files behind to
+/// compound pressure on the bounded `Disk` resource. Cleanup is
+/// best-effort: IO errors while removing are ignored, since a failure
+/// to tidy up must not fail the render itself.
+struct TempDirGuard(PathBuf);
+
+impl std::ops::Deref for TempDirGuard {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -252,8 +273,8 @@ pub fn render_edl_with_filters(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let temp_dir = edl_dir.join(".edl-temp");
-    std::fs::create_dir_all(&temp_dir).ok();
+    let temp_dir = TempDirGuard(edl_dir.join(".edl-temp"));
+    std::fs::create_dir_all(&*temp_dir).ok();
 
     // Strategy: for each cut, render a temporary sub-clip with seek
     // + duration, then concat the sub-clips. Lossless on the copy
@@ -352,8 +373,9 @@ pub fn render_edl_with_filters(
     if !status.success() {
         anyhow::bail!("ffmpeg concat exited {status}");
     }
-    // Best-effort cleanup; OK to leave the dir around on error.
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    // `temp_dir` is a `TempDirGuard`; its `Drop` removes the scratch
+    // directory here on the success path, and also on any early `?`
+    // return or panic above, so a failed render never leaks sub-clips.
     let bytes = std::fs::metadata(output).context("stat output")?.len();
     Ok(bytes)
 }
@@ -486,5 +508,50 @@ mod tests {
         let mut e = Edl::from_source("r1", "/x", 60.0);
         e.insert_broll(1, "/broll.mkv", 10.0, 25.0); // 15s broll
         assert!((e.total_duration() - 75.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn failed_render_leaves_no_scratch_directory() {
+        // Point at a source file that does not exist: the first sub-clip
+        // ffmpeg pass fails and render_edl_with_filters bails out via `?`
+        // before ever reaching the concat step or the old post-concat
+        // cleanup line. This is hermetic — it needs ffmpeg on PATH (same
+        // as every other render test would), but not any real media file.
+        let dir = std::env::temp_dir().join(format!(
+            "strivo-editor-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let output = dir.join("out.mkv");
+        let edl = Edl {
+            recording_id: "r1".into(),
+            cuts: vec![Cut {
+                start_sec: 0.0,
+                end_sec: 5.0,
+                kind: CutKind::Source {
+                    source_path: dir.join("does-not-exist.mkv").display().to_string(),
+                },
+                fade_in_sec: 0.0,
+                fade_out_sec: 0.0,
+            }],
+        };
+
+        let result = render_edl(&edl, &output);
+        assert!(
+            result.is_err(),
+            "expected render to fail on a missing source file"
+        );
+
+        let scratch = dir.join(".edl-temp");
+        assert!(
+            !scratch.exists(),
+            "scratch dir {scratch:?} should have been cleaned up after a failed render"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
