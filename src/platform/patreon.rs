@@ -6,7 +6,10 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{AppCredentials, PlatformKind, VodEntry};
+use crate::platform::{
+    classify_token_response, AppCredentials, PlatformKind, RefreshOutcome, RefreshRejected,
+    VodEntry,
+};
 
 const PATREON_API_URL: &str = "https://www.patreon.com/api/oauth2/v2";
 const PATREON_AUTH_URL: &str = "https://www.patreon.com/oauth2/authorize";
@@ -77,6 +80,9 @@ pub struct PatreonClient {
     access_token: Arc<RwLock<Option<String>>>,
     refresh_token_value: Arc<RwLock<Option<String>>>,
     event_tx: Option<tokio::sync::mpsc::UnboundedSender<DaemonEvent>>,
+    /// See `YouTubePlatform::auth_issue_reported`: emit
+    /// `PlatformAuthenticationRequired` once per outage, not once per poll.
+    auth_issue_reported: std::sync::atomic::AtomicBool,
 }
 
 impl PatreonClient {
@@ -87,6 +93,7 @@ impl PatreonClient {
             access_token: Arc::new(RwLock::new(None)),
             refresh_token_value: Arc::new(RwLock::new(None)),
             event_tx: None,
+            auth_issue_reported: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -120,10 +127,15 @@ impl PatreonClient {
                 return Ok(true);
             }
             // Try refresh
-            if self.refresh_token_value.read().await.is_some()
-                && self.do_refresh_token().await.is_ok()
-            {
-                return Ok(true);
+            if self.refresh_token_value.read().await.is_some() {
+                match self.do_refresh_token().await {
+                    Ok(()) => return Ok(true),
+                    Err(error) => {
+                        if let Some(rejected) = error.downcast_ref::<RefreshRejected>() {
+                            tracing::warn!(reason = %rejected, "Patreon refresh token was rejected");
+                        }
+                    }
+                }
             }
         }
         Ok(false)
@@ -210,6 +222,8 @@ impl PatreonClient {
             *self.refresh_token_value.write().await = Some(refresh.clone());
         }
         *self.access_token.write().await = Some(token.access_token);
+        self.auth_issue_reported
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         if let Some(ref tx) = self.event_tx {
             let _ = tx.send(DaemonEvent::PlatformAuthenticated {
@@ -240,7 +254,14 @@ impl PatreonClient {
             .await?;
 
         if !resp.status().is_success() {
-            bail!("Patreon token refresh failed: {}", resp.status());
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return match classify_token_response(status.as_u16(), &body) {
+                RefreshOutcome::Rejected(reason) => Err(RefreshRejected(reason).into()),
+                RefreshOutcome::Transient(reason) => {
+                    bail!("Patreon token refresh failed ({status}): {reason}")
+                }
+            };
         }
 
         let token: TokenResponse = resp.json().await?;
@@ -250,6 +271,8 @@ impl PatreonClient {
             *self.refresh_token_value.write().await = Some(new_refresh.clone());
         }
         *self.access_token.write().await = Some(token.access_token);
+        self.auth_issue_reported
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -268,7 +291,22 @@ impl PatreonClient {
             let status = resp.status().as_u16();
             if status == 401 && attempt == 0 {
                 drop(resp);
-                self.do_refresh_token().await?;
+                if let Err(error) = self.do_refresh_token().await {
+                    if let Some(rejected) = error.downcast_ref::<RefreshRejected>() {
+                        if !self
+                            .auth_issue_reported
+                            .swap(true, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            if let Some(ref tx) = self.event_tx {
+                                let _ = tx.send(DaemonEvent::PlatformAuthenticationRequired {
+                                    kind: PlatformKind::Patreon,
+                                    reason: rejected.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
                 continue;
             }
             if status == 429 || status == 503 {

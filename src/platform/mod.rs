@@ -52,6 +52,86 @@ pub enum PlatformKind {
     Patreon,
 }
 
+/// A token-endpoint error that means the token itself was rejected — a
+/// revoked/expired refresh token or bad app credentials (RFC 6749 §5.2,
+/// `invalid_grant`/`invalid_client`) — as opposed to a transient failure
+/// (429/5xx/network). Carries the best human-readable reason we could pull
+/// from the response body.
+///
+/// Deliberately a distinct type (rather than a plain `anyhow!()` string) so
+/// callers can `downcast_ref` on it to tell "credentials are dead" apart
+/// from "the network hiccuped" without parsing error text.
+#[derive(Debug, Clone)]
+pub struct RefreshRejected(pub String);
+
+impl std::fmt::Display for RefreshRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for RefreshRejected {}
+
+/// Outcome of classifying a token-endpoint HTTP response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshOutcome {
+    /// The endpoint rejected the token/credentials outright — human
+    /// intervention (re-authenticate) is needed. Carries the reason.
+    Rejected(String),
+    /// Rate-limited, a server error, or anything else that says nothing
+    /// about whether the credential itself is still good.
+    Transient(String),
+}
+
+/// Classify a token-endpoint HTTP response per RFC 6749 §5.2.
+///
+/// - 429 is always `Transient` — it says nothing about the credential.
+/// - Any other 4xx is `Rejected`: the best human-readable reason is pulled
+///   from the body in priority order: OAuth's `error_description`, then
+///   `error` (Google/Patreon shape), then Twitch's `message`, else a
+///   generic phrase.
+/// - Everything else (2xx-that-somehow-got-here, 5xx, unparsed) is
+///   `Transient`.
+pub fn classify_token_response(status: u16, body: &str) -> RefreshOutcome {
+    if status == 429 {
+        return RefreshOutcome::Transient(format!("rate limited (HTTP {status})"));
+    }
+    if (400..500).contains(&status) {
+        #[derive(Deserialize)]
+        struct ErrBody {
+            error_description: Option<String>,
+            error: Option<String>,
+            message: Option<String>,
+        }
+        let reason = serde_json::from_str::<ErrBody>(body)
+            .ok()
+            .and_then(|b| b.error_description.or(b.error).or(b.message))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "refresh token or app credentials were rejected".to_string());
+        return RefreshOutcome::Rejected(reason);
+    }
+    RefreshOutcome::Transient(format!("HTTP {status}"))
+}
+
+/// Where an [`AuthIssue`] came from: an OAuth token refresh that was
+/// rejected, or a cookie-jar session yt-dlp reports as no longer accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthSource {
+    OAuth,
+    Cookies,
+}
+
+/// A platform whose credentials need human attention, surfaced end-to-end
+/// through the IPC snapshot to the web UI, `strivo status`, and
+/// `/api/v1/health/checks`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthIssue {
+    pub kind: PlatformKind,
+    pub source: AuthSource,
+    pub reason: String,
+    pub since: chrono::DateTime<chrono::Utc>,
+}
+
 impl std::fmt::Display for PlatformKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -197,5 +277,74 @@ pub trait Platform: Send + Sync {
         _limit: Option<usize>,
     ) -> anyhow::Result<Vec<VodEntry>> {
         anyhow::bail!("catalog enumeration not supported for {}", self.kind())
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+
+    #[test]
+    fn google_invalid_grant_is_rejected() {
+        let body = r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
+        match classify_token_response(400, body) {
+            RefreshOutcome::Rejected(reason) => {
+                assert_eq!(reason, "Token has been expired or revoked.");
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn google_error_only_body_is_rejected() {
+        let body = r#"{"error":"invalid_client"}"#;
+        match classify_token_response(401, body) {
+            RefreshOutcome::Rejected(reason) => assert_eq!(reason, "invalid_client"),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn twitch_message_is_rejected() {
+        let body = r#"{"status":400,"message":"Invalid refresh token"}"#;
+        match classify_token_response(400, body) {
+            RefreshOutcome::Rejected(reason) => assert_eq!(reason, "Invalid refresh token"),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn patreon_error_shape_is_rejected() {
+        let body = r#"{"error":"invalid_grant","error_description":"the code was invalid"}"#;
+        match classify_token_response(400, body) {
+            RefreshOutcome::Rejected(reason) => assert_eq!(reason, "the code was invalid"),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rate_limited_is_transient() {
+        assert!(matches!(
+            classify_token_response(429, ""),
+            RefreshOutcome::Transient(_)
+        ));
+    }
+
+    #[test]
+    fn server_error_is_transient() {
+        assert!(matches!(
+            classify_token_response(503, "Service Unavailable"),
+            RefreshOutcome::Transient(_)
+        ));
+    }
+
+    #[test]
+    fn unparseable_4xx_body_still_rejected_with_generic_reason() {
+        match classify_token_response(400, "not json") {
+            RefreshOutcome::Rejected(reason) => {
+                assert_eq!(reason, "refresh token or app credentials were rejected");
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
     }
 }

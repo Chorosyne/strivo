@@ -6,7 +6,10 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{AppCredentials, ChannelEntry, Platform, PlatformKind, VodEntry};
+use crate::platform::{
+    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind,
+    RefreshOutcome, RefreshRejected, VodEntry,
+};
 
 const TWITCH_AUTH_URL: &str = "https://id.twitch.tv/oauth2";
 const TWITCH_API_URL: &str = "https://api.twitch.tv/helix";
@@ -51,6 +54,20 @@ pub enum TwitchTokenHealth {
 
 fn token_needs_refresh(expires_in_secs: u64, min_validity: std::time::Duration) -> bool {
     expires_in_secs <= min_validity.as_secs()
+}
+
+/// Decide what a refresh failure means for token health: only a rejected
+/// token/credentials (downcasts to [`RefreshRejected`]) is `LoginRequired`.
+/// Anything else — a transient network blip, a timeout — is propagated as
+/// an outage so the caller's "validation unavailable" branch handles it
+/// instead of launching a device-code flow on a blip.
+fn login_required_or_outage(error: anyhow::Error) -> Result<TwitchTokenHealth> {
+    if let Some(rejected) = error.downcast_ref::<RefreshRejected>() {
+        return Ok(TwitchTokenHealth::LoginRequired {
+            reason: format!("automatic refresh was rejected: {rejected}"),
+        });
+    }
+    Err(error)
 }
 
 #[allow(dead_code)]
@@ -253,9 +270,7 @@ impl TwitchPlatform {
                 self.fetch_user_id().await?;
                 Ok(TwitchTokenHealth::Refreshed)
             }
-            Err(error) => Ok(TwitchTokenHealth::LoginRequired {
-                reason: format!("automatic refresh was rejected: {error:#}"),
-            }),
+            Err(error) => login_required_or_outage(error),
         }
     }
 
@@ -443,11 +458,14 @@ impl TwitchPlatform {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            let detail = serde_json::from_str::<TokenErrorResponse>(&body)
-                .ok()
-                .and_then(|error| error.message)
-                .unwrap_or_else(|| "refresh token or app credentials were rejected".into());
-            bail!("token refresh failed ({status}): {detail}");
+            return match classify_token_response(status.as_u16(), &body) {
+                RefreshOutcome::Rejected(reason) => {
+                    Err(RefreshRejected(reason).into())
+                }
+                RefreshOutcome::Transient(reason) => {
+                    bail!("token refresh failed ({status}): {reason}")
+                }
+            };
         }
 
         let token: TokenResponse = resp.json().await?;
@@ -778,5 +796,30 @@ mod token_health_tests {
     fn zero_window_accepts_any_unexpired_token() {
         assert!(!token_needs_refresh(1, Duration::ZERO));
         assert!(token_needs_refresh(0, Duration::ZERO));
+    }
+}
+
+#[cfg(test)]
+mod login_required_tests {
+    use super::{login_required_or_outage, TwitchTokenHealth};
+    use crate::platform::RefreshRejected;
+
+    #[test]
+    fn rejected_refresh_becomes_login_required() {
+        let err = anyhow::Error::new(RefreshRejected("Invalid refresh token".into()));
+        let health = login_required_or_outage(err).expect("classifies, doesn't propagate");
+        match health {
+            TwitchTokenHealth::LoginRequired { reason } => {
+                assert!(reason.contains("Invalid refresh token"));
+            }
+            other => panic!("expected LoginRequired, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transient_error_propagates_as_outage() {
+        let err = anyhow::anyhow!("connection reset by peer");
+        let result = login_required_or_outage(err);
+        assert!(result.is_err(), "a non-rejection error must propagate, not become LoginRequired");
     }
 }

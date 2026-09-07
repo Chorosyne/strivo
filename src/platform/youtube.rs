@@ -7,7 +7,10 @@ use tokio::sync::RwLock;
 
 use crate::config::credentials;
 use crate::events::DaemonEvent;
-use crate::platform::{AppCredentials, ChannelEntry, Platform, PlatformKind, VodEntry};
+use crate::platform::{
+    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind,
+    RefreshOutcome, RefreshRejected, VodEntry,
+};
 
 const YOUTUBE_API_URL: &str = "https://www.googleapis.com/youtube/v3";
 const GOOGLE_AUTH_URL: &str = "https://oauth2.googleapis.com";
@@ -142,6 +145,11 @@ pub struct YouTubePlatform {
     /// skips these so `videos.list` only fires for new or still-live videos —
     /// the fix for the 10k/day quota exhaustion.
     dead_videos: Arc<RwLock<std::collections::HashSet<String>>>,
+    /// Set the one time a rejected-refresh outage is reported, so a
+    /// polling monitor hitting `api_get` every cycle doesn't spam
+    /// `PlatformAuthenticationRequired`. Cleared on any successful
+    /// refresh/authentication.
+    auth_issue_reported: std::sync::atomic::AtomicBool,
 }
 
 #[allow(dead_code)]
@@ -167,6 +175,7 @@ impl YouTubePlatform {
             event_tx: None,
             subs_cache: Arc::new(RwLock::new(None)),
             dead_videos: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            auth_issue_reported: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -199,10 +208,15 @@ impl YouTubePlatform {
             if self.validate_token().await? {
                 return Ok(true);
             }
-            if self.refresh_token_value.read().await.is_some()
-                && self.do_refresh_token().await.is_ok()
-            {
-                return Ok(true);
+            if self.refresh_token_value.read().await.is_some() {
+                match self.do_refresh_token().await {
+                    Ok(()) => return Ok(true),
+                    Err(error) => {
+                        if let Some(rejected) = error.downcast_ref::<RefreshRejected>() {
+                            tracing::warn!(reason = %rejected, "YouTube refresh token was rejected");
+                        }
+                    }
+                }
             }
         }
         Ok(false)
@@ -292,6 +306,8 @@ impl YouTubePlatform {
                 }
                 *self.access_token.write().await = Some(token.access_token);
                 *self.pending_device_code.write().await = None;
+                self.auth_issue_reported
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 return Ok(());
             }
 
@@ -325,12 +341,21 @@ impl YouTubePlatform {
             .await?;
 
         if !resp.status().is_success() {
-            bail!("YouTube token refresh failed: {}", resp.status());
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return match classify_token_response(status.as_u16(), &body) {
+                RefreshOutcome::Rejected(reason) => Err(RefreshRejected(reason).into()),
+                RefreshOutcome::Transient(reason) => {
+                    bail!("YouTube token refresh failed ({status}): {reason}")
+                }
+            };
         }
 
         let token: TokenResponse = resp.json().await?;
         credentials::store_secret("youtube_access_token", &token.access_token)?;
         *self.access_token.write().await = Some(token.access_token);
+        self.auth_issue_reported
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -349,7 +374,26 @@ impl YouTubePlatform {
             let status = resp.status().as_u16();
             if status == 401 && attempt == 0 {
                 drop(resp);
-                self.do_refresh_token().await?;
+                if let Err(error) = self.do_refresh_token().await {
+                    if let Some(rejected) = error.downcast_ref::<RefreshRejected>() {
+                        // Emit once per outage — cleared by a later
+                        // successful refresh/authentication — so a
+                        // polling monitor hitting this every cycle
+                        // doesn't spam the event.
+                        if !self
+                            .auth_issue_reported
+                            .swap(true, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            if let Some(ref tx) = self.event_tx {
+                                let _ = tx.send(DaemonEvent::PlatformAuthenticationRequired {
+                                    kind: PlatformKind::YouTube,
+                                    reason: rejected.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
                 continue;
             }
             if status == 429 || status == 503 {
