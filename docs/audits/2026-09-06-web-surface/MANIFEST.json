@@ -29,7 +29,7 @@
   "counts": {
     "P0": 2,
     "P1": 13,
-    "P2": 14,
+    "P2": 15,
     "P3": 11
   },
   "closure_requirements": [
@@ -1298,6 +1298,35 @@
       "evidence_paths": [
         "crates/strivo-bin/src/main.rs",
         "crates/strivo-bin/src/cli.rs"
+      ]
+    },
+    {
+      "id": "V12",
+      "priority": "P2",
+      "status": "closed",
+      "owner_role": "assets",
+      "assignee": null,
+      "evidence_classes": [
+        "C",
+        "B"
+      ],
+      "finding": "Vendored-asset attribution was false in a specific, checkable way. crates/strivo-web/assets/icons/candy/ATTRIBUTION.md claimed twelve SVGs were 'extracted from EliverLara/candy-icons' and 'unmodified — only renamed', with a per-file upstream mapping. Two were not from candy-icons at all: home.svg (claimed places/48/folder.svg) and recordings.svg (claimed places/48/folder-blue.svg) depicted different artwork entirely — a house-folder and a video-folder rather than plain gradient folders. A project member had reported the icons looked algorithmically generated; that suspicion was well-founded as to these two files being non-upstream, but the generation hypothesis was WRONG.",
+      "remediation_and_acceptance": "Establish real provenance against upstream, then make the files and the attribution agree without degrading the UI. Acceptance: every vendored icon is byte-identical to a named upstream path, and every attribution claim is true.",
+      "dependencies": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ b220d0e",
+          "command": "git clone --depth 1 of EliverLara/candy-icons and EliverLara/Sweet-folders; sha256sum/cmp of all 22 vendored SVGs and both LICENSE files against their stated upstream paths",
+          "observed": "THE DELEGATED VERIFIER'S CONCLUSION WAS CORRECTED. It found the two files non-upstream and, citing coincident duplicate path points, leaned toward algorithmic generation with origin 'not established'; it then replaced them with genuine candy-icons folders. Orchestrator noticed the byte sizes (1895, 3160) matched files in the SIBLING sweet-folders/ directory and tested it: home.svg and recordings.svg are BYTE-IDENTICAL (sha256 ce1b5580… and a1bd76cf…) to sweet-folders/folder-home.svg and folder-videos.svg. They are genuine Eliver Lara artwork from his OTHER project, misfiled under the candy attribution — not fabricated. The verifier's replacement was therefore rejected: swapping the house-folder and video-folder for plain gradient folders would have degraded the nav semantics and discarded deliberate design intent. Independent verification against candy-icons 83512fb (2026-03-06) and Sweet-folders 40a5d36 (2025-02-14): the other ten candy icons are byte-identical to their stated paths, all ten sweet-folders icons are byte-identical to Sweet-Purple/Places/48/, and both bundled LICENSE files match upstream. Fix: removed the two duplicates from candy/, repointed the top-bar nav at the sweet-folders copies the SPA already referenced elsewhere, and recorded dated corrections in both ATTRIBUTION files. Rendered UI unchanged; cargo build clean; Playwright 71/71 including the top-bar icon-nav test.",
+          "reviewer": "orchestrator — cloned both upstreams and re-ran every comparison first-hand, and overrode the delegated agent's diagnosis and its fix",
+          "regression": "e2e 'top-bar icon nav reaches the recordings table' exercises the repointed paths",
+          "environment": "Linux; upstream clones taken 2026-09-07 and deleted afterwards"
+        }
+      ],
+      "evidence_paths": [
+        "crates/strivo-web/assets/icons/candy/ATTRIBUTION.md",
+        "crates/strivo-web/assets/icons/sweet-folders/ATTRIBUTION.md",
+        "crates/strivo-web/assets/spa.js"
       ]
     }
   ]
