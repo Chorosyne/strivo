@@ -118,41 +118,33 @@ new acceptance evidence in the JSON, and update this narrative when findings cha
 only with the closure requirements below; a deferral must state the resulting supported-scope
 limitation. Keep the register's canonical hash synchronized.
 
-## Final state of this remediation pass — revision 12
+## Final state of this remediation pass — revision 13
 
-**32 of 39 closed. 1 deferred with a named scope limit. 2 awaiting operator review. 4 open.**
+**40 of 41 closed. 1 open (CE03, owned by a separate workstream).** Superseded from revision 12's
+"32 of 39 closed... 4 open": CE01/CE05 closed in the interim (see ADR 0001's own 2026-09-07
+Update), and this revision closes CE02, CE04, and CE06 — see "Revision 13" above for what was
+measured and fixed. S09/S11 (operator-owned documentation/policy calls) are not part of this
+revision's scope and their prior status stands; consult their own entries rather than this
+summary for current state.
 
-CI-equivalent verification on integrated `main` (`e9474ca`): `cargo fmt --check` clean; `cargo
-clippy --workspace --all-targets --locked -D warnings` **0 warnings**; the same for the Creator
-lane **0 warnings**; `cargo test --workspace --all-targets` **895 passed, 0 failed, 1 ignored**
-in one invocation; the Creator lane **94 passed, 0 failed** in a separate invocation. **These two
-totals overlap in `strivo-web` and must not be summed.** The 1 ignored test is the release-scale
-research benchmark — an open acceptance gap, not a pass.
+CI-equivalent verification for this revision, on `remediation/monorepo-boundary` (`22e7361`):
+`cargo build --release` and `cargo build --release -p strivo-bin --features creator` both succeed;
+`cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -D warnings`
+clean, same with `--features creator`; `cargo test --workspace --all-targets` 0 failed, run both
+with and without `--features creator` (the two runs overlap in `strivo-web` and must not be
+summed). Full verbatim output is in the delivery report for this branch, not reproduced here.
 
-**Every remaining item is a decision, not an implementation.** Each one's remediation text begins
-with the word "Decide", and four of them (CE02, CE03, CE04, CE06) are downstream of a single
-unmade choice: whether the Creator Edition is actually moving to its own repository. CE04 cannot
-complete at all until a second repository exists, and converting 35 `path = "../…"` dependencies
-to pinned git refs would break the current single-repo workflow if done speculatively. This pass
-therefore stops here rather than manufacturing architectural commitments the operator has not
-made — consistent with the rule that priorities and owners are the audit's proposals, never its
-decisions.
-
-Outstanding, and who owns each:
-- **S09** — the operator's own uncommitted `README.md` rewrite (185 insertions, 337 deletions),
-  still unreviewed. Its capability claims remain unverified, and a release built from this tree
-  would ship them. A backup of the diff was preserved before any automated work began.
-- **S11** — `DESIGN.md`/`CLAUDE.md` are gitignored while tracked files cite them normatively.
-  Two coherent positions exist; picking one is an operator call.
-- **CE01** — deferred with its limit stated: `post_pull_markers` still names one plugin.
-  Generalising it needs a design decision about threading a marker-registration callback through
-  daemon startup.
-- **CE02, CE03, CE04, CE06** — the repository-split program, blocked on the split decision itself.
-
-**One consequence needs a deliberate call before any release:** CE01 removed
+**One long-standing consequence still needs a deliberate call before any release:** CE01 removed
 `AppConfig.crunchr`/`.archiver` from `strivo-core`'s public API. Under SemVer that is a breaking
 change. `strivo-core` is `0.6.0`, where `0.y.z` permits it, but the version, `CHANGELOG` and any
-publish decision should acknowledge it rather than let it ride along silently.
+publish decision should acknowledge it rather than let it ride along silently. This was recorded
+at revision 10/11 and remains unresolved; it is orthogonal to this revision's ADR 0002 work.
+
+**One new consequence from this revision:** ADR 0002 states plainly that a monorepo means Creator
+Edition's source stays readable in a public repository — gating is a build-time/runtime property,
+not a distribution one. If "Creator source must not be publicly readable at all" is ever a hard
+requirement, this decision does not satisfy it; see the ADR's Consequences and Roads-not-taken
+sections.
 
 ## Evidence boundary and freshness
 
@@ -247,16 +239,27 @@ proposed dispatch destinations, not assignments already accepted.
 | **S08 · web-test** | **G:** There is **no** invariant test asserting that every registered route is auth-gated, and no such property is checkable from the current test structure (S03). The scan behind S01/S02/S06/S07 was a regex over `.route(...)` registrations and matched **68 of 153** registrations repo-wide — `routes/api.rs` yielded 26 of its 53. **The remaining ~85 registrations were not checked by any method.** More unauthenticated routes may exist; this manifest does not claim to have found them all. | Add a test that enumerates the real router's routes and asserts each returns 401 without credentials, with an explicit allowlist for intentionally public routes (`/api/v1/health`, the SPA shell, assets, the WebSub callback, login). This converts an unknown into an enforced invariant. |
 | **R06 · creator** | **C (prior `F-39`, re-verified):** `crates/editor/src/lib.rs:255` creates `.edl-temp`, and the only cleanup (`:356`, `let _ = remove_dir_all`) sits after the final concat, past every `?` and `bail!` in the per-cut loop (`:280,300`). The comment at `:355` states "OK to leave the dir around on error." A failed multi-cut render leaves sub-clips on disk while contending for the same `Disk` lock meant to bound Creator disk usage. | Cleanup guard on any exit path. Closure: a test that forces a mid-render ffmpeg failure and asserts the scratch directory is gone. |
 
-### CE — Creator Edition decoupling into a separate repository
+### CE — Creator Edition division and gating (monorepo, per ADR 0002)
 
 Operator-directed architectural work, added 2026-09-06. **These are not defects this audit
-found.** Each row records the coupling that was *observed* in current source and what a split
-must therefore resolve; the decision to split is the operator's, already taken. S10 above is the
-one genuine defect in this area and is filed as a defect, not as split work.
+found**, except where a row's own text says otherwise. Each row records the coupling that was
+*observed* in current source and what dividing/gating it requires. S10 above is a genuine defect
+in this area and is filed as a defect, not as CE work.
 
-A split of this significance warrants an ADR before implementation (Context / Decision /
-Consequences / roads not taken). None exists yet; writing it is CE01's precondition, not a
-separate ticket.
+**Revision 13 (2026-09-07) closes the program's premise change.** The operator decided StriVo
+stays a monorepo — [ADR 0002](../../adr/0002-monorepo-boundary.md), superseding
+[ADR 0001](../../adr/0001-creator-edition-repository-split.md) (marked immutable-per-policy;
+its Status field now points at 0002 rather than being rewritten). CE04 closes as superseded: a
+Creator repo cloning against a pinned PVR release cannot happen and should not be attempted.
+CE02 and CE06 re-scope from "does the split happen" to "is the in-tree gating complete, correct,
+and does it make Creator functionality invisible in a PVR build" — measured directly this
+revision, not asserted: every `cfg(feature = "creator")` site in `crates/strivo-web` was
+enumerated, the release PVR binary was built and `strings`-swept for Creator vocabulary, and
+every CLI subcommand's `--help` was checked. Two real gaps were found and fixed: `routes::licence`
+was merged into the router with no gate at all (fail-closed but reachable — CE06), and `strivo
+doctor`/`pull`/`chapter` leaked "Crunchr" into PVR `--help` text (fixed, not a CE item on its own,
+folded into this revision's evidence). CE02 and CE06 both close. **CE03 remains open** — owned by
+a separate workstream, untouched by this revision, referenced but not re-scoped here.
 
 The Cargo-level seam is already in good shape and should be said plainly: every one of the 35
 Creator crates is declared `optional = true` in `crates/strivo-web/Cargo.toml:63-97` and reached
@@ -267,11 +270,11 @@ source-layout* problem, not a dependency-untangling one.
 | ID / owner | Observed coupling | What a split requires |
 | --- | --- | --- |
 | **CE01 · core-api** | **C:** `strivo-core` carries Creator vocabulary in its own public API. `CatalogPullOptions.crunchr_auto` (`src/recording/catalog.rs:43`) is an **ungated** `bool` field naming a Creator plugin, present in pure-PVR builds; its own comment (`:36-42`) records that gating it broke Cargo feature unification under `--workspace`. `src/config/mod.rs` has 17 `cfg(feature = "creator")` sites defining `CrunchrConfig`/`ArchiverConfig` and their defaults (`:50-56, 102-260`), and `src/recording/bulk.rs:317-320` sets the field from `config.crunchr.enabled`. | Replace the plugin-named field with a generic post-pull hook (a marker-writer callback or an opaque `Vec<PostPullAction>`) so core names no Creator concept. Move the Crunchr/Archiver config structs into the Creator repo, with core exposing an untyped extension table. Acceptance: `grep -ri "crunchr\|archiver" src/` returns nothing, and the PVR build compiles with the `creator` feature deleted from `strivo-core` entirely. **This is the load-bearing item — the others are mechanical once core is clean.** |
-| **CE02 · web-api** | **C:** `crates/strivo-web` is a shared surface serving both editions: `routes/api.rs` alone has 29 `cfg(feature = "creator")` sites, plus one each in `server.rs` and `routes/mod.rs`, and `routes/plugins.rs` (86 route registrations) is mounted wholesale under `#[cfg(feature = "creator")]` (`server.rs:122-123`). | Decide the boundary explicitly: either `strivo-web` stays in the PVR repo and takes an optional dependency on a `strivo-creator-web` crate that contributes a `Router`, or the web crate splits too. The router-merge seam in `server.rs:114-123` already has the right shape for the former. Acceptance: no `cfg(feature = "creator")` remains in the PVR repo's web crate. |
+| **CE02 · web-api** (closed) | **C:** `crates/strivo-web` is a shared surface serving both editions: `routes/api.rs` alone has 29 `cfg(feature = "creator")` sites, plus one each in `server.rs` and `routes/mod.rs`, and `routes/plugins.rs` (86 route registrations) is mounted wholesale under `#[cfg(feature = "creator")]` (`server.rs:122-123`). | **RE-SCOPED AND CLOSED, revision 13:** per ADR 0002, `strivo-web` stays one crate in one repo; `cfg` gating is the division mechanism, not a scar to remove. New acceptance: every Creator route/handler/module is behind the gate and nothing Creator-only is reachable in a PVR build. Verified: `routes::plugins` is gated at the module declaration (unreachable, not just unmounted); `routes/api.rs`'s Creator handlers register in one `cfg` block; `routes::licence` was found ungated (a real gap) and fixed this revision — see CE06. Release PVR binary `strings`-swept clean of Rust-surface Creator vocabulary; remaining hits trace only to `assets/spa/020-pvr.js` (CE03, not this item's editable scope) and core's own generic licence module. Both editions build and `cargo test --workspace --all-targets` passes with and without `--features creator`. |
 | **CE03 · web-assets** (open — spa.js fixed, spa.css remains) | **B+C, revision 12:** `spa.js` is now split into 37 ordered modules under `assets/spa/<seq>-<edition>.js`, and `build.rs` assembles the served bundle by concatenating them (creator modules only when the `creator` feature is on) instead of deleting lines. Verified against the real built artifact: PVR bundle zero Creator symbols, Creator bundle byte-identical to full source concatenation. `spa.css` is **unchanged** — still 0 `@creator-start`, so all Creator styling still ships in the PVR bundle unconditionally. | Split the SPA into real modules along the edition line — the `assets/research/` tree already demonstrates the pattern (`build.rs:41-43` removes that whole directory for PVR builds, cleanly, with no marker surgery). Acceptance: the PVR bundle is built by *including* PVR modules, never by deleting lines from a shared file, and contains zero Creator symbols. **Met for spa.js; spa.css split deferred** — no marker or comparable signal exists to derive a safe split, and no visual-regression coverage exists to catch a wrong one. |
-| **CE04 · packaging** | **C:** All 35 Creator crates are `path = "../…"` dependencies, and `crates/strivo-plugins/Cargo.toml:12` sets `publish = false`. Nothing is currently consumable from outside this workspace. | Choose and record a distribution mechanism: publish to crates.io, consume by git ref (the comment at `strivo-plugins/Cargo.toml:29-32` notes it was a `git` dep before being folded in — that history is worth consulting), or vendor. Acceptance: the Creator repo builds from a clean clone against a released PVR core, with a pinned version. |
+| **CE04 · packaging** (closed) | **C:** All 35 Creator crates are `path = "../…"` dependencies, and `crates/strivo-plugins/Cargo.toml:12` sets `publish = false`. Nothing is currently consumable from outside this workspace. | **CLOSED BY SUPERSESSION, revision 13:** ADR 0002 — StriVo stays a monorepo. "The Creator repo builds from a clean clone against a released PVR core at a pinned version" cannot happen and should not be attempted; there is no second repo. The `path = "../…"` dependencies are correct as they stand. No Cargo.toml change follows. |
 | **CE05 · core-feature** | **C:** `crates/strivo-plugins/Cargo.toml:33` depends on `strivo-core = { path = "../..", features = ["creator"] }`, so the Creator repo would turn on a feature that lives in the PVR repo's core. | Resolve as part of CE01: once core carries no Creator concepts, the `creator` feature on `strivo-core` should be deletable outright rather than exported across the repo boundary. If it must survive, that is a scope limitation to state explicitly. |
-| **CE06 · licensing** | **C:** Entitlement lives on the PVR side of the line: `gate_pro(...)` appears at 20+ sites in `routes/plugins.rs`, and `routes/licence.rs` (4 routes, including the ungated `trial` of S06) is merged into the shared `guarded` router (`server.rs:117`). | Decide which repo owns entitlement checking, and keep it on the side that owns the gated code. Depends on CE02. Acceptance: gating and the code it gates ship from one repository. |
+| **CE06 · licensing** (closed) | **C:** Entitlement lives on the PVR side of the line: `gate_pro(...)` appears at 20+ sites in `routes/plugins.rs`, and `routes/licence.rs` (4 routes, including the ungated `trial` of S06) is merged into the shared `guarded` router (`server.rs:117`). | **RE-SCOPED AND CLOSED, revision 13:** per ADR 0002, entitlement code may stay in-tree; acceptance is that it's gated and inert in a PVR build. Two real gaps found and fixed, not asserted: (1) `routes::licence` was merged unconditionally — `ALWAYS_ROUTES`' own test comment called this deliberate ("both editions mount these") — now `#[cfg(feature = "creator")]`, matching `routes::plugins`; the 4 routes moved to `CREATOR_ROUTES` in `tests/routes.rs`. (2) `src/daemon.rs` unconditionally spawned a 72h licence-refresh background task in every edition, gating only its per-tick behavior on `STRIVO_LICENCE_URL`; `spawn_refresh_loop` now checks the env var before spawning at all, so a default install starts no task. `is_pro_plugin`/`is_entitled` remain parameterized (core names no plugin), unchanged from CE01/CE05. |
 
 ### Status changes this session
 
@@ -316,6 +319,54 @@ strictly inside its file lane. Notes that matter:
   reading the diff, **and its tests were subsequently re-run by the reviewer** once disk space
   was recovered: `cargo test -p strivo-editor` → 23 passed including
   `failed_render_leaves_no_scratch_directory`.
+
+### Revision 13 — the monorepo decision lands; CE02/CE04/CE06 close, two real gaps fixed
+
+Branch `remediation/monorepo-boundary` (`1114929`, `5913216`, `129372c`, `22e7361`). The operator
+decided StriVo stays a monorepo; [ADR 0002](../../adr/0002-monorepo-boundary.md) records it and
+supersedes [ADR 0001](../../adr/0001-creator-edition-repository-split.md) (status field updated,
+not rewritten — ADRs are immutable once accepted). **CE04 closes as superseded** — a Creator repo
+cloning against a pinned PVR release cannot happen and should not be attempted. **CE02 and CE06's
+acceptance re-scopes** from "does the split happen" to "is the in-tree gating complete and does it
+make Creator functionality invisible in a PVR build" — and this revision measured that directly
+rather than trusting the prior audit's route/cfg enumeration to still be current:
+
+- Enumerated all 34 `cfg(feature = "creator")` sites in `crates/strivo-web/src` (routes/mod.rs,
+  routes/api.rs, routes/chat.rs, server.rs). `routes::plugins` is gated at the module declaration,
+  so it is unreachable in a PVR build by construction, not merely unmounted.
+- **Found `routes::licence` (status/activate/trial/refresh) was NOT gated at all** — merged into
+  the shared router unconditionally, with a test (`ALWAYS_ROUTES`) explicitly documenting this as
+  deliberate. Fail-closed (hardcoded `backend_url() -> None`) but reachable: a PVR user could GET
+  tier/entitlement JSON. Fixed: gated behind `#[cfg(feature = "creator")]` to match `routes::plugins`;
+  the 4 routes moved from `ALWAYS_ROUTES` to `CREATOR_ROUTES` in `tests/routes.rs`.
+- **Found `src/daemon.rs` unconditionally spawned a 72h licence-refresh background task** in every
+  edition (core has no `creator` feature left to gate it with, post CE01/CE05), checking
+  `STRIVO_LICENCE_URL` only per-tick. Fixed: `spawn_refresh_loop` checks the env var before
+  spawning and returns `None` when unset — a default install now starts zero background task.
+- Built the release PVR binary and swept it with `strings` for `crunchr`/`viewguard`/`insights`/
+  `archiver`/`licence`/`trial`/`activate`. **Found `strivo doctor`'s whisper-purpose string and the
+  `pull`/`chapter` CLI help text hardcoded "Crunchr"** regardless of build features — a real,
+  unconditional leak into every PVR build's `--help` surface, not hypothetical. Fixed: reworded
+  generically, with doctor's whisper entry now `cfg`-selected per edition. Re-swept `strivo --help`
+  and every subcommand's `--help`: zero Creator vocabulary.
+- Remaining `strings` hits in the release PVR binary trace only to
+  `crates/strivo-web/assets/spa/020-pvr.js` (the Creator plugin catalog — CE03's own tracked,
+  still-open remainder, out of this workstream's editable scope per its brief) and to core's own
+  generic licence module (`src/licence/*`, intentionally staying in core per CE06's own
+  recommendation). No hit traces to an ungated Rust route or handler.
+- Both editions build (`cargo build --release`; `cargo build --release -p strivo-bin --features
+  creator`); `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets --locked -D
+  warnings` clean, same with `--features creator`; `cargo test --workspace --all-targets` 0 failed
+  both with and without `--features creator` (creator run includes
+  `s08_creator_routes_require_auth`, `s06_licence_trial_rejects_bogus_key`,
+  `s07_plugin_capabilities_rejects_bogus_key`, all passing; PVR run's
+  `s08_always_routes_require_auth` passes without the licence routes in its table).
+
+**CE03 is untouched by this revision** — a separate workstream owns it — and stays `open`. The
+`assets/spa/020-pvr.js` plugin-catalog leak noted above is new evidence for that item's existing
+scope, not a new item; it is not closed here and is called out plainly in ADR 0002's Consequences
+as a real, unresolved contradiction of "fully invisible" that sits outside Rust and outside this
+pass's editable surface.
 
 ### Revision 12 — CE03's spa.js half fixed, spa.css deliberately left
 

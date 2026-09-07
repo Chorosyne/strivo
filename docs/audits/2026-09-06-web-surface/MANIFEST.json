@@ -5,7 +5,7 @@
  "head": "bd17f6107c83e348162974fade941eb42f423ebc",
  "tree_dirty_paths": 1,
  "canonical_manifest": "MANIFEST.md",
- "canonical_sha256": "d0228da7d9f9c3a8f6c238adc6509f2443e665f70a2a0e679d2bf5212440e554",
+ "canonical_sha256": "d50d59216db083b323ff15a7b77437ed73ae073a85e02e26737285f0eceaf817",
  "evidence_index": "EVIDENCE.json",
  "supersedes": [
   "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
@@ -656,14 +656,14 @@
   {
    "id": "CE02",
    "priority": "P1",
-   "status": "open",
+   "status": "closed",
    "owner_role": "web-api",
    "assignee": null,
    "evidence_classes": [
     "C"
    ],
    "finding": "OBSERVED COUPLING: crates/strivo-web is a shared surface serving both editions. routes/api.rs alone has 29 cfg(feature=\"creator\") sites, plus one each in server.rs and routes/mod.rs, and routes/plugins.rs (86 route registrations) is mounted wholesale under #[cfg(feature=\"creator\")] at server.rs:122-123. UPDATE 2026-09-06: DECISION RECORDED in ADR 0001 — keep one strivo-web in the PVR repo, taking an optional dependency on a Creator-contributed Router merged at the existing server.rs:114-123 seam. Splitting the web crate was considered and rejected: auth, CSRF, telemetry and settings are all currently shared, so the blast radius is far larger for a problem the existing merge seam already solves. No code changed.",
-   "remediation_and_acceptance": "Decide the boundary explicitly: either strivo-web stays in the PVR repo and takes an optional dependency on a strivo-creator-web crate contributing a Router, or the web crate splits too. The router-merge seam at server.rs:114-123 already suits the former. Acceptance: no cfg(feature=\"creator\") remains in the PVR repo's web crate. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
+   "remediation_and_acceptance": "Decide the boundary explicitly: either strivo-web stays in the PVR repo and takes an optional dependency on a strivo-creator-web crate contributing a Router, or the web crate splits too. The router-merge seam at server.rs:114-123 already suits the former. Acceptance: no cfg(feature=\"creator\") remains in the PVR repo's web crate. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.\n\nRE-SCOPED AND CLOSED (revision 13, ADR 0002, 2026-09-07): under the monorepo decision the original acceptance (\"no cfg(feature = \\\"creator\\\") remains in the PVR repo's web crate\") is inverted — cfg gating IS the division mechanism now, so removing it would remove the boundary. New acceptance: every Creator route, handler, module and background behavior in crates/strivo-web is behind #[cfg(feature = \"creator\")] (or an equivalent runtime-inert gate), with nothing Creator-only reachable in a PVR build. Measured, not assumed — see closure_evidence.",
    "dependencies": [
     "CE01"
    ],
@@ -674,6 +674,13 @@
      "observed": "Decision recorded with Context, Decision, Consequences and an explicit Roads-not-taken section that names six rejected alternatives with reasons, including the scope constraint that blocked CE01. ADR Status is 'Proposed'.",
      "reviewer": "Reviewer read the ADR structure and its roads-not-taken. This is a DECISION awaiting operator acceptance — an ADR marked Proposed is not an accepted decision, and per this manifest's own rules an owner assignment or architectural commitment is the operator's to make, not the audit's.",
      "environment": "No code change accompanies this item by design."
+    },
+    {
+     "revision": "remediation/monorepo-boundary @ 22e7361 (branch tip; fixes at 1114929, 5913216, 129372c)",
+     "command": "grep -rn 'cfg(feature = \"creator\"' crates/strivo-web/src | wc -l; grep -n 'creator' crates/strivo-web/src/routes/mod.rs crates/strivo-web/src/server.rs; cargo build --release; cargo build --release -p strivo-bin --features creator; strings -a target/release/strivo | grep -ci 'crunchr\\|viewguard\\|insights\\|archiver\\|licence\\|trial\\|activate'; target/release/strivo --help; target/release/strivo <every-subcommand> --help; cargo test --workspace --all-targets; cargo test --workspace --all-targets --features creator",
+     "observed": "34 cfg(feature = \"creator\") sites in crates/strivo-web/src (routes/mod.rs, routes/api.rs, routes/chat.rs, server.rs). routes::plugins is gated at the module declaration (routes/mod.rs) — it does not compile into a PVR build at all — and its router merge in server.rs is behind the same cfg, so routes/plugins.rs is unreachable in a PVR build by construction, not just unmounted. routes::licence was NOT gated (merged unconditionally at server.rs) going into this pass — a genuine gap, fixed in commit 1114929 (see CE06 for detail; the same fix closes part of this item's bar). routes/api.rs's Creator-only handlers (pipelines, marketplace, archiver tandem, plugin capabilities/RPC) are each registered inside a single #[cfg(feature = \"creator\")] block in router() (api.rs:~3335-3363), not scattered per-route, so there is one place to audit rather than 15. routes/chat.rs's CHAT_PRO_PLUGINS resolves to an empty slice under cfg(not(feature = \"creator\")), matching CE05/CE01's parameterized-gate design. Both editions build clean (`cargo build --release`, `cargo build --release -p strivo-bin --features creator`, both succeeded, verbatim output in the delivery report). Release PVR binary strings sweep for crunchr/viewguard/insights/archiver/licence/trial/activate: all remaining hits trace to crates/strivo-web/assets/spa/020-pvr.js (the Creator plugin catalog, still compiled into the PVR bundle — CE03's tracked, unclosed remainder, out of this item's editable scope and NOT closed by this pass) and to core's own licence module (src/licence/*, which is generic and stays in core per the CE06 recommendation this ADR reaffirms) — no hit traces to an ungated Rust route or handler in strivo-web. strivo --help and every subcommand's --help carry zero Creator vocabulary (verified after the CE06/CLI fixes below). cargo test --workspace --all-targets: 0 failed, both with and without --features creator (creator run includes s08_creator_routes_require_auth, s06_licence_trial_rejects_bogus_key, s07_plugin_capabilities_rejects_bogus_key, all passing).",
+     "reviewer": "same agent that made the fixes; all commands re-run from the committed tree, not accepted from an earlier run. Operator has NOT independently reviewed.",
+     "environment": "Linux, rustc 1.98.0, release profile for the strings/CLI sweep, debug profile for tests."
     }
    ],
    "evidence_paths": [
@@ -722,14 +729,14 @@
   {
    "id": "CE04",
    "priority": "P2",
-   "status": "open",
+   "status": "closed",
    "owner_role": "packaging",
    "assignee": null,
    "evidence_classes": [
     "C"
    ],
    "finding": "OBSERVED COUPLING: all 35 Creator crates are path = \"../…\" dependencies (crates/strivo-web/Cargo.toml:63-97) and crates/strivo-plugins/Cargo.toml:12 sets publish = false. Nothing is consumable from outside this workspace today. Positive counterpart worth recording: every Creator crate is already optional = true and reached only via the creator feature (:18-56), and default-members restricts a bare cargo build to the three PVR crates — the Cargo seam is already clean. UPDATE 2026-09-06: RECOMMENDATION DELIVERED in ADR 0001 — git dependency at pinned tags, not crates.io and not vendoring. Reasoning: the repo already folded strivo-plugins in FROM a git dependency (comment at strivo-plugins/Cargo.toml:29-32), crates.io forces per-crate semver and publish discipline before a release process exists to justify it, and vendoring recreates the single-history coupling the split exists to remove. No Cargo.toml was changed — deliberately, as premature before a second repository exists.",
-   "remediation_and_acceptance": "Choose and record a distribution mechanism: crates.io, git ref, or vendoring. The comment at strivo-plugins/Cargo.toml:29-32 notes it was a git dependency before being folded into this workspace; that history is worth consulting first. Acceptance: the Creator repo builds from a clean clone against a released PVR core at a pinned version. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
+   "remediation_and_acceptance": "Choose and record a distribution mechanism: crates.io, git ref, or vendoring. The comment at strivo-plugins/Cargo.toml:29-32 notes it was a git dependency before being folded into this workspace; that history is worth consulting first. Acceptance: the Creator repo builds from a clean clone against a released PVR core at a pinned version. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.\n\nCLOSED BY SUPERSESSION (revision 13, ADR 0002, 2026-09-07): the operator decided StriVo stays a monorepo — see docs/adr/0002-monorepo-boundary.md, which supersedes ADR 0001. \"The Creator repo builds from a clean clone against a released PVR core at a pinned version\" cannot happen and should not be attempted: there is no second repo to clone. The path = \"../…\" dependencies this item flagged as provisional are simply correct for a monorepo. No Cargo.toml change follows from this closure — the prior state was already right for the decision that was actually made.",
    "dependencies": [
     "CE01"
    ],
@@ -740,6 +747,13 @@
      "observed": "Decision recorded with Context, Decision, Consequences and an explicit Roads-not-taken section that names six rejected alternatives with reasons, including the scope constraint that blocked CE01. ADR Status is 'Proposed'.",
      "reviewer": "Reviewer read the ADR structure and its roads-not-taken. This is a DECISION awaiting operator acceptance — an ADR marked Proposed is not an accepted decision, and per this manifest's own rules an owner assignment or architectural commitment is the operator's to make, not the audit's.",
      "environment": "No code change accompanies this item by design."
+    },
+    {
+     "revision": "remediation/monorepo-boundary @ 22e7361 (branch tip; fixes at 1114929, 5913216, 129372c)",
+     "command": "review of docs/adr/0002-monorepo-boundary.md; grep -n 'path = ' crates/strivo-web/Cargo.toml crates/strivo-plugins/Cargo.toml",
+     "observed": "ADR 0002 (Accepted) records the monorepo decision with Context/Decision/Consequences and an explicit Roads-not-taken section that names the repository split as a road not taken and preserves ADR 0001's own reasoning for it. crates/strivo-web/Cargo.toml and crates/strivo-plugins/Cargo.toml still use path = \"../…\" dependencies for every Creator crate, which is the correct shape for a single-repo workspace, not a leftover to fix. ADR 0001's status field was updated to point at 0002 rather than rewritten, per the project's immutable-ADR policy; the ADR index (docs/adr/README.md) lists both.",
+     "reviewer": "same agent that wrote the ADR; the operator's decision is asserted as given context for this task, not independently re-derived by this audit pass",
+     "environment": "No Cargo.toml change accompanies this closure by design — see remediation_and_acceptance."
     }
    ],
    "evidence_paths": [
@@ -779,14 +793,14 @@
   {
    "id": "CE06",
    "priority": "P2",
-   "status": "open",
+   "status": "closed",
    "owner_role": "licensing",
    "assignee": null,
    "evidence_classes": [
     "C"
    ],
    "finding": "OBSERVED COUPLING: entitlement lives on the PVR side of the line. gate_pro(...) appears at 20+ sites in routes/plugins.rs, and routes/licence.rs (4 routes, including the ungated trial of S06) is merged into the shared guarded router at server.rs:117. UPDATE 2026-09-06: DECISION RECORDED in ADR 0001 — entitlement (is_entitled / PRO_PLUGINS) should move to the Creator repo. Not executed: blocked by the same off-limits routes/plugins.rs and routes/licence.rs.",
-   "remediation_and_acceptance": "Decide which repository owns entitlement checking and keep it on the side that owns the gated code. Acceptance: gating and the code it gates ship from one repository. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
+   "remediation_and_acceptance": "Decide which repository owns entitlement checking and keep it on the side that owns the gated code. Acceptance: gating and the code it gates ship from one repository. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.\n\nRE-SCOPED AND CLOSED (revision 13, ADR 0002, 2026-09-07): under the monorepo decision entitlement code may stay in-tree; the acceptance bar is that it is gated and inert in a PVR build, not that it lives in a different repository. Two real gaps were found and fixed, not merely asserted.",
    "dependencies": [
     "CE02"
    ],
@@ -797,6 +811,13 @@
      "observed": "Decision recorded with Context, Decision, Consequences and an explicit Roads-not-taken section that names six rejected alternatives with reasons, including the scope constraint that blocked CE01. ADR Status is 'Proposed'.",
      "reviewer": "Reviewer read the ADR structure and its roads-not-taken. This is a DECISION awaiting operator acceptance — an ADR marked Proposed is not an accepted decision, and per this manifest's own rules an owner assignment or architectural commitment is the operator's to make, not the audit's.",
      "environment": "No code change accompanies this item by design."
+    },
+    {
+     "revision": "remediation/monorepo-boundary @ 22e7361 (branch tip; fixes at 1114929, 5913216, 129372c)",
+     "command": "grep -n 'routes::licence' crates/strivo-web/src/server.rs crates/strivo-web/src/routes/mod.rs; grep -n 'spawn_refresh_loop' src/daemon.rs src/licence/client.rs; cargo test -p strivo-web --test routes s08_always_routes_require_auth s08_creator_routes_require_auth s06_licence_trial_rejects_bogus_key --features creator; cargo test -p strivo-web --test routes s08_always_routes_require_auth",
+     "observed": "GAP 1 (found, fixed in commit 1114929): routes::licence (status/activate/trial/refresh — 4 routes) was merged into the shared router with NO cfg gate, and a dedicated test (tests/routes.rs's ALWAYS_ROUTES table, s08_always_routes_require_auth) explicitly documented this as deliberate: \"both editions mount these.\" The routes were fail-closed (backend_url() hardcoded None; gate::entitled() only true under debug_assertions + STRIVO_LICENCE_URL) but reachable — a PVR user could still GET /api/v1/licence/status and receive tier/entitled JSON. Fixed: routes::licence is now #[cfg(feature = \"creator\")] at the module (routes/mod.rs) and its router merge (server.rs), matching routes::plugins. The 4 routes moved from ALWAYS_ROUTES to CREATOR_ROUTES in tests/routes.rs; s06_licence_trial_rejects_bogus_key is now #[cfg(feature = \"creator\")]. Re-run: s08_always_routes_require_auth passes without the licence routes in its table (PVR build, feature off); s08_creator_routes_require_auth and s06_licence_trial_rejects_bogus_key pass with --features creator. GAP 2 (found, fixed in commit 129372c): src/daemon.rs's single run_with_plugins_at entrypoint (shared by both editions — strivo-core no longer has a creator feature to gate with, per CE01/CE05's completed work) unconditionally spawned a 72h licence-refresh background task on every daemon start, in every edition, checking STRIVO_LICENCE_URL only on each tick before doing anything — a live-but-idle task by default, not an absent one. spawn_refresh_loop now checks the env var before spawning and returns None when unset, so a default PVR (or Creator) daemon starts no task and makes no network call. Reintroducing a creator feature to strivo-core to gate this at compile time was considered and rejected (see ADR 0002's Roads not taken) as a bigger, decision-worthy core-API change outside this pass's standing. is_pro_plugin/is_entitled (src/licence/gate.rs) remain parameterized over a caller-supplied Pro-plugin slice, confirmed unchanged from the CE01/CE05 closure: routes/chat.rs passes an empty slice under cfg(not(feature = \"creator\")); routes/plugins.rs (Creator-only, module-gated) supplies the real PRO_PLUGINS const. Core names no plugin.",
+     "reviewer": "same agent that made the fixes; commands re-run from the committed tree. Operator has NOT independently reviewed.",
+     "environment": "Linux, rustc 1.98.0, debug profile for the test re-runs."
     }
    ],
    "evidence_paths": [
