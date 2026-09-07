@@ -121,7 +121,7 @@ async function tinyText(page: Page): Promise<Offender[]> {
 // [role=dialog] must not count twice, but two stacked palettes must.
 async function visibleDialogs(page: Page): Promise<string[]> {
   return page.evaluate(() => {
-    const sel = "[role=dialog], .app-modal.open, .kbd-help.open, #cmd-palette, #cmdk";
+    const sel = "[role=dialog], .app-modal.open, .kbd-help.open, #cmdk";
     return [...document.querySelectorAll(sel)]
       .filter((el) => {
         const r = el.getBoundingClientRect();

@@ -914,7 +914,38 @@ function commandList() {
     },
     { label: "Logout", run: () => API.logout().then(() => route("login")) },
   ];
-  return [...nav, ...actions];
+  // Recordings + channels are fetched once per palette open (see
+  // toggleCommandPalette) and cached here so every keystroke filters
+  // in-memory rather than re-hitting the API.
+  return [...nav, ...actions, ...cmdkDynamicItems];
+}
+
+// Recordings/channels quick-jump results, folded in from the deleted
+// #cmd-palette (single-palette consolidation). Repopulated once per
+// palette open, not per keystroke.
+let cmdkDynamicItems = [];
+let cmdkDynamicLoaded = false;
+
+async function loadCmdkDynamicItems() {
+  const [recs, chans] = await Promise.all([
+    API.recordings().then((r) => r.recordings || []).catch(() => []),
+    API.channels().then((r) => r.channels || []).catch(() => []),
+  ]);
+  cmdkDynamicItems = [
+    ...recs.map((r) => ({
+      label: `${niceTitle(r.stream_title) || "(no title)"} — ${r.channel_name || ""} · recording`,
+      run: () => { location.hash = "#/recordings"; },
+    })),
+    ...chans.map((c) => ({
+      label: `${c.display_name || c.name} — ${c.platform} · channel`,
+      run: () => {
+        location.hash = c.is_live
+          ? "#/library"
+          : `#/recordings?channel=${encodeURIComponent(c.display_name || c.name)}`;
+      },
+    })),
+  ];
+  cmdkDynamicLoaded = true;
 }
 
 function toggleCommandPalette() {
@@ -926,7 +957,7 @@ function toggleCommandPalette() {
     el.innerHTML = `
       <div class="card">
         <input id="cmdk-input" class="grid-filter" type="text"
-               placeholder="Type a command…" autocomplete="off" aria-label="Command palette">
+               placeholder="Type a command, recording, or channel…" autocomplete="off" aria-label="Command palette">
         <div id="cmdk-list" class="pl-list"></div>
       </div>`;
     document.body.appendChild(el);
@@ -940,7 +971,14 @@ function toggleCommandPalette() {
     cmdkSelected = 0;
     const input = el.querySelector("#cmdk-input");
     input.value = "";
+    // Repopulate the recordings/channels cache for this open, then
+    // paint (twice — once immediately with whatever's cached, again
+    // once the fetch resolves).
+    cmdkDynamicLoaded = false;
     paintCmdk();
+    loadCmdkDynamicItems().then(() => {
+      if (el.classList.contains("open")) paintCmdk();
+    });
     input.focus();
   }
 }
