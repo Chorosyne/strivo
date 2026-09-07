@@ -25,7 +25,7 @@
 .chat-tab:hover { background: rgba(255,255,255,0.06); }
 .chat-tab.active { background: rgba(110,86,207,0.25); }
 .chat-tab:disabled, .chat-tab.offline { opacity: 0.5; cursor: not-allowed; }
-.chat-tab-live { color: #f00; font-size: 0.6em; }
+.chat-tab-live { color: #f00; font-size: var(--text-micro, 11px); }
 .chat-tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-tab-unread, .chat-tab-mentions {
   font-size: 0.7em; padding: 0.05rem 0.4rem; border-radius: 999px;

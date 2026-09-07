@@ -14,9 +14,9 @@
 .rec-date { padding: 0.3rem 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border-light); border-radius: 4px; color: inherit; font-family: inherit; }
 /* History date heatmap — 12-week calendar grid above the rec list. */
 .hist-hm-wrap { margin: 0.5rem 0 0.8rem; padding: 0.5rem 0.7rem; background: rgba(0,0,0,0.2); border-radius: 6px; }
-.hist-hm-grid { display: flex; gap: 3px; align-items: flex-start; }
-.hist-hm-col { display: flex; flex-direction: column; gap: 3px; }
-.hist-hm-cell { width: 12px; height: 12px; border-radius: 2px; border: none; padding: 0; cursor: pointer; transition: transform 0.08s; }
+.hist-hm-grid { display: flex; gap: 2px; align-items: flex-start; }
+.hist-hm-col { display: flex; flex-direction: column; gap: 2px; }
+.hist-hm-cell { width: 16px; height: 16px; border-radius: 2px; border: none; padding: 0; cursor: pointer; transition: transform 0.08s; }
 .hist-hm-cell:hover { transform: scale(1.3); }
 .hist-hm-cell.active { box-shadow: 0 0 0 1px var(--accent, #b07cff); }
 .hist-hm-t0 { background: rgba(255,255,255,0.05); }

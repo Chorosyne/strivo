@@ -357,7 +357,7 @@ body.modal-open { overflow: hidden; }
   justify-content: center;
   width: 1.05em;
   height: 1.05em;
-  font-size: 0.78em;
+  font-size: var(--text-micro, 11px);
   border-radius: 50%;
   color: var(--accent2);
   cursor: help;
@@ -389,8 +389,8 @@ body.modal-open { overflow: hidden; }
 .stg-toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .stg-toggle-track {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 44px;
+  height: 24px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--border-light);
   border-radius: 999px;
@@ -400,8 +400,8 @@ body.modal-open { overflow: hidden; }
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 14px;
-  height: 14px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: var(--text);
   transition: transform 0.18s, background 0.18s;
@@ -411,7 +411,7 @@ body.modal-open { overflow: hidden; }
   border-color: transparent;
 }
 .stg-toggle input:checked + .stg-toggle-track .stg-toggle-knob {
-  transform: translateX(16px);
+  transform: translateX(20px);
   background: #fff;
 }
 .stg-toggle input:focus-visible + .stg-toggle-track {
@@ -496,7 +496,7 @@ body.modal-open { overflow: hidden; }
 .mon-plat {
   display: inline-block;
   margin-left: 0.5rem;
-  font-size: 0.62rem;
+  font-size: var(--text-micro, 11px);
   letter-spacing: 0.08em;
   padding: 0.05rem 0.45rem;
   border-radius: 4px;
@@ -603,7 +603,7 @@ body.modal-open { overflow: hidden; }
   color: var(--muted);
 }
 .pg-cap-state {
-  font-size: 0.62rem;
+  font-size: var(--text-micro, 11px);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 0 0.3rem;

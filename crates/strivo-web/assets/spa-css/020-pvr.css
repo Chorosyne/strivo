@@ -463,7 +463,7 @@
   padding: 0.2rem 0.4rem;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
-  font-size: 0.68rem;
+  font-size: var(--text-micro, 11px);
   font-weight: 600;
   color: var(--fg);
   text-decoration: none;
@@ -496,7 +496,7 @@
 .sys-gauge-wrap.gauge-crit { outline: 1px solid var(--recording); }
 .sys-gauge-legend {
   margin-top: 0.4rem;
-  font-size: 0.72rem;
+  font-size: var(--text-micro, 11px);
   color: var(--muted);
   display: flex;
   flex-wrap: wrap;

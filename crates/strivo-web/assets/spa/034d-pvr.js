@@ -845,7 +845,7 @@ async function renderSchedule() {
     ${statusBanner}
 
     <section class="cfg-card">
-      <h2 class="cfg-title">Capture limits <a href="#/settings/notifications" class="stg-linkbtn" style="margin-left:auto;font-size:0.78em">Configure go-live banners →</a></h2>
+      <h2 class="cfg-title">Capture limits <a href="#/settings/notifications" class="stg-linkbtn" style="margin-left:auto;font-size:var(--text-xs, 12px)">Configure go-live banners →</a></h2>
       <p class="mon-help">Safety knobs that defer new captures when StriVo is already busy or disk is tight. Zero in either field disables that cap.</p>
       <div class="mon-limits-grid">
         <label class="mon-limit">
