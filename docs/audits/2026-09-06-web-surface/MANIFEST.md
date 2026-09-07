@@ -102,6 +102,42 @@ new acceptance evidence in the JSON, and update this narrative when findings cha
 only with the closure requirements below; a deferral must state the resulting supported-scope
 limitation. Keep the register's canonical hash synchronized.
 
+## Final state of this remediation pass — revision 12
+
+**32 of 39 closed. 1 deferred with a named scope limit. 2 awaiting operator review. 4 open.**
+
+CI-equivalent verification on integrated `main` (`e9474ca`): `cargo fmt --check` clean; `cargo
+clippy --workspace --all-targets --locked -D warnings` **0 warnings**; the same for the Creator
+lane **0 warnings**; `cargo test --workspace --all-targets` **895 passed, 0 failed, 1 ignored**
+in one invocation; the Creator lane **94 passed, 0 failed** in a separate invocation. **These two
+totals overlap in `strivo-web` and must not be summed.** The 1 ignored test is the release-scale
+research benchmark — an open acceptance gap, not a pass.
+
+**Every remaining item is a decision, not an implementation.** Each one's remediation text begins
+with the word "Decide", and four of them (CE02, CE03, CE04, CE06) are downstream of a single
+unmade choice: whether the Creator Edition is actually moving to its own repository. CE04 cannot
+complete at all until a second repository exists, and converting 35 `path = "../…"` dependencies
+to pinned git refs would break the current single-repo workflow if done speculatively. This pass
+therefore stops here rather than manufacturing architectural commitments the operator has not
+made — consistent with the rule that priorities and owners are the audit's proposals, never its
+decisions.
+
+Outstanding, and who owns each:
+- **S09** — the operator's own uncommitted `README.md` rewrite (185 insertions, 337 deletions),
+  still unreviewed. Its capability claims remain unverified, and a release built from this tree
+  would ship them. A backup of the diff was preserved before any automated work began.
+- **S11** — `DESIGN.md`/`CLAUDE.md` are gitignored while tracked files cite them normatively.
+  Two coherent positions exist; picking one is an operator call.
+- **CE01** — deferred with its limit stated: `post_pull_markers` still names one plugin.
+  Generalising it needs a design decision about threading a marker-registration callback through
+  daemon startup.
+- **CE02, CE03, CE04, CE06** — the repository-split program, blocked on the split decision itself.
+
+**One consequence needs a deliberate call before any release:** CE01 removed
+`AppConfig.crunchr`/`.archiver` from `strivo-core`'s public API. Under SemVer that is a breaking
+change. `strivo-core` is `0.6.0`, where `0.y.z` permits it, but the version, `CHANGELOG` and any
+publish decision should acknowledge it rather than let it ride along silently.
+
 ## Evidence boundary and freshness
 
 Primary window: 2026-07-30 → 2026-09-06. Inspected HEAD `bd17f61`; **1 uncommitted path at entry**

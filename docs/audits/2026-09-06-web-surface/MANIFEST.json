@@ -5,7 +5,7 @@
   "head": "bd17f6107c83e348162974fade941eb42f423ebc",
   "tree_dirty_paths": 1,
   "canonical_manifest": "MANIFEST.md",
-  "canonical_sha256": "69ca87e8070df23f33a688aff2f0e7187874584a04d63c7728cb1be9ef9bfc2a",
+  "canonical_sha256": "d0228da7d9f9c3a8f6c238adc6509f2443e665f70a2a0e679d2bf5212440e554",
   "evidence_index": "EVIDENCE.json",
   "supersedes": [
     "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
