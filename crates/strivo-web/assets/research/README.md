@@ -1,8 +1,8 @@
 # Research UI modules (Creator Edition only)
 
 These ES modules build the Coding Studio surfaces over the research kernel
-(`crates/research`). They are imported from `spa.js` inside a
-`/* @creator-start */ … /* @creator-end */` block, and `build.rs` deletes this
+(`crates/research`). They are imported from a Creator-only module under
+`crates/strivo-web/assets/spa/` (see CE03), and `build.rs` deletes this
 whole directory from the PVR build — so nothing here ships in the free edition.
 
 One file per owner so the surfaces can be developed in parallel without

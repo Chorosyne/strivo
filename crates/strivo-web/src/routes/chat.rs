@@ -12,10 +12,10 @@
 //! plugin set (`routes::plugins::PRO_PLUGINS`) — and the SPA already treats
 //! `chat`/`viewer` as free routes: they're deliberately absent from
 //! `CREATOR_ROUTES` in spa.js, and their `API.chatRooms`/`API.chatSend`
-//! methods sit outside any `@creator-start` block, so both survive PVR
-//! stripping. This module (unlike `routes::plugins`) is compiled and
-//! mounted in every edition so the backend matches what the frontend
-//! already assumes.
+//! methods live in a PVR module under `assets/spa/` (see CE03), so both
+//! ship in every edition. This module (unlike `routes::plugins`) is
+//! compiled and mounted in every edition so the backend matches what the
+//! frontend already assumes.
 //!
 //! S17: these two used to live in `routes::plugins`, which is merged only
 //! under `#[cfg(feature = "creator")]` — a PVR build 404'd them the moment a
