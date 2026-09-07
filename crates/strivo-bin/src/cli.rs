@@ -58,7 +58,8 @@ pub enum Command {
         query: String,
     },
     /// Pull a creator's full back-catalog (Patreon, YouTube, Twitch) and feed
-    /// each episode to the recording + Crunchr pipeline.
+    /// each episode into the recording pipeline, plus whatever optional
+    /// post-pull plugin is configured.
     Pull {
         /// Target as `platform:channel_id`, e.g. `youtube:UCxxxx` or
         /// `patreon:1234567` or `twitch:7890`.
@@ -76,7 +77,7 @@ pub enum Command {
         /// Skip the dedupe index — re-download even if marked recorded.
         #[arg(long)]
         force: bool,
-        /// Don't auto-tandem to Crunchr; just download.
+        /// Don't run the optional post-pull plugin; just download.
         #[arg(long)]
         no_transcribe: bool,
     },
@@ -134,8 +135,8 @@ pub enum Command {
         /// MKV file to chapter.
         file: std::path::PathBuf,
         /// Emit one chapter every N minutes (default 10). Each chapter
-        /// is labeled "Part 1", "Part 2", … so semantic sources (Crunchr
-        /// topics, manual splits) can override later.
+        /// is labeled "Part 1", "Part 2", … so semantic sources (topic
+        /// detection, manual splits) can override later.
         #[arg(long, default_value = "10")]
         every: u64,
     },

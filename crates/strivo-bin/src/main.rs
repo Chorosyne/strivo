@@ -873,13 +873,23 @@ async fn handle_doctor() -> Result<()> {
     // runtime from within a runtime".
     let creds_summary = probe_platform_credentials().await;
 
+    // "whisper"'s purpose string names the Crunchr plugin only in a Creator
+    // build; a PVR build has no Crunchr, so it gets a generic description
+    // instead of leaking Creator vocabulary into `strivo doctor`'s output
+    // (ADR 0002 / CE06 — this surfaced as a real, ungated leak, not a
+    // hypothetical one, in a `strings` sweep of the release PVR binary).
+    #[cfg(feature = "creator")]
+    const WHISPER_PURPOSE: &str = "transcription (optional, Crunchr plugin)";
+    #[cfg(not(feature = "creator"))]
+    const WHISPER_PURPOSE: &str = "transcription (optional)";
+
     let tools: &[(&str, &str)] = &[
         ("ffmpeg", "recording (required)"),
         ("ffprobe", "multitrack stream inspection (required)"),
         ("mpv", "playback (required)"),
         ("streamlink", "Twitch stream resolution (required)"),
         ("yt-dlp", "YouTube/Patreon resolution (required)"),
-        ("whisper", "transcription (optional, Crunchr plugin)"),
+        ("whisper", WHISPER_PURPOSE),
     ];
     let mut missing_required = 0;
     println!("StriVo external tool check");
