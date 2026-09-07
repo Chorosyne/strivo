@@ -872,7 +872,19 @@ function route(name) {
   window.location.hash = `#/${name}`;
 }
 
-window.addEventListener("hashchange", render);
+// R03: the skip-link targets the in-page anchor `#content`, not a route —
+// every real route hash has the "#/..." shape (see `route()` above and
+// every `location.hash = "#/..."` assignment in this file). Re-running the
+// router for `#content` used to fall through `currentRoute()`'s unknown-
+// route fallback to "library" and repaint the whole chrome, replacing the
+// just-focused `<main id="content">` with a fresh node — a race against
+// the browser's own fragment-focus step that flaked the skip-link e2e
+// test. Real route changes still repaint; the skip-link's own navigation
+// no longer fights the browser for focus of the element it just landed on.
+window.addEventListener("hashchange", () => {
+  if (!window.location.hash.startsWith("#/")) return;
+  render();
+});
 
 // C1/C15: defensive preventDefault for anchors styled as buttons —
 // any <a href="#" data-action / data-seek / data-trace> would otherwise
