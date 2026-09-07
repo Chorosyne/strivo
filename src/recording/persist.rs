@@ -39,7 +39,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, TryLockError as StdTryLockError};
 use tokio::sync::Semaphore;
 
 use crate::platform::{PlatformKind, VodEntry};
@@ -179,8 +179,21 @@ impl PersistDb {
             .context("connection pool semaphore closed")?;
         loop {
             for slot in self.pool.conns.iter() {
-                if let Ok(guard) = slot.try_lock() {
-                    return f(&guard).context("sqlite operation failed");
+                match slot.try_lock() {
+                    Ok(guard) => return f(&guard).context("sqlite operation failed"),
+                    // A panic inside a previous borrow poisons the slot.
+                    // `StdMutex` reports that as an error indistinguishable
+                    // from contention, so skipping it would retire the
+                    // connection permanently and — once every slot is
+                    // poisoned — spin this loop forever. The connection
+                    // itself is still sound: rusqlite holds no partial
+                    // state across a panicking closure, and each call here
+                    // is a single self-contained statement. Recover the
+                    // guard and carry on.
+                    Err(StdTryLockError::Poisoned(poisoned)) => {
+                        return f(&poisoned.into_inner()).context("sqlite operation failed");
+                    }
+                    Err(StdTryLockError::WouldBlock) => continue,
                 }
             }
             tokio::task::yield_now().await;
@@ -819,5 +832,40 @@ mod tests {
         let loaded = db.load_jobs_in_states(&["running"]).await.unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].attempts, 1);
+    }
+
+    /// A panic inside a pooled closure poisons that connection's `StdMutex`.
+    /// `try_lock` reports poisoning as `Err`, indistinguishable from
+    /// contention, so a poisoned slot is skipped forever. Once every slot is
+    /// poisoned the borrow loop spins on `yield_now` and never returns —
+    /// a livelock, not an error. The previous `tokio::sync::Mutex` had no
+    /// poisoning, so this is a regression in failure behaviour.
+    #[tokio::test]
+    async fn pool_survives_a_panic_inside_a_borrowed_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = PersistDb::open(&dir.path().join("jobs.db")).unwrap();
+
+        for _ in 0..POOL_SIZE {
+            let db2 = db.clone();
+            let _ = tokio::spawn(async move {
+                db2.with_conn(|_conn| -> rusqlite::Result<()> {
+                    panic!("simulated failure while holding a pooled connection")
+                })
+                .await
+            })
+            .await;
+        }
+
+        // Every slot is now poisoned. The pool must still serve requests.
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            db.count_finished_recordings("chanA"),
+        )
+        .await;
+        assert!(
+            res.is_ok(),
+            "pool livelocked after panics poisoned every connection"
+        );
+        assert_eq!(res.unwrap().unwrap(), 0);
     }
 }
