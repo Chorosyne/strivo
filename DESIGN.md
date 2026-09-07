@@ -4,28 +4,30 @@
 - **What this is:** self-hosted live-stream PVR for Twitch, YouTube, and Patreon. Monitor channels, automatically record live streams, play them back — all from a browser-served web UI.
 - **Who it's for:** streamers, archivists, and developers who want a set-it-and-forget-it DVR for live streams.
 - **Space/industry:** Developer tools / media / streaming. Peers: OBS (GUI recording), Streamlink (CLI stream extraction), Sonarr/Radarr/Jellyfin (self-hosted *arr-style web UIs).
-- **Project type:** Rust daemon with a SPA web UI. A legacy ratatui TUI (`strivo tui`) still ships but is deprecated and slated for removal — see CHANGELOG.
+- **Project type:** Rust daemon with a SPA web UI, driven by the `strivo` CLI. There is no terminal UI: the ratatui TUI was deleted in 0.6.0 (see CHANGELOG.md "Removed").
 
 ## Aesthetic Direction
 - **Direction:** Retro-Futuristic Neon — *arr-style web UI meets VCR nostalgia. The PVR concept is inherently retro; the execution is modern web-native.
-- **Decoration level:** Intentional — subtle glow effects and faint scanline textures on the web UI; the legacy TUI stays clean and functional.
+- **Decoration level:** Intentional — subtle glow effects and faint scanline textures on the web UI.
 - **Mood:** The warm hum of a recording light in a dark room. Precise, always-on, quietly powerful. Not flashy — confident.
 - **Reference sites:** Ghostty (minimal dark branding), OBS (streaming tool marketing), Streamlink (functional docs)
 - **Brand motifs:** REC dot (pulsing red circle), VCR-style timestamps, signal/stream metaphors. Use as subtle nods, not cosplay.
 
 ## Web UI Theme — JellySkin-derived (CANONICAL for the SPA)
 
-The StriVo **web UI** (`crates/strivo-web/assets/spa.css`) follows the
-**JellySkin** Jellyfin theme (`prayag17/JellySkin`): a deep-navy gradient, a
-purple→cyan accent gradient, heavy frosted glass, and Montserrat. `spa.css` is
-the source of truth; the tokens below mirror its `:root`. The TUI keeps the
-Retro-Futuristic Neon direction below; this section governs the SPA only.
+The StriVo **web UI** follows the **JellySkin** Jellyfin theme
+(`prayag17/JellySkin`): a deep-navy gradient, a purple→cyan accent gradient,
+heavy frosted glass, and Montserrat. The `:root` block of the ordered CSS
+modules in `crates/strivo-web/assets/spa-css/` is the source of truth (there
+is no checked-in `spa.css` — `build.rs` concatenates the modules at build
+time); the tokens below mirror it. This section governs the SPA, which is the
+only rendered surface StriVo has.
 
 > The SPA intentionally diverges from the StriVo brand cyan (`#00E5FF`, see
 > §Color) — it adopts JellySkin's purple/cyan identity wholesale. Brand cyan
-> stays the TUI/marketing accent.
+> stays the marketing accent.
 
-### Tokens (mirror of `spa.css :root`)
+### Tokens (mirror of the `:root` block in `assets/spa-css/`)
 | Token | Value |
 |-------|-------|
 | Background | `--bg: hsl(208,89%,5%)`; lighter `hsl(208,89%,20%)` |
@@ -63,9 +65,6 @@ Retro-Futuristic Neon direction below; this section governs the SPA only.
 - **Body / UI / Labels:** Instrument Sans — clean, readable. Weights: 400, 500, 600, 700.
 - **Data/Code:** JetBrains Mono. Weights: 400, 500.
 - **Loading:** Bunny Fonts: `https://fonts.bunny.net/css?family=satoshi:400,500,700,900|instrument-sans:400,500,600,700|jetbrains-mono:400,500`
-
-### TUI
-- Terminal default monospace font (user's terminal emulator controls this). The TUI does not specify fonts — it inherits from the terminal.
 
 ### Scale
 | Level | Size | Weight | Usage |
@@ -143,79 +142,24 @@ For backgrounds, glows, and subtle tints — use the accent color at reduced opa
 - `--rec-dim: rgba(255, 68, 68, 0.15)` — recording red tint
 - `--live-dim: rgba(57, 255, 127, 0.15)` — live green tint
 
-## Theming (Ghostty-style)
+## Theming — inert since 0.6.0
 
-StriVo supports user-configurable themes via TOML config, modeled after Ghostty's approach.
+The Ghostty-style theme system (16 semantic slots including 8 ANSI colours,
+13 built-in palettes, a `~/.config/strivo/themes/` rescan, and an in-app theme
+picker) was built for the ratatui TUI. It went inert when the TUI was deleted
+in 0.6.0, along with the `strivo theme` subcommand — see CHANGELOG.md
+"Removed".
 
-### Semantic Color Slots
-The theme system defines 16 semantic color slots that every theme must provide:
+What survives is the config surface only: `theme`, `[theme.colors]` and
+`[theme.ansi]` still parse (`src/config/mod.rs`), and `strivo config get/set
+theme` still reads and writes the name. **Nothing consumes the value.** There
+is no palette loader in the tree, no `themes/` directory, and the SPA's
+colours are hardcoded in the `:root` block of the CSS modules.
 
-| Slot | Default (Neon) | Purpose |
-|------|---------------|---------|
-| `bg` | `#1A1B26` | Background |
-| `fg` | `#E8E8E2` | Foreground text |
-| `surface` | `#24253A` | Elevated surfaces |
-| `overlay` | `#3B3D56` | Dialogs, dropdowns |
-| `primary` | `#00E5FF` | Primary accent |
-| `secondary` | `#FFB020` | Secondary accent |
-| `dim` | `#565B7E` | Muted/disabled |
-| `muted` | `#A9AECF` | Secondary text |
-| `ansi.black` | `#1A1B26` | ANSI color 0 |
-| `ansi.red` | `#FF4444` | ANSI color 1 |
-| `ansi.green` | `#39FF7F` | ANSI color 2 |
-| `ansi.yellow` | `#FFB020` | ANSI color 3 |
-| `ansi.blue` | `#00B4D8` | ANSI color 4 |
-| `ansi.magenta` | `#FF79C6` | ANSI color 5 |
-| `ansi.cyan` | `#00E5FF` | ANSI color 6 |
-| `ansi.white` | `#E8E8E2` | ANSI color 7 |
-
-### Built-in Themes
-Ship with 13 built-in themes selectable via `theme = "name"` in `strivo.toml`:
-
-1. **neon** (default) — Cyan + Amber on deep blue-black. The signature StriVo look.
-2. **neon-hc** — High-contrast variant of Neon for low-vision users / bright rooms.
-3. **neon-light** — Light-mode variant of Neon.
-4. **monochrome** — Grayscale with red/green semantic colors only. For minimal setups.
-5. **catppuccin-mocha** — Soothing pastels. Maps Catppuccin's palette to StriVo's slots.
-6. **tokyo-night** — Cool blues and muted tones. Familiar to Neovim users.
-7. **solarized-dark** — Ethan Schoonover's precision palette adapted for StriVo.
-8. **gruvbox-dark** — Retro warm contrast.
-9. **nord** — Frosty arctic palette.
-10. **dracula** — Vivid purple/pink/cyan on charcoal.
-11. **rose-pine-moon** — Muted plum + pine.
-12. **kanagawa** — Wave-inspired warm dusk palette.
-13. **everforest-dark** — Forest greens on charcoal.
-
-Users can layer additional themes by dropping `*.{toml,conf}` (Kitty/Ghostty `.conf` syntax accepted) into `~/.config/strivo/themes/` and pressing `R` in the theme picker to rescan.
-
-### Config Syntax
-```toml
-# Use a built-in theme
-theme = "neon"
-
-# Override individual color slots
-[theme.colors]
-primary = "#FF79C6"   # swap cyan for pink
-secondary = "#F1FA8C" # swap amber for yellow
-bg = "#282A36"        # Dracula background
-
-# Override ANSI colors
-[theme.ansi]
-black = "#21222C"
-red = "#FF5555"
-green = "#50FA7B"
-yellow = "#F1FA8C"
-blue = "#BD93F9"
-magenta = "#FF79C6"
-cyan = "#8BE9FD"
-white = "#F8F8F2"
-```
-
-### Rules
-- Built-in theme provides all 16 slots as a baseline
-- User overrides in `[theme.colors]` and `[theme.ansi]` are applied on top
-- Platform colors (Twitch/YouTube/Patreon) are never theme-affected
-- Semantic meanings (live = green, recording = red) map to ANSI slots so themes can adjust the exact shade but the meaning persists
+Treat the JellySkin token table above as the only live palette. Reviving
+theming for the web UI is unspecified work: the ANSI-based slot model
+described terminal cells and does not map onto the SPA, so it would need a
+new model rather than a port.
 
 ## Spacing
 - **Base unit:** 8px
@@ -234,7 +178,7 @@ white = "#F8F8F2"
 | `3xl` | 64px | Page section breaks |
 
 ## Layout
-- **Approach:** Grid-disciplined — strict alignment, predictable structure. Data-dense TUI conventions carry to the web.
+- **Approach:** Grid-disciplined — strict alignment, predictable structure. Data-dense layout conventions throughout.
 - **Grid:** 12 columns on desktop (>1024px), 8 on tablet (768-1024px), 4 on mobile (<768px)
 - **Max content width:** 1120px
 - **Border radius:**
@@ -281,3 +225,4 @@ white = "#F8F8F2"
 | 2026-03-20 | Ghostty-style theming with 16 semantic slots | User customization without losing semantic meaning. 13 built-in themes, individual slot overrides via TOML, plus user `.toml`/`.conf` files |
 | 2026-03-20 | Platform colors fixed (not themeable) | Twitch/YouTube/Patreon colors are external brands — changing them would be confusing |
 | 2026-03-20 | Tokyo Night-adjacent background #1A1B26 | Warmer than Dracula's gray (#282A36), more depth than pure black. Familiar to terminal users |
+| 2026-09-07 | TUI sections removed from this document | The ratatui TUI was deleted in 0.6.0; this doc still described TUI fonts, a TUI accent, and a live theme system. Recorded rather than deleted: the theme config keys still parse but nothing renders from them |
