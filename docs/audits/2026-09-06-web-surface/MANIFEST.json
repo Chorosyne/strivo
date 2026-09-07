@@ -1228,7 +1228,7 @@
     {
       "id": "V10",
       "priority": "P3",
-      "status": "open",
+      "status": "ready_for_verification",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1237,7 +1237,15 @@
       "finding": "Test-isolation footgun in the Playwright harness, observed while verifying S17. playwright.config.ts sets `reuseExistingServer`, and mock-server.mjs holds module-level Map state (e.g. submixStore). A mock-server process left running from an earlier invocation is therefore reused by a later `npm test` against the same port, carrying its in-memory state across runs — which produced two unrelated failures in ab-submix.spec.ts and player-controller.spec.ts that vanished against a freshly started server. This is a plausible contributor to the flake class recorded as S12/V09, and it means a green suite run is not necessarily a clean-state run.",
       "remediation_and_acceptance": "Reset the mock's module-level stores per test run (or per worker), or stop reusing an existing server for the full-suite lane. Acceptance: two consecutive `npm test` invocations against an already-running mock produce identical results, demonstrated by seeding state in the first run.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 2a71e52",
+          "command": "POST /__test__/reset via global-setup.mjs; agent ran a same-server double-run plus a 5x tally",
+          "observed": "THE LEAK IS REAL AND WAS REPRODUCED TWICE. Inventory: exactly two module-level mutable stores survive across requests — abRenderStore and submixStore (mock-server.mjs:175-176) — and the specs hit a FIXED recording id (11111111-...), which is what makes leakage observable. Deliberate reproduction over HTTP: a POST set a slot, and a later GET simulating a fresh run still saw the mutated value. ORGANIC reproduction as well: a mock-server child outlived its parent, a later start failed EADDRINUSE, and querying it showed a leftover `b` slot labelled 'loud-master' written by the PREVIOUS run's own assertions. Fix: a POST /__test__/reset endpoint clearing both Maps, called by a new global-setup.mjs wired via playwright.config.ts globalSetup — chosen over reuseExistingServer:false because it fixes the underlying global-state defect for anyone hitting the server by hand, not just the runner. Agent's proof: state seeded via curl, then two npm test runs against the SAME still-running process (PID unchanged, verified by ps) both 71/71, with post-run state showing real fixtures rather than the injected junk. STATUS ready_for_verification, NOT closed: this is the implementing agent's attributed evidence. The orchestrator did not re-run it — a concurrent audit agent held the hardcoded port 8199, and the workstation's swap was fully exhausted (31Gi/31Gi), making a fresh soak both unreliable and unsafe to stack.",
+          "reviewer": "PENDING — implementing agent only; orchestrator verification deferred for port contention and host memory pressure",
+          "environment": "Linux, Chromium via Playwright. NOTE: 1 of the agent's 6 tally runs degraded to '57 passed, 13 did not run', correlating with full swap on this shared workstation. Recorded as a gap, not smoothed over; it is NOT evidence the fix works, and it is a reason to re-soak on an unloaded box."
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/e2e/mock-server.mjs",
         "crates/strivo-web/e2e/playwright.config.ts"
