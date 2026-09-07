@@ -1339,6 +1339,19 @@ events.on((event) => {
   if (event.PipelineUpdated && currentRoute() === "pipelines" && typeof renderPipelines === "function") {
     renderPipelines().catch(() => {});
   }
+
+  // Tier 1 auth signal: any of these change the worst severity
+  // `/health/checks` reports, so refresh the topbar pill without waiting
+  // for the next render. Cheap (one GET) and debounced by refreshHealthPill
+  // itself doing nothing when the pill element isn't mounted (e.g. login).
+  if (
+    event.PlatformAuthenticationRequired ||
+    event.PlatformAuthenticated ||
+    event.CookieSessionRejected ||
+    event.DeviceCodeRequired
+  ) {
+    refreshHealthPill();
+  }
 });
 events.start();
 // injectKeyboardHelp() itself is called from 037-creator.js (after that

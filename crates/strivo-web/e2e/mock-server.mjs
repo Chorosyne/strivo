@@ -381,7 +381,34 @@ const server = createServer(async (req, res) => {
           "2026-05-26T22:00:01Z  WARN strivo_core::monitor: example warning",
         ],
       });
-    if (p === "/health/checks")
+    if (p === "/health/checks") {
+      // Tier-1 auth e2e coverage (S.E2): a test opts into a degraded
+      // Platform Auth domain via an x-e2e-scenario header rather than a
+      // new endpoint, so every existing health-checks test (and its
+      // "ok" default) is untouched.
+      if (req.headers["x-e2e-scenario"] === "auth-revoked") {
+        return json(res, 200, {
+          status: "error",
+          checks: [
+            { domain: "Network", name: "Daemon IPC", severity: "ok", message: "Daemon reachable.", fix: "" },
+            { domain: "Storage", name: "Disk space", severity: "ok", message: "3 TB free.", fix: "" },
+            {
+              domain: "Platform Auth",
+              name: "YouTube",
+              severity: "error",
+              message: "YouTube: credentials rejected — Token has been expired or revoked..",
+              fix: "Re-authenticate from Settings → Platforms (the daemon will show a device-code prompt).",
+            },
+            {
+              domain: "Platform Auth",
+              name: "YouTube cookies",
+              severity: "error",
+              message: "YouTube cookie session rejected — cookies are no longer valid.",
+              fix: "Re-import with: strivo setup cookies youtube --browser <browser>",
+            },
+          ],
+        });
+      }
       return json(res, 200, {
         status: "ok",
         checks: [
@@ -389,6 +416,7 @@ const server = createServer(async (req, res) => {
           { domain: "Storage", name: "Disk space", severity: "ok", message: "3 TB free.", fix: "" },
         ],
       });
+    }
     if (p === "/auth/login") return json(res, 200, { status: "ok" });
     if (p === "/auth/logout") return json(res, 200, { status: "ok" });
     if (p === "/channels") return json(res, 200, { channels: CHANNELS });
