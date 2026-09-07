@@ -651,9 +651,10 @@ fn platform_auth_checks(
 ) -> Vec<serde_json::Value> {
     use strivo_core::platform::AuthSource;
 
+    type PendingAuth<'a> = Option<&'a (PlatformKind, String, String)>;
     let (connected, pending_auth, auth_issues): (
         [bool; 3],
-        Option<&(PlatformKind, String, String)>,
+        PendingAuth<'_>,
         &[strivo_core::platform::AuthIssue],
     ) = match snapshot {
         Some(ServerMessage::StateSnapshot {
@@ -3612,24 +3613,25 @@ mod platform_auth_checks_tests {
     use strivo_core::platform::{AuthIssue, AuthSource, PlatformKind};
 
     fn cfg_with(twitch: bool, youtube: bool, patreon: bool) -> AppConfig {
-        let mut cfg = AppConfig::default();
-        cfg.twitch = twitch.then(|| TwitchConfig {
-            client_id: "id".into(),
-            client_secret: "secret".into(),
-        });
-        cfg.youtube = youtube.then(|| YouTubeConfig {
-            client_id: "id".into(),
-            client_secret: "secret".into(),
-            cookies_path: None,
-            websub_callback_url: None,
-        });
-        cfg.patreon = patreon.then(|| PatreonConfig {
-            client_id: "id".into(),
-            client_secret: "secret".into(),
-            poll_interval_secs: 300,
-            cookies_path: None,
-        });
-        cfg
+        AppConfig {
+            twitch: twitch.then(|| TwitchConfig {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+            }),
+            youtube: youtube.then(|| YouTubeConfig {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+                cookies_path: None,
+                websub_callback_url: None,
+            }),
+            patreon: patreon.then(|| PatreonConfig {
+                client_id: "id".into(),
+                client_secret: "secret".into(),
+                poll_interval_secs: 300,
+                cookies_path: None,
+            }),
+            ..AppConfig::default()
+        }
     }
 
     fn snapshot(

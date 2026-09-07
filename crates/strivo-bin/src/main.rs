@@ -80,7 +80,7 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
             envchain,
         } => handle_enable(config_path, *daemon_only, envchain.as_deref()).await,
         Command::Disable => handle_disable().await,
-        Command::Status => handle_status(),
+        Command::Status => handle_status(config_path).await,
         Command::Config { action } => handle_config_command(action, config_path),
         Command::Log { action } => handle_log_command(action).await,
         Command::Search { query } => handle_search(query, config_path),
@@ -1037,7 +1037,7 @@ async fn probe_platform_credentials() -> String {
 /// documented contract the binary quietly did not honour.
 const EXIT_DAEMON_NOT_RUNNING: i32 = 3;
 
-fn handle_status() -> Result<()> {
+async fn handle_status(config_path: Option<&std::path::Path>) -> Result<()> {
     if ipc::is_daemon_running() {
         println!("StriVo daemon is running");
         let pid_path = ipc::pid_path();
@@ -1045,12 +1045,98 @@ fn handle_status() -> Result<()> {
             println!("PID: {}", pid.trim());
         }
         println!("Socket: {}", ipc::socket_path().display());
+        print_auth_status(config_path).await;
+        // Exit code MUST stay 0 whenever the daemon is running --
+        // crates/strivo-web/e2e/real-server.sh uses `strivo status` as a
+        // liveness probe. Auth state is reported, never used to fail the
+        // probe.
         Ok(())
     } else {
         println!("StriVo daemon is not running");
         println!("Start with: strivo daemon");
         println!("Or enable as service: strivo enable");
         std::process::exit(EXIT_DAEMON_NOT_RUNNING);
+    }
+}
+
+/// Print one line per configured platform's auth state, sourced from the
+/// live IPC snapshot (`auth_issues`, `pending_auth`, `*_connected`). Best
+/// effort: if the snapshot can't be fetched, say so and move on -- this
+/// never affects `handle_status`'s exit code.
+async fn print_auth_status(config_path: Option<&std::path::Path>) {
+    use strivo_core::ipc::{fetch_snapshot, Endpoint, ServerMessage};
+    use strivo_core::platform::{AuthSource, PlatformKind};
+
+    let cfg = match config::AppConfig::load(config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            println!("Auth: could not load config: {e}");
+            return;
+        }
+    };
+
+    let snapshot = match fetch_snapshot(&Endpoint::current()).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            println!("Auth: could not fetch daemon snapshot: {e}");
+            return;
+        }
+    };
+
+    let ServerMessage::StateSnapshot {
+        twitch_connected,
+        youtube_connected,
+        patreon_connected,
+        pending_auth,
+        auth_issues,
+        ..
+    } = snapshot
+    else {
+        println!("Auth: daemon sent an unexpected response");
+        return;
+    };
+
+    let platforms: [(&str, PlatformKind, bool, bool); 3] = [
+        ("Twitch", PlatformKind::Twitch, cfg.twitch.is_some(), twitch_connected),
+        ("YouTube", PlatformKind::YouTube, cfg.youtube.is_some(), youtube_connected),
+        ("Patreon", PlatformKind::Patreon, cfg.patreon.is_some(), patreon_connected),
+    ];
+
+    for (name, kind, configured, connected) in platforms {
+        if !configured {
+            continue;
+        }
+        let oauth_issue = auth_issues
+            .iter()
+            .find(|i| i.kind == kind && i.source == AuthSource::OAuth);
+        let cookie_issue = auth_issues
+            .iter()
+            .find(|i| i.kind == kind && i.source == AuthSource::Cookies);
+        let pending = pending_auth.as_ref().filter(|(p, ..)| *p == kind);
+
+        if let Some(issue) = oauth_issue {
+            let since_local = issue.since.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
+            println!("{name}: NEEDS ATTENTION — {} (since {since_local})", issue.reason);
+            println!("  next step: re-authenticate from Settings → Platforms (or `strivo setup`).");
+        } else if let Some((_, uri, code)) = pending {
+            println!("{name}: waiting for device code {code} at {uri}");
+        } else if connected {
+            println!("{name}: authenticated");
+        } else {
+            println!("{name}: not yet authenticated (daemon retries automatically)");
+        }
+
+        if let Some(issue) = cookie_issue {
+            let since_local = issue.since.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
+            println!(
+                "{name} cookies: NEEDS ATTENTION — {} (since {since_local})",
+                issue.reason
+            );
+            println!(
+                "  next step: strivo setup cookies {} --browser <browser>",
+                name.to_lowercase()
+            );
+        }
     }
 }
 
