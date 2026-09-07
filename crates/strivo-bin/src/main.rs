@@ -1046,7 +1046,7 @@ fn handle_status() -> Result<()> {
 
 /// Find an executable on PATH. systemd requires an absolute path for the
 /// first token of ExecStart, so a bare name will not do.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn resolve_on_path(name: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
@@ -1073,7 +1073,7 @@ fn resolve_on_path(name: &str) -> Option<std::path::PathBuf> {
 ///   up permanently after five quick restarts is worse than one that keeps
 ///   trying: credentials may live in a keyring that is not unlocked until
 ///   desktop login, so early-boot starts legitimately fail for a while.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn render_systemd_unit(
     exec_quoted: &str,
     config_arg: &str,
@@ -1131,7 +1131,7 @@ fn render_systemd_unit(
     ))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 async fn handle_enable(
     config_path: Option<&std::path::Path>,
     daemon_only: bool,
@@ -1172,13 +1172,13 @@ async fn handle_enable(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn systemd_quote(value: &std::ffi::OsStr) -> String {
     let value = value.to_string_lossy();
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 async fn handle_disable() -> Result<()> {
     let status = std::process::Command::new("systemctl")
         .args(["--user", "disable", "--now", "strivo.service"])
@@ -1199,6 +1199,44 @@ async fn handle_disable() -> Result<()> {
 
     println!("StriVo daemon disabled");
     Ok(())
+}
+
+// macOS ships no systemd, so there is no per-user service manager to hand a
+// unit to here. Earlier builds rendered a systemd unit on every `unix`
+// target (which includes macOS), wrote it into `~/.config/systemd/user/` --
+// a directory macOS gives no meaning to -- and then shelled out to
+// `systemctl`, which does not exist there. Refuse honestly instead: point
+// the user at running `strivo`/`strivo daemon` under their own supervisor
+// (launchd, tmux, a process manager), matching what the README already
+// documents.
+/// Message for `strivo enable` on macOS. Not `#[cfg(target_os = "macos")]`
+/// itself so it stays unit-testable from any host, including the Linux box
+/// this project is developed on, which cannot otherwise exercise a
+/// `target_os = "macos"` code path. Only actually reachable on macOS, so
+/// other targets' non-test builds would otherwise flag it as dead code.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MACOS_ENABLE_UNSUPPORTED: &str = "`strivo enable` has no systemd on macOS (macOS ships no \
+     systemd user service manager). Run `strivo` (daemon + web UI) or `strivo \
+     daemon` directly under your own supervisor instead, e.g. launchd, tmux, \
+     or a process manager.";
+
+/// Message for `strivo disable` on macOS. See [`MACOS_ENABLE_UNSUPPORTED`].
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MACOS_DISABLE_UNSUPPORTED: &str =
+    "`strivo enable` has no systemd on macOS, so there is no service for `disable` to remove.";
+
+#[cfg(target_os = "macos")]
+async fn handle_enable(
+    _config_path: Option<&std::path::Path>,
+    _daemon_only: bool,
+    _envchain: Option<&str>,
+) -> Result<()> {
+    anyhow::bail!(MACOS_ENABLE_UNSUPPORTED)
+}
+
+#[cfg(target_os = "macos")]
+async fn handle_disable() -> Result<()> {
+    anyhow::bail!(MACOS_DISABLE_UNSUPPORTED)
 }
 
 // Windows has no systemd-user-service concept. The closest equivalent that
@@ -1269,7 +1307,7 @@ async fn handle_enable(
 
     println!("StriVo daemon registered as a Task Scheduler task and started");
     println!(
-        "Note: unlike the systemd unit on Linux/macOS, this task does not \
+        "Note: unlike the systemd unit on Linux, this task does not \
          auto-restart on crash — it (re)starts only at sign-in. Run \
          `strivo daemon` directly for a supervised long-running session."
     );
@@ -1312,7 +1350,7 @@ async fn handle_disable() -> Result<()> {
     )
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn dirs_home() -> std::path::PathBuf {
     directories::UserDirs::new()
         .map(|d| d.home_dir().to_path_buf())
@@ -1829,7 +1867,7 @@ fn register_first_party_plugins(host: &mut daemon::DaemonPluginHost) {
         .push((section.to_string(), marker.to_string()));
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
@@ -1935,5 +1973,26 @@ mod windows_tests {
             cmd,
             r#""C:\StriVo\strivo.exe" daemon --config "C:\Users\me\My Config\strivo.toml""#
         );
+    }
+}
+
+/// Not `target_os`-gated: these assert on the plain message constants, so
+/// they run (and prove the macOS refusal text) from whatever host actually
+/// builds this crate, including this Linux dev box which cannot compile a
+/// `target_os = "macos"` code path to test directly.
+#[cfg(test)]
+mod macos_enable_tests {
+    use super::*;
+
+    #[test]
+    fn macos_enable_message_does_not_claim_systemd_support() {
+        assert!(!MACOS_ENABLE_UNSUPPORTED.contains("systemd user service on Linux/macOS"));
+        assert!(MACOS_ENABLE_UNSUPPORTED.contains("no systemd on macOS"));
+        assert!(MACOS_ENABLE_UNSUPPORTED.contains("strivo daemon"));
+    }
+
+    #[test]
+    fn macos_disable_message_does_not_claim_systemd_support() {
+        assert!(MACOS_DISABLE_UNSUPPORTED.contains("no systemd on macOS"));
     }
 }

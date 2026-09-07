@@ -24,7 +24,9 @@ pub enum Command {
     /// Run background daemon (foreground, for systemd)
     Daemon,
     /// Install and start as a background service: a systemd user service on
-    /// Linux/macOS, a Task Scheduler task (runs at sign-in) on Windows
+    /// Linux, a Task Scheduler task (runs at sign-in) on Windows. macOS has
+    /// no systemd; this refuses with a pointer to running `strivo`/`strivo
+    /// daemon` under your own supervisor instead.
     Enable {
         /// Run only the daemon, without serving the web UI. The default unit
         /// runs both in one process, matching what plain `strivo` does.
