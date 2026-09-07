@@ -94,6 +94,7 @@ test("buildEmbedUrl omits playback params when the caller manages them", async (
 test("each tile carries its own level, and muted means zero", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
@@ -109,9 +110,16 @@ test("each tile carries its own level, and muted means zero", async ({ page }) =
   await expect(sliders).toHaveCount(2);
   expect(await sliders.first().inputValue()).toBe("0");
 
-  // Two tiles at genuinely different levels is the whole point.
+  // Two tiles at genuinely different levels is the whole point. Wait for
+  // each fill's own `input` event to actually land (a real, retried DOM
+  // condition) before reading internal state below — `fill()` only
+  // guarantees the value + event dispatch happened inside the page, not
+  // that nothing downstream is still catching up, and under CPU
+  // contention this closes the gap rather than assuming it away.
   await sliders.nth(0).fill("80");
+  await expect(sliders.nth(0)).toHaveValue("80");
   await sliders.nth(1).fill("25");
+  await expect(sliders.nth(1)).toHaveValue("25");
 
   const vols = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.volumes);
   const levels = Object.values(vols).sort();
@@ -121,6 +129,7 @@ test("each tile carries its own level, and muted means zero", async ({ page }) =
 test("solo raises one tile and silences the rest", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
@@ -161,6 +170,10 @@ test("solo raises one tile and silences the rest", async ({ page }) => {
 async function installFakePlayers(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
     (window as any).__fakeLog = { created: [], destroyed: [], mounted: [] };
+    // Flips true only once setPlayerControllerFactory has actually been
+    // called on this document — see waitForFakePlayers below for why a
+    // test must gate on this rather than assume it happened.
+    (window as any).__fakePlayerFactoryReady = false;
     const install = () => {
       const h = (window as any).__strivoTestHooks;
       if (!h || !h.setPlayerControllerFactory) return false;
@@ -190,20 +203,46 @@ async function installFakePlayers(page: import("@playwright/test").Page) {
           isReady() { return true; },
         };
       });
+      (window as any).__fakePlayerFactoryReady = true;
       return true;
     };
     // The hooks object is created at the end of module evaluation, so
-    // retry until the SPA has booted.
+    // retry until the SPA has booted. No give-up timer here: waitForFakePlayers
+    // below is the one place that bounds this wait (via Playwright's own
+    // per-test timeout), so there is a single, accurate point of timeout
+    // rather than an internal 5s poll cap racing an external wait and
+    // producing a confusing "timed out" for what was actually "gave up
+    // early" — a real risk on a loaded box where module evaluation itself
+    // can take longer than a few seconds.
     if (!install()) {
       const t = setInterval(() => { if (install()) clearInterval(t); }, 10);
-      setTimeout(() => clearInterval(t), 5000);
     }
   });
+}
+
+// The race this closes: reconcileControllers() calls whatever factory is
+// installed AT THE MOMENT a content key is first seen, then caches that
+// controller for the life of the key — it never re-invokes the factory
+// later. installFakePlayers only *starts* a poll (every 10ms) waiting for
+// the SPA's module script to finish evaluating and expose
+// __strivoTestHooks; it does not wait for that poll to actually land. If
+// a test's next action reaches a real Play-all / channel-click (anything
+// that triggers reconcileControllers) before the poll fires, those tiles
+// get built with the real (non-fake) factory and are stuck that way for
+// the rest of the test. Under normal load the poll always wins; under CPU
+// contention (a concurrent cargo/rustc build was directly observed
+// causing this) the SPA's own script evaluation can lose the race,
+// producing an intermittent ".fake-player count 0" failure. Call this
+// right after page.goto() and before any action that could construct a
+// player controller.
+async function waitForFakePlayers(page: import("@playwright/test").Page) {
+  await page.waitForFunction(() => (window as any).__fakePlayerFactoryReady === true);
 }
 
 test("starting one tile does not disturb another", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   // Two tiles, both fed from the mock's live streams.
   await page.locator(".ms-preset-summary").click();
@@ -238,6 +277,7 @@ test("starting one tile does not disturb another", async ({ page }) => {
 test("removing a tile destroys exactly its own player", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
@@ -263,6 +303,7 @@ test("removing a tile destroys exactly its own player", async ({ page }) => {
 test("leaving the watch route tears every player down", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
@@ -284,6 +325,7 @@ test("leaving the watch route tears every player down", async ({ page }) => {
 test("composer edits leave an untouched tile's player alone", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
@@ -312,6 +354,7 @@ test("composer edits leave an untouched tile's player alone", async ({ page }) =
 test("a preset change preserves a playing tile", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
@@ -335,6 +378,7 @@ test("a preset change preserves a playing tile", async ({ page }) => {
 test("play-all starts the rest without rebuilding what is already playing", async ({ page }) => {
   await installFakePlayers(page);
   await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
@@ -453,6 +497,7 @@ test("clicking a live channel replaces whatever was loaded", async ({ page }) =>
   });
 
   await page.goto("/app#/watch?mode=focus&focus=Twitch:twitch-live-1");
+  await waitForFakePlayers(page);
 
   // The requested stream owns the tile; the stale recording is gone.
   await expect(page.locator('.ms-leaf[data-stream-id="Twitch:twitch-live-1"]')).toHaveCount(1);
