@@ -15,7 +15,6 @@
   login: (apiKey) =>
     API._fetch("/auth/login", { method: "POST", body: { api_key: apiKey } }),
   logout: () => API._fetch("/auth/logout", { method: "POST" }),
-  // ── Strivo Pro licensing (Phase 1: status only; activate/trial 501) ──
   updateSetting: (path, value) =>
     API._fetch("/settings/update", { method: "POST", body: { path, value } }),
   setPlatform: (name, body) =>
@@ -23,11 +22,6 @@
       method: "POST",
       body,
     }),
-  licenceStatus: () => API._fetch("/licence/status"),
-  licenceTrial: () => API._fetch("/licence/trial", { method: "POST" }),
-  licenceActivate: (key) =>
-    API._fetch("/licence/activate", { method: "POST", body: { key } }),
-  licenceTrial: () => API._fetch("/licence/trial", { method: "POST" }),
   // ── Capture-profile CRUD ─────────────────────────────────────────────
   captureProfileCreate: (profile) =>
     API._fetch("/capture_profiles", { method: "POST", body: profile }),

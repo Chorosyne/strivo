@@ -901,7 +901,11 @@ function commandList() {
     ["plugins", "Go to Plugins"],
     ["settings", "Go to Settings"],
     ["system", "Go to System"],
-  ].map(([r, label]) => ({ label, run: () => route(r) }));
+  ]
+    // Creator-only nav slots bounce Home if actually run (CREATOR_ROUTES,
+    // see 008-pvr.js) — don't offer them as commands in a PVR build.
+    .filter(([r]) => CREATOR_ENABLED || !CREATOR_ROUTES.has(r))
+    .map(([r, label]) => ({ label, run: () => route(r) }));
   const actions = [
     { label: "Poll channels now", run: () => API.pollNow().catch(() => {}) },
     {
@@ -996,14 +1000,16 @@ function runCmdk(i) {
 //   strivo-hint-<route>             → dismissed the per-page hint
 // Hint copy is intentionally one line each — the goal is "I know what
 // this surface is for", not full docs.
+// The `pipelines` and `plugins` entries are Creator Edition only — pushed in
+// by 037-creator.js when that feature is compiled in. Both routes already
+// bounce to Home in a PVR build (CREATOR_ROUTES, see 008-pvr.js), but the
+// hint/tour copy itself must not exist as bytes in a PVR bundle either.
 const PAGE_HINTS = {
   library:    "Live channels in the rail + the current capture dashboard. Click any rail row to see channel detail.",
   recordings: "Every recording past + present. Tick rows to enable bulk actions, click headers to sort, chips filter by state.",
   schedule:   "Per-channel record-when-live + auto-download switches. Capture limits + disk gauge live up top.",
-  pipelines:  "Durable Creator workflows with live state, cancellation, retries, restart recovery, and capability blueprints.",
   watch:      "Tile any subset of currently live channels. Unmute one tile at a time; Shift+I shows shortcuts.",
   chat:       "Twitch IRC over WSS. Tab strip picks a room; filter chips narrow live. BTTV globals + Twitch emotes render as images.",
-  plugins:    "Plugin hub. Each card opens the plugin; ⚙ deep-links to the per-plugin Settings panel.",
   settings:   "Live daemon config. Toggles persist to ~/.config/strivo/config.toml on change.",
   system:     "Health checks + storage gauge + platform-auth status + Backup/Restore.",
   logs:       "Rolling daemon log. Toggle Follow for tail mode; Copy / Download exports the filtered view.",
@@ -1018,8 +1024,6 @@ const TOUR_STEPS = [
   { route: "schedule",   title: "Monitor",    body: "Tell StriVo which channels to auto-record + auto-download. Capture limits + disk-budget circuit breaker live here." },
   { route: "watch",      title: "Player", body: "Single + multi-stream player. Pick a preset (split-screen, split/quadrant, quadrant) or build a custom split layout. Drag channels from the rail into empty tiles; drag tiles to swap." },
   { route: "chat",       title: "Chat",       body: "Twitch IRC client with filter chips, mention highlighting, BTTV global emotes." },
-  { route: "pipelines",  title: "Pipelines",  body: "Cross-plugin DAGs. Click a node to open it; 'Run on…' picks a recording + opens the right plugin." },
-  { route: "plugins",    title: "Plugins",    body: "The shipped plugin set + marketplace catalog. Click any card to open; gear icon → per-plugin Settings." },
   { route: "settings",   title: "Settings",   body: "All daemon config: Notifications, Platforms, plugin enable/disable, theme, advanced paths." },
 ];
 
@@ -1096,6 +1100,25 @@ function maybeMountPageHint(route) {
   });
 }
 
+// Keyboard-shortcuts help overlay rows (Shift+I). Creator-only nav slots
+// (Pipelines, Plugins, Archive) are pushed in by 037-creator.js — this list
+// must not carry their labels as bytes in a PVR build even though the
+// underlying "g d"/"g g"/"g v" bindings just bounce Home there already.
+const KBD_HELP_ROWS = [
+  ["Shift+I", "This help"],
+  ["⌘K", "Command palette"],
+  ["/", "Filter recordings"],
+  ["g l", "Library"],
+  ["g r", "Recordings"],
+  ["g s", "Schedule"],
+  ["g i", "Activity feed (page)"],
+  ["g c", "Settings"],
+  ["g y", "System"],
+  ["a", "Toggle activity rail"],
+  ["p", "Poke channel monitor"],
+  ["Esc", "Close overlay"],
+];
+
 function injectKeyboardHelp() {
   if (document.getElementById("kbd-help")) return;
   const div = document.createElement("div");
@@ -1119,21 +1142,7 @@ function injectKeyboardHelp() {
       <button class="kbd-help-close sm" type="button" aria-label="Close help">✕</button>
       <h2>Keyboard shortcuts</h2>
       <dl>
-        <dt>Shift+I</dt><dd>This help</dd>
-        <dt>⌘K</dt><dd>Command palette</dd>
-        <dt>/</dt><dd>Filter recordings</dd>
-        <dt>g l</dt><dd>Library</dd>
-        <dt>g r</dt><dd>Recordings</dd>
-        <dt>g s</dt><dd>Schedule</dd>
-        <dt>g d</dt><dd>Pipelines (DAG)</dd>
-        <dt>g g</dt><dd>Plugins</dd>
-        <dt>g i</dt><dd>Activity feed (page)</dd>
-        <dt>g c</dt><dd>Settings</dd>
-        <dt>g y</dt><dd>System</dd>
-        <dt>g v</dt><dd>Archive (Creator Edition)</dd>
-        <dt>a</dt><dd>Toggle activity rail</dd>
-        <dt>p</dt><dd>Poke channel monitor</dd>
-        <dt>Esc</dt><dd>Close overlay</dd>
+        ${KBD_HELP_ROWS.map(([k, v]) => `<dt>${htmlEscape(k)}</dt><dd>${htmlEscape(v)}</dd>`).join("")}
       </dl>
     </div>
   `;
@@ -1332,7 +1341,10 @@ events.on((event) => {
   }
 });
 events.start();
-injectKeyboardHelp();
+// injectKeyboardHelp() itself is called from 037-creator.js (after that
+// file's KBD_HELP_ROWS splice, if any) rather than here — calling it before
+// a creator-only splice would bake the shorter PVR row list into the DOM
+// permanently, since the overlay is built once and never re-rendered.
 // Resolve the edition (creator vs PVR) and seed Patreon from the daemon
 // snapshot before first paint, so the nav hides creator routes and the
 // Patreon section is populated on load (not after the next poll).

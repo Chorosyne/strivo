@@ -224,27 +224,13 @@ async function openRecordingInfo(jobId, opts = {}) {
 
   // The plugin-actions section is Creator Edition only — every control here
   // dispatches to a plugin route that the pure-PVR daemon does not mount.
-  const creatorActionsHtml = CREATOR_ENABLED ? `
-    <section class="rec-info-actions">
-      <h3>Plugin actions</h3>
-      <div class="rec-info-verbs">${actionsHtml}</div>
-      ${isFinished ? `<button class="sm rec-info-cuepoints-btn" data-action="rec-info-cuepoints" title="Scene-change cuepoints (ffmpeg full pass)">⌶ Detect scene changes</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-clipper-btn" data-action="rec-info-clipper" title="Mine highlight candidates (uses cuepoints; runs ffmpeg pass if needed)">★ Find highlights</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-thumbs-btn" data-action="rec-info-thumbs" title="Sample candidate thumbnail frames at cuepoints / highlights">▥ Pick thumbnail</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-broll-btn" data-action="rec-info-broll" title="Suggest B-roll cuts from a tagged local library based on transcript topics">🎞 B-roll suggestions</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-tracks-btn" data-action="rec-info-tracks" title="List audio tracks (OBS multi-track captures) + extract individual stems">♪ Audio tracks</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-reuse-btn" data-action="rec-info-reuse" title="Build cross-format publish drafts (YT long / Shorts / TikTok / Patreon / podcast / blog)">⇪ Publish drafts</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-casebook-btn" data-action="rec-info-casebook" title="Post-stream Casebook report (markdown briefing)">📓 Casebook</button>` : ""}
-      ${isFinished ? `<button class="sm rec-info-editor-btn" data-action="rec-info-editor" title="Open the EDL editor — cut, ripple-delete, render">✄ EDL editor</button>` : ""}
-      <div class="rec-cuepoints" id="rec-cuepoints" hidden></div>
-      <div class="rec-clipper" id="rec-clipper" hidden></div>
-      <div class="rec-thumbs" id="rec-thumbs" hidden></div>
-      <div class="rec-broll" id="rec-broll" hidden></div>
-      <div class="rec-tracks" id="rec-tracks" hidden></div>
-      <div class="rec-reuse" id="rec-reuse" hidden></div>
-      <div class="rec-casebook" id="rec-casebook" hidden></div>
-      <div class="rec-editor" id="rec-editor" hidden></div>
-    </section>` : "";
+  // buildCreatorPluginActionsPanel is defined only in 037-creator.js (a
+  // hoisted top-level `function`, so it's callable here regardless of file
+  // order); the typeof guard is the same idiom check-pvr-bundle.mjs already
+  // expects for a Creator-only render function that a PVR bundle omits.
+  const creatorActionsHtml = typeof buildCreatorPluginActionsPanel === "function"
+    ? buildCreatorPluginActionsPanel(actionsHtml, isFinished)
+    : "";
 
   const targetTimeHtml = opts.seekSec != null
     ? `<span class="cfg-badge arc-target-time" title="Archive target — the split prompt below the EDL editor pre-fills with this time">🎯 target ${htmlEscape(fmtClock(opts.seekSec))}</span>`

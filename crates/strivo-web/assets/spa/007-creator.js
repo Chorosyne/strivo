@@ -215,3 +215,8 @@
     if (opts.offset != null) p.set("offset", String(opts.offset));
     return API._fetch(`/research/projects/${encodeURIComponent(projectId)}/export?${p.toString()}`);
   },
+  // ── Strivo Pro licensing (Phase 1: status only; activate/trial 501) ──
+  licenceStatus: () => API._fetch("/licence/status"),
+  licenceTrial: () => API._fetch("/licence/trial", { method: "POST" }),
+  licenceActivate: (key) =>
+    API._fetch("/licence/activate", { method: "POST", body: { key } }),
