@@ -16,7 +16,6 @@ path = "src/lib.rs"
 # in every first-party tool crate the web UI surfaces. The default build is a
 # pure PVR web UI — recordings, monitor, schedule, library, settings.
 creator = [
-    "strivo-core/creator",
     "dep:strivo-plugins",
     "dep:strivo-chapters",
     "dep:strivo-cuepoints",

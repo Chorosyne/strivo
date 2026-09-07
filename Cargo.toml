@@ -25,13 +25,6 @@ rust-version = "1.75"
 [lib]
 path = "src/lib.rs"
 
-[features]
-# Enables the "Creator Edition" surface in the core library: the Crunchr
-# (transcription) and Archiver config sections. Default builds are a pure
-# Live Stream PVR with zero creator config surface. See ROADMAP.md and
-# docs/adr/0001-creator-edition-repository-split.md.
-creator = []
-
 [dependencies]
 # Async
 tokio = { version = "1", features = ["full"] }

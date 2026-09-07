@@ -22,7 +22,7 @@ path = "src/main.rs"
 # Insights, Editor, Viewguard) into the daemon and turns on the creator web
 # routes + core config surface. The default `cargo build` is a pure Live Stream
 # PVR: `cargo build -p strivo-bin --features creator` builds the full edition.
-creator = ["dep:strivo-plugins", "strivo-web/creator", "strivo-core/creator"]
+creator = ["dep:strivo-plugins", "strivo-web/creator"]
 
 [dependencies]
 strivo-core = { path = "../.." }
