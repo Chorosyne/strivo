@@ -2,13 +2,28 @@
 // Serves the real SPA assets and stubs /api/v1 + /events so the browser
 // tests run without a live daemon or platform auth.
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(__dirname, "..", "assets");
 const PORT = process.env.PORT || 8199;
+
+// `assets/spa.js` no longer exists as a single source file (CE03): it's
+// assembled at build time from the ordered modules under `assets/spa/`
+// (`<seq>-pvr.js` / `<seq>-creator.js`, concatenated in filename order — see
+// build.rs). This mock backend, like the real server before CE03, always
+// serves the FULL (Creator-included) source so the suite can exercise the
+// SPA's own runtime `creator_enabled` route gating (S10's
+// pvr-edition-gating.spec.ts) — it does not test the build-time module
+// selection, which check-pvr-bundle.mjs covers against the real artifact.
+async function readSpaJs() {
+  const spaDir = join(ASSETS, "spa");
+  const names = (await readdir(spaDir)).filter((n) => n.endsWith(".js")).sort();
+  const parts = await Promise.all(names.map((n) => readFile(join(spaDir, n))));
+  return Buffer.concat(parts);
+}
 
 const CHANNELS = [
   {
@@ -877,11 +892,12 @@ const server = createServer(async (req, res) => {
   // Static assets + SPA shell.
   let file;
   if (path === "/" || path === "/app") file = join(ASSETS, "spa.html");
+  else if (path === "/assets/spa.js") file = "spa.js"; // assembled, not read
   else if (path.startsWith("/assets/")) file = join(ASSETS, path.slice("/assets/".length));
   if (file) {
     try {
-      const buf = await readFile(file);
-      const ext = file.slice(file.lastIndexOf("."));
+      const buf = file === "spa.js" ? await readSpaJs() : await readFile(file);
+      const ext = file === "spa.js" ? ".js" : file.slice(file.lastIndexOf("."));
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream" });
       res.end(buf);
       return;

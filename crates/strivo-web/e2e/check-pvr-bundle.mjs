@@ -1,43 +1,45 @@
 #!/usr/bin/env node
 // S10 regression guard, runtime-verified version.
 //
-// build.rs strips every `/* @creator-start */ … /* @creator-end */` block
-// from assets/*.js when the `creator` cargo feature is off. It is easy for
-// a marker to cover a definition (an API method, a render function) while
-// missing every place that still *calls* it — the call site then survives
-// into the PVR bundle referencing a name that no longer exists, and throws
-// at runtime the moment a user reaches it.
+// build.rs assembles `assets/spa.js` by concatenating the ordered modules
+// under `assets/spa/<seq>-<edition>.js`, including the `-creator.js` ones
+// only when the `creator` Cargo feature is on (see CE03). It is easy for a
+// PVR build to omit a definition (an API method, a render function) while a
+// PVR module still *calls* it — the call site then survives into the PVR
+// bundle referencing a name that no longer exists, and throws at runtime the
+// moment a user reaches it. That's exactly the S10 defect, just with the
+// split-module mechanism instead of line-marker deletion.
 //
 // A source-level review cannot catch this: the bug only exists in the
-// *emitted* bundle, never in assets/spa.js itself. So this script builds
-// the real PVR artifact (no --features creator) into a scratch target dir,
-// reads the actual out/assets/spa.js `strip_js_tree` produced, and fails if
-// any surviving call site references an identifier that assets/spa.js only
-// defines inside a stripped block.
+// *emitted* bundle. So this script builds the real PVR artifact (no
+// --features creator) into a scratch target dir, reads the actual
+// out/assets/spa.js the build produced, and fails if any surviving call
+// site references an identifier that only ever appears in a `-creator.js`
+// source module.
 //
 // Wired as `pretest` in package.json so `npm test` always runs this before
 // Playwright.
 import { execFileSync } from "node:child_process";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const crateDir = join(here, ".."); // crates/strivo-web
-const specSource = readFileSync(join(crateDir, "assets/spa.js"), "utf8");
+const spaModuleDir = join(crateDir, "assets/spa");
+const spaModuleFiles = readdirSync(spaModuleDir)
+  .filter((f) => f.endsWith(".js"))
+  .sort();
 
-function stripCreatorBlocks(content) {
-  const out = [];
-  let inBlock = false;
-  for (const line of content.split("\n")) {
-    const t = line.trim();
-    if (t === "/* @creator-start */") { inBlock = true; continue; }
-    if (t === "/* @creator-end */") { inBlock = false; continue; }
-    if (!inBlock) out.push(line);
-  }
-  return out.join("\n") + "\n";
-}
+const pvrSource = spaModuleFiles
+  .filter((f) => f.endsWith("-pvr.js"))
+  .map((f) => readFileSync(join(spaModuleDir, f), "utf8"))
+  .join("");
+const creatorSource = spaModuleFiles
+  .filter((f) => f.endsWith("-creator.js"))
+  .map((f) => readFileSync(join(spaModuleDir, f), "utf8"))
+  .join("");
 
 function extractDefinedName(line) {
   // Only top-level (column-0) declarations, plus the API object's own
@@ -62,17 +64,11 @@ function extractDefinedName(line) {
   return null;
 }
 
-function findRemovedNames(source) {
+function definedNames(source) {
   const names = new Set();
-  let inBlock = false;
   for (const line of source.split("\n")) {
-    const t = line.trim();
-    if (t === "/* @creator-start */") { inBlock = true; continue; }
-    if (t === "/* @creator-end */") { inBlock = false; continue; }
-    if (inBlock) {
-      const n = extractDefinedName(line);
-      if (n) names.add(n);
-    }
+    const n = extractDefinedName(line);
+    if (n) names.add(n);
   }
   return names;
 }
@@ -129,16 +125,20 @@ try {
   rmSync(scratch, { recursive: true, force: true });
 }
 
-// 2. Compute which identifiers assets/spa.js only defines inside a
-//    /* @creator-start */ block, and which of those are (by design) still
-//    defined elsewhere in the stripped output (i.e. not actually removed).
-const removedNames = findRemovedNames(specSource);
+// 2. Compute which identifiers are defined ONLY in a `-creator.js` source
+//    module (never in a `-pvr.js` one) — those are the names a PVR build
+//    genuinely omits. If a name is defined in both (moved out to shared code
+//    on purpose — see S17), it's not actually removed and isn't checked.
+const creatorOnlyNames = new Set(
+  [...definedNames(creatorSource)].filter((n) => !definedNames(pvrSource).has(n)),
+);
 const keptDefs = stillDefined(builtSpaJs);
 
-// 3. Any removed name with a surviving call site in the REAL built bundle
-//    is the S10 bug: a call to a definition that no longer exists.
+// 3. Any creator-only name with a surviving call site in the REAL built
+//    bundle is the S10 bug: a call to a definition that isn't in this
+//    edition's bundle.
 const violations = [];
-for (const name of removedNames) {
+for (const name of creatorOnlyNames) {
   if (keptDefs.has(name)) continue;
   const hits = callSitesFor(builtSpaJs, name);
   if (hits.length) violations.push({ name, hits });
@@ -146,19 +146,74 @@ for (const name of removedNames) {
 
 if (violations.length) {
   console.error("PVR bundle (real `cargo build -p strivo-web` output) calls " +
-    "identifiers whose /* @creator-start */ definitions were stripped:");
+    "identifiers whose definitions live only in a Creator spa module:");
   for (const v of violations) {
     console.error(`  ${v.name} — called at out/assets/spa.js:${v.hits.join(", ")}`);
   }
   console.error(
-    "\nExtend the creator markers to also strip the call site (or its " +
-    "enclosing dead function), or move the definition outside the creator " +
-    "block if the call site is genuinely reachable in the PVR build.",
+    "\nMove the call site into a `-creator.js` module too (or its enclosing " +
+    "dead function), or move the definition into a `-pvr.js` module if the " +
+    "call site is genuinely reachable in the PVR build.",
   );
   process.exit(1);
 }
 
+// 4. CE03's acceptance bar, checked directly against the artifact: the PVR
+//    bundle contains ZERO occurrences (not just call sites — any reference,
+//    including a leaked definition) of a name that only ever exists in
+//    Creator source. This is the literal "contains zero Creator symbols"
+//    check, independent of the call/definition heuristics above.
+//
+// One narrow, deliberate exception: shared route/teardown code guards a call
+// to a Creator-only render/teardown function with
+// `typeof <name> === "function"` so the same PVR module works whether or not
+// that function exists in this bundle (the same idiom `callSitesFor` above
+// already treats as the fix, not the bug, for S10). The guard's own line
+// necessarily spells the name it's checking for — that's not the function
+// shipping, it's the PVR code correctly staying silent about its absence.
+// Any occurrence NOT on a guard line, or a call that isn't inside a guarded
+// window, is a real leak. A full-line `//` comment mentioning the name (e.g.
+// explaining why a nearby call is guarded) ships inert bytes, not a symbol —
+// excluded the same way.
+const symbolLeaks = [];
+for (const name of creatorOnlyNames) {
+  const wordRe = new RegExp(`(?<![\\w$])${name}(?![\\w$])`, "g");
+  const guardRe = new RegExp(`typeof\\s+${name}\\s*===?\\s*["']function["']`);
+  const callRe = new RegExp(`(?<![\\w$])${name}\\s*\\(`);
+  const lines = builtSpaJs.split("\n");
+  let leaks = 0;
+  lines.forEach((line, i) => {
+    wordRe.lastIndex = 0;
+    const hits = (line.match(wordRe) || []).length;
+    if (hits === 0) return;
+    if (line.trim().startsWith("//")) return;
+    if (guardRe.test(line)) {
+      // The guard line itself: fine. A call on the SAME line beyond the
+      // guard (not the `if (... ) name();` idiom split across two lines)
+      // still counts every other occurrence as a leak.
+      leaks += hits - 1;
+      return;
+    }
+    const windowStart = Math.max(0, i - 3);
+    const guarded = lines.slice(windowStart, i + 1).some((l) => guardRe.test(l));
+    if (guarded && callRe.test(line)) return;
+    leaks += hits;
+  });
+  if (leaks > 0) symbolLeaks.push({ name, count: leaks });
+}
+
+if (symbolLeaks.length) {
+  console.error(
+    "PVR bundle contains Creator-only symbols (CE03 acceptance violated):",
+  );
+  for (const s of symbolLeaks) {
+    console.error(`  ${s.name} — ${s.count} occurrence(s)`);
+  }
+  process.exit(1);
+}
+
 console.log(
-  `OK — PVR bundle has zero surviving call sites to stripped definitions ` +
-  `(checked ${removedNames.size} names removed by /* @creator-start */ blocks).`,
+  `OK — PVR bundle has zero surviving call sites and zero occurrences of ` +
+  `Creator-only symbols (checked ${creatorOnlyNames.size} names found only ` +
+  `in assets/spa/*-creator.js).`,
 );

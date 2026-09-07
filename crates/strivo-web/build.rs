@@ -1,21 +1,21 @@
 //! Build script for strivo-web.
 //!
-//! In PVR mode (no `creator` feature) the copied asset tree is reduced to the
-//! PVR surface two ways:
+//! `assets/spa.js` is assembled at build time from the ordered module files
+//! under `assets/spa/` rather than shipped as one file in source. Each module
+//! is named `<seq>-<edition>.js` where `<edition>` is `pvr` (always included)
+//! or `creator` (included only when the `creator` Cargo feature is on); the
+//! assembler concatenates them in filename order into a single
+//! `$OUT_DIR/assets/spa.js`, which is what `src/assets.rs`'s `RustEmbed`
+//! actually serves.
 //!
-//!   1. `/* @creator-start */` … `/* @creator-end */` blocks are stripped from
-//!      **every** `.js` file, not just `spa.js`.
-//!   2. `assets/research/` is dropped wholesale — those modules are the
-//!      Creator-only research UI and have no PVR content to keep.
+//! This mirrors the pattern `assets/research/` already used: a PVR build is
+//! produced by *including* PVR sources, never by deleting lines out of a
+//! shared file. `assets/research/` (the Creator-only research UI) is still
+//! dropped wholesale for PVR builds, exactly as before — it has no PVR
+//! content to keep.
 //!
-//! Both matter: the `spa.js` seam that imports the research modules lives in a
-//! creator block (so PVR never imports them), and dropping the directory means
-//! the code is not shipped even as dead bytes.
-//!
-//! Creator mode copies assets unchanged.
-//!
-//! `src/assets.rs` points `RustEmbed` at `$OUT_DIR/assets` so it always
-//! picks up the (possibly-stripped) tree rather than the source tree.
+//! `src/assets.rs` points `RustEmbed` at `$OUT_DIR/assets` so it always picks
+//! up the assembled tree rather than the source tree.
 
 use std::{env, fs, io, path::Path};
 
@@ -39,27 +39,43 @@ fn main() {
     // of unreachable raster data into every web binary.
     let _ = fs::remove_file(dst_assets.join("img/chorosyne-logo.png"));
 
+    assemble_spa_js(&dst_assets, creator_enabled).expect("failed to assemble spa.js");
+
     if !creator_enabled {
         // The research UI is Creator-only in its entirety; ship none of it.
         let _ = fs::remove_dir_all(dst_assets.join("research"));
-        strip_js_tree(&dst_assets).expect("failed to strip creator blocks from assets");
     }
 }
 
-/// Strip creator blocks from every `.js` file in the copied asset tree.
-fn strip_js_tree(dir: &Path) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            strip_js_tree(&path)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("js") {
-            let content = fs::read_to_string(&path)?;
-            if content.contains("@creator-start") {
-                fs::write(&path, strip_creator_blocks(&content))?;
-            }
+/// Build `$OUT_DIR/assets/spa.js` by concatenating the ordered module files
+/// under `assets/spa/`, in filename order, then delete the source module
+/// directory from the embedded tree so it is never itself served (a PVR
+/// build must not expose `assets/spa/*-creator.js` as a fetchable path).
+///
+/// Filtering happens by *including* the modules a build wants, not by
+/// deleting lines from a shared file — a PVR build simply never reads the
+/// `-creator.js` files.
+fn assemble_spa_js(dst_assets: &Path, creator_enabled: bool) -> io::Result<()> {
+    let spa_dir = dst_assets.join("spa");
+    let mut modules: Vec<_> = fs::read_dir(&spa_dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("js"))
+        .collect();
+    modules.sort();
+
+    let mut assembled = String::new();
+    for module in &modules {
+        let name = module.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let is_creator = name.ends_with("-creator.js");
+        if is_creator && !creator_enabled {
+            continue;
         }
+        assembled.push_str(&fs::read_to_string(module)?);
     }
+
+    fs::write(dst_assets.join("spa.js"), assembled)?;
+    fs::remove_dir_all(&spa_dir)?;
     Ok(())
 }
 
@@ -77,32 +93,4 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Remove every line from `/* @creator-start */` through `/* @creator-end */`
-/// (inclusive).  The surrounding non-creator lines are kept verbatim.
-///
-/// The markers live inside a JS object literal where each removed block ends
-/// with a comma on the last kept property, so stripping lines never leaves a
-/// trailing-comma or missing-comma syntax error.
-fn strip_creator_blocks(content: &str) -> String {
-    let mut out: Vec<&str> = Vec::with_capacity(content.lines().count());
-    let mut in_block = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == "/* @creator-start */" {
-            in_block = true;
-            continue;
-        }
-        if trimmed == "/* @creator-end */" {
-            in_block = false;
-            continue;
-        }
-        if !in_block {
-            out.push(line);
-        }
-    }
-    let mut result = out.join("\n");
-    result.push('\n');
-    result
 }
