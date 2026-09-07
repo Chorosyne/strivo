@@ -10,7 +10,7 @@
 use std::any::Any;
 use std::path::PathBuf;
 
-use strivo_core::config::CrunchrConfig;
+use crate::crunchr::types::CrunchrConfig;
 use strivo_core::events::DaemonEvent;
 use strivo_core::plugin::{
     DaemonEventKind, Plugin, PluginAction, PluginContext, StageExecutionResult, StageFuture,
@@ -86,11 +86,13 @@ impl Plugin for CrunchrPlugin {
         self.cache_dir = ctx.cache_dir.clone();
         std::fs::create_dir_all(&self.cache_dir)?;
 
-        let c = &ctx.config.crunchr;
+        // "sloptube" is this section's pre-rename TOML key — kept as a
+        // fallback so a config.toml written before the rename still works.
+        let c: CrunchrConfig = ctx.config.plugin_section_aliased(&["crunchr", "sloptube"]);
         self.enabled = c.enabled;
         self.tandem_channels = c.tandem_channels.clone();
         self.tandem_playlists = c.tandem_playlists.clone();
-        self.cfg = Some(c.clone());
+        self.cfg = Some(c);
 
         // Ensure the schema exists so the webui's read routes have a DB to
         // open before the first transcription lands.

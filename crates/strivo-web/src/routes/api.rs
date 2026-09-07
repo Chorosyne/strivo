@@ -29,6 +29,11 @@ use strivo_core::recording::RecordingCommand;
 // handlers reference `crate::problem::Problem` by full path.
 #[cfg(feature = "creator")]
 use crate::problem::Problem;
+// Archiver's own `[archiver]` config.toml section isn't a strivo-core
+// type (see ADR 0001 CE01) — it's owned by strivo-plugins, which this
+// crate already depends on under the creator feature.
+#[cfg(feature = "creator")]
+use strivo_plugins::archiver::types::ArchiverConfig;
 use uuid::Uuid;
 
 use crate::server::AppState;
@@ -522,9 +527,10 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
             // Creator Edition surfaces the Archiver config section.
             #[cfg(feature = "creator")]
             if let Some(obj) = body.as_object_mut() {
+                let archiver: ArchiverConfig = cfg.plugin_section("archiver");
                 obj.insert(
                     "archiver".into(),
-                    serde_json::to_value(&cfg.archiver).unwrap_or(serde_json::Value::Null),
+                    serde_json::to_value(&archiver).unwrap_or(serde_json::Value::Null),
                 );
             }
             Json(body).into_response()
@@ -1326,7 +1332,11 @@ async fn update_setting(
         "ui.reduce_motion" => take_bool(&body.value).map(|v| cfg.ui.reduce_motion = v),
         "ui.verbose_status" => take_bool(&body.value).map(|v| cfg.ui.verbose_status = v),
         #[cfg(feature = "creator")]
-        "archiver.enabled" => take_bool(&body.value).map(|v| cfg.archiver.enabled = v),
+        "archiver.enabled" => take_bool(&body.value).map(|v| {
+            let mut a: ArchiverConfig = cfg.plugin_section("archiver");
+            a.enabled = v;
+            let _ = cfg.set_plugin_section("archiver", &a);
+        }),
         // Notifications — every flag is a bool the daemon's notify-rust
         // integration consults before firing a banner.
         "notifications.desktop_enabled" => {
@@ -1397,7 +1407,9 @@ async fn update_setting(
             // just thrashing the platform's rate limiter.
             take_u32(&body.value).and_then(|v| {
                 if (1..=16).contains(&v) {
-                    cfg.archiver.concurrent_fragments = v;
+                    let mut a: ArchiverConfig = cfg.plugin_section("archiver");
+                    a.concurrent_fragments = v;
+                    let _ = cfg.set_plugin_section("archiver", &a);
                     Ok(())
                 } else {
                     Err("concurrent_fragments must be 1..=16".into())
@@ -1411,11 +1423,15 @@ async fn update_setting(
             .map(|s| cfg.recording.format.container = Some(s)),
         #[cfg(feature = "creator")]
         "archiver.archive_dir" => take_nonempty_str(&body.value).map(|s| {
-            cfg.archiver.archive_dir = std::path::PathBuf::from(s);
+            let mut a: ArchiverConfig = cfg.plugin_section("archiver");
+            a.archive_dir = std::path::PathBuf::from(s);
+            let _ = cfg.set_plugin_section("archiver", &a);
         }),
         #[cfg(feature = "creator")]
         "archiver.format" => take_nonempty_str(&body.value).map(|s| {
-            cfg.archiver.format = s;
+            let mut a: ArchiverConfig = cfg.plugin_section("archiver");
+            a.format = s;
+            let _ = cfg.set_plugin_section("archiver", &a);
         }),
         other => Err(format!("unknown or read-only setting: {other}")),
     };
@@ -2152,16 +2168,14 @@ async fn put_archiver_tandem(
         Ok(c) => c,
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     };
-    let already_in = cfg
-        .archiver
-        .tandem_channels
-        .iter()
-        .any(|c| c == &channel_key);
+    let mut archiver: ArchiverConfig = cfg.plugin_section("archiver");
+    let already_in = archiver.tandem_channels.iter().any(|c| c == &channel_key);
     match (body.enabled, already_in) {
-        (true, false) => cfg.archiver.tandem_channels.push(channel_key.clone()),
-        (false, true) => cfg.archiver.tandem_channels.retain(|c| c != &channel_key),
+        (true, false) => archiver.tandem_channels.push(channel_key.clone()),
+        (false, true) => archiver.tandem_channels.retain(|c| c != &channel_key),
         _ => {}
     }
+    let _ = cfg.set_plugin_section("archiver", &archiver);
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
@@ -2194,7 +2208,8 @@ async fn put_archiver_playlists(
     };
     // Strip the existing entries for this channel, then push the new
     // set with the channel_key prefix. Format: "Platform:channel_id/<playlist>".
-    cfg.archiver
+    let mut archiver: ArchiverConfig = cfg.plugin_section("archiver");
+    archiver
         .tandem_playlists
         .retain(|p| !p.starts_with(&format!("{channel_key}/")));
     let mut seen = std::collections::HashSet::new();
@@ -2205,9 +2220,10 @@ async fn put_archiver_playlists(
         }
         let entry = format!("{channel_key}/{trimmed}");
         if seen.insert(entry.clone()) {
-            cfg.archiver.tandem_playlists.push(entry);
+            archiver.tandem_playlists.push(entry);
         }
     }
+    let _ = cfg.set_plugin_section("archiver", &archiver);
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
@@ -2505,10 +2521,11 @@ async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> imp
     // reports an empty list so the SPA's Monitor page renders identically.
     #[cfg(feature = "creator")]
     let auto_download: Vec<serde_json::Value> = {
+        let archiver: ArchiverConfig = cfg.plugin_section("archiver");
         // Pivot tandem_playlists from "Key/Playlist" back to per-channel
         // lists so the SPA can render them grouped.
         let mut tandem: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-        for raw in &cfg.archiver.tandem_playlists {
+        for raw in &archiver.tandem_playlists {
             if let Some((key, pl)) = raw.split_once('/') {
                 tandem
                     .entry(key.to_string())
@@ -2516,7 +2533,7 @@ async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> imp
                     .push(pl.to_string());
             }
         }
-        cfg.archiver
+        archiver
             .tandem_channels
             .iter()
             .map(|key| {

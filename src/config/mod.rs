@@ -47,20 +47,15 @@ pub struct AppConfig {
     #[serde(default)]
     pub schedule: Vec<ScheduleEntry>,
 
-    // `CrunchrConfig`/`ArchiverConfig` are Creator Edition's own types and
-    // belong in the Creator repo, not here — but `crates/strivo-web/src/
-    // routes/api.rs` reads and writes `cfg.crunchr.*` / `cfg.archiver.*` by
-    // field directly at 15+ call sites (settings GET/PATCH). Replacing
-    // these with a generic `extensions: BTreeMap<String, serde_json::Value>`
-    // table would break that file, which is out of scope for this pass
-    // (owned by a sibling workstream). See ADR 0001 for the target shape.
-    #[cfg(feature = "creator")]
-    #[serde(default, alias = "sloptube")]
-    pub crunchr: CrunchrConfig,
-
-    #[cfg(feature = "creator")]
-    #[serde(default)]
-    pub archiver: ArchiverConfig,
+    /// Config sections owned by plugins/editions outside core (e.g. any
+    /// Creator Edition plugin's own settings table). Core has no typed
+    /// opinion on their shape — this table exists purely so an existing
+    /// `config.toml`'s plugin-owned sections round-trip (parse, and are
+    /// written back unchanged) whether or not the owning plugin is even
+    /// compiled into this binary. The owning plugin reads/writes its own
+    /// slice via [`AppConfig::plugin_section`] / [`AppConfig::set_plugin_section`].
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, toml::Value>,
 
     /// Web UI (`strivo serve`) settings. Generated lazily on first
     /// `serve` invocation; persisted so the API key survives restarts.
@@ -104,213 +99,6 @@ pub struct WebConfig {
     /// session and save".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_secret: Option<String>,
-}
-
-#[cfg(feature = "creator")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrunchrConfig {
-    /// Whether the plugin is enabled (gates tandem auto-processing).
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Whether the first-run config modal has been completed.
-    #[serde(default)]
-    pub configured: bool,
-
-    #[serde(default = "default_crunchr_backend")]
-    pub backend: String,
-
-    /// Env var name for the transcription API key.
-    /// Defaults: `OPENROUTER_API_KEY` for `voxtral-openrouter` (default backend),
-    /// `MISTRAL_API_KEY` for `voxtral-api`.
-    #[serde(default)]
-    pub api_key_env: Option<String>,
-
-    /// Base URL for self-hosted Voxtral (vLLM, RunPod, etc.).
-    /// Only used when backend = "voxtral-local".
-    #[serde(default)]
-    pub endpoint: Option<String>,
-
-    /// Preferred whisper model for CLI backend.
-    #[serde(default)]
-    pub whisper_model: Option<String>,
-
-    /// Max seconds for whisper subprocess before timeout.
-    #[serde(default = "default_whisper_timeout")]
-    pub whisper_timeout_secs: u64,
-
-    /// When true, request speaker diarization. Only honoured by backends that
-    /// can produce speaker labels (`voxtral-api`, `whisperx-local`). Enables
-    /// the Speaker Editor modal.
-    #[serde(default)]
-    pub diarize: bool,
-
-    /// Force a fixed number of speakers in re-diarization (voice-embedding
-    /// re-clustering). Set this to the known cast size for consistent content
-    /// (e.g. a podcast with a fixed panel); leave unset to auto-detect.
-    #[serde(default)]
-    pub diarize_speakers: Option<u32>,
-
-    /// When true, mux the generated `.vtt` subtitles back into the recording's
-    /// `.mkv` via `mkvmerge` after a transcription job finishes.
-    #[serde(default = "default_embed_subs")]
-    pub embed_subs: bool,
-
-    #[serde(default)]
-    pub analysis: CrunchrAnalysisConfig,
-
-    /// Tandem mode: auto-trigger on RecordingFinished for these channels.
-    /// Each entry is "Platform:channel_id" (e.g., "Twitch:123456").
-    #[serde(default)]
-    pub tandem_channels: Vec<String>,
-
-    /// Tandem mode: auto-trigger for recordings from these playlists.
-    #[serde(default)]
-    pub tandem_playlists: Vec<String>,
-
-    /// Soft budget for paid transcription/analysis backends, in cents
-    /// per month. 0 disables the warning. Crunchr surfaces a status
-    /// chip when spend ≥80% and refuses pre-submission of jobs that
-    /// would tip spend over budget unless --force-spend is passed.
-    /// (C2.) Backwards-compatible default keeps the warning off so
-    /// existing configs upgrade silently.
-    #[serde(default)]
-    pub budget_cents_per_month: u64,
-
-    /// Active preset name from the user's preset library (C1). When
-    /// empty, the historical `backend` field path is used.
-    #[serde(default)]
-    pub active_preset: Option<String>,
-}
-
-#[cfg(feature = "creator")]
-impl Default for CrunchrConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            configured: false,
-            backend: default_crunchr_backend(),
-            api_key_env: None,
-            endpoint: None,
-            whisper_model: None,
-            whisper_timeout_secs: default_whisper_timeout(),
-            diarize: false,
-            diarize_speakers: None,
-            embed_subs: default_embed_subs(),
-            analysis: CrunchrAnalysisConfig::default(),
-            tandem_channels: Vec::new(),
-            tandem_playlists: Vec::new(),
-            budget_cents_per_month: 0,
-            active_preset: None,
-        }
-    }
-}
-
-#[cfg(feature = "creator")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrunchrAnalysisConfig {
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Env var name for OpenRouter API key (e.g., "OPENROUTER_API_KEY").
-    #[serde(default)]
-    pub openrouter_api_key_env: Option<String>,
-
-    /// OpenRouter model ID for analysis (e.g., "mistralai/mistral-7b-instruct").
-    #[serde(default = "default_analysis_model")]
-    pub model: String,
-}
-
-#[cfg(feature = "creator")]
-impl Default for CrunchrAnalysisConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            openrouter_api_key_env: None,
-            model: default_analysis_model(),
-        }
-    }
-}
-
-#[cfg(feature = "creator")]
-fn default_crunchr_backend() -> String {
-    "voxtral-openrouter".to_string()
-}
-
-#[cfg(feature = "creator")]
-fn default_whisper_timeout() -> u64 {
-    7200
-}
-
-#[cfg(feature = "creator")]
-fn default_embed_subs() -> bool {
-    true
-}
-
-#[cfg(feature = "creator")]
-fn default_analysis_model() -> String {
-    "mistralai/mistral-7b-instruct".to_string()
-}
-
-#[cfg(feature = "creator")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArchiverConfig {
-    /// Whether the plugin is enabled (gates tandem auto-processing).
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Whether the first-run config modal has been completed.
-    #[serde(default)]
-    pub configured: bool,
-
-    #[serde(default = "default_archive_dir")]
-    pub archive_dir: PathBuf,
-    #[serde(default = "default_archive_format")]
-    pub format: String,
-    #[serde(default = "default_concurrent_fragments")]
-    pub concurrent_fragments: u32,
-    #[serde(default)]
-    pub rate_limit: String,
-
-    /// Tandem mode: auto-trigger archiving for these channels.
-    /// Each entry is "Platform:channel_id" (e.g., "Twitch:123456").
-    #[serde(default)]
-    pub tandem_channels: Vec<String>,
-
-    /// Tandem mode: auto-trigger archiving for recordings from these playlists.
-    #[serde(default)]
-    pub tandem_playlists: Vec<String>,
-}
-
-#[cfg(feature = "creator")]
-impl Default for ArchiverConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            configured: false,
-            archive_dir: default_archive_dir(),
-            format: default_archive_format(),
-            concurrent_fragments: default_concurrent_fragments(),
-            rate_limit: String::new(),
-            tandem_channels: Vec::new(),
-            tandem_playlists: Vec::new(),
-        }
-    }
-}
-
-#[cfg(feature = "creator")]
-fn default_archive_dir() -> PathBuf {
-    directories::UserDirs::new()
-        .map(|d| d.home_dir().join("Videos/StriVo/Archives"))
-        .unwrap_or_else(|| PathBuf::from("./archives"))
-}
-#[cfg(feature = "creator")]
-fn default_archive_format() -> String {
-    "best".to_string()
-}
-#[cfg(feature = "creator")]
-fn default_concurrent_fragments() -> u32 {
-    4
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -933,10 +721,7 @@ impl Default for AppConfig {
             capture_profiles: Vec::new(),
             auto_pull_creators: Vec::new(),
             schedule: Vec::new(),
-            #[cfg(feature = "creator")]
-            crunchr: CrunchrConfig::default(),
-            #[cfg(feature = "creator")]
-            archiver: ArchiverConfig::default(),
+            extensions: BTreeMap::new(),
             web: WebConfig::default(),
             notifications: NotificationsConfig::default(),
             monitor_limits: MonitorLimits::default(),
@@ -977,16 +762,34 @@ impl AppConfig {
     /// don't need to know what optional (e.g. Creator Edition) config, if
     /// any, is compiled in. `suppress` lets a caller opt this pull out (a
     /// CLI flag, say) without needing to know what the markers mean either.
-    /// Empty in the pure-PVR build.
+    /// Empty in the pure-PVR build (`extensions` is always present, but
+    /// nothing populates a `[crunchr]` section there without the plugin).
+    ///
+    /// NOTE (ADR 0001, CE01): this reads `extensions["crunchr"]` — a real
+    /// Creator plugin name — directly. That's a known, deliberate
+    /// exception, not an oversight: the daemon's bulk-download path
+    /// (`src/recording/bulk.rs`) calls this synchronously from inside
+    /// core, with no plugin loaded yet to ask "what markers do you want
+    /// written on tandem auto-trigger". Fully removing the name would mean
+    /// either (a) writing the same marker for *any* enabled extension
+    /// section — a real behaviour change, since `[archiver]` also has an
+    /// `enabled` flag but has never produced a marker file — or (b)
+    /// plumbing a marker registration callback through daemon startup and
+    /// the bulk-download command channel, which is a larger structural
+    /// change than this pass's scope. Left as the one remaining named
+    /// exception.
     pub fn post_pull_markers(&self, suppress: bool) -> Vec<String> {
         if suppress {
             return Vec::new();
         }
-        #[cfg(feature = "creator")]
-        {
-            if self.crunchr.enabled {
-                return vec![".crunchr-auto".to_string()];
-            }
+        let crunchr_enabled = self
+            .extensions
+            .get("crunchr")
+            .and_then(|v| v.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if crunchr_enabled {
+            return vec![".crunchr-auto".to_string()];
         }
         Vec::new()
     }
@@ -1065,6 +868,49 @@ impl AppConfig {
         directories::ProjectDirs::from("", "", "strivo")
             .map(|d| d.state_dir().unwrap_or(d.data_dir()).to_path_buf())
             .unwrap_or_else(|| PathBuf::from(".state"))
+    }
+
+    /// Deserializes an extension section (e.g. an owning plugin's own
+    /// `[<name>]` `config.toml` table, captured generically in
+    /// `extensions`) into its typed shape `T`. Defaults when the section
+    /// is absent or fails to parse into `T`, so a plugin upgrading its
+    /// own config shape never hard-fails the whole config load.
+    pub fn plugin_section<T>(&self, name: &str) -> T
+    where
+        T: Default + serde::de::DeserializeOwned,
+    {
+        self.extensions
+            .get(name)
+            .and_then(|v| v.clone().try_into().ok())
+            .unwrap_or_default()
+    }
+
+    /// Like [`AppConfig::plugin_section`], but for a plugin that has
+    /// renamed its own section at some point: tries each name in
+    /// `names` in order and returns the first one present, so a
+    /// `config.toml` written under the old name keeps working. Core
+    /// doesn't need to know what the names mean or which is "current" —
+    /// that's entirely the calling plugin's own migration history.
+    pub fn plugin_section_aliased<T>(&self, names: &[&str]) -> T
+    where
+        T: Default + serde::de::DeserializeOwned,
+    {
+        for name in names {
+            if let Some(v) = self.extensions.get(*name) {
+                if let Ok(t) = v.clone().try_into() {
+                    return t;
+                }
+            }
+        }
+        T::default()
+    }
+
+    /// Replaces an extension section with `value`'s serialized form, so
+    /// the next [`AppConfig::save`] writes it back under `[<name>]`.
+    pub fn set_plugin_section<T: Serialize>(&mut self, name: &str, value: &T) -> Result<()> {
+        let v = toml::Value::try_from(value).context("serialize plugin config section")?;
+        self.extensions.insert(name.to_string(), v);
+        Ok(())
     }
 
     pub fn load(path: Option<&std::path::Path>) -> Result<Self> {
@@ -1386,5 +1232,121 @@ mod profile_tests {
         }];
         cfg.auto_record_channels = vec![arc("Foo", Some("hq"))];
         assert!(cfg.config_warnings().is_empty());
+    }
+}
+
+/// Proves the untyped `extensions` table (the mechanism that replaced
+/// core's old typed `AppConfig.crunchr`/`AppConfig.archiver` fields — see
+/// ADR 0001 CE01) actually round-trips an existing user's `config.toml`:
+/// a file with `[crunchr]`/`[archiver]` sections still parses, the values
+/// are still reachable by the plugin that owns them, and saving writes
+/// the same sections back unchanged. Core itself doesn't know these are
+/// Crunchr/Archiver's sections — this test stands in for "the plugin"
+/// with its own local structs, exactly as `strivo-plugins` does for real.
+#[cfg(test)]
+mod extension_config_round_trip_tests {
+    use super::*;
+
+    /// Mirrors the shape of `strivo_plugins::crunchr::types::CrunchrConfig`
+    /// closely enough to prove the round-trip; this crate can't depend on
+    /// that type (it lives downstream), which is the point of the test.
+    #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+    struct FakeCrunchrConfig {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default)]
+        tandem_channels: Vec<String>,
+    }
+
+    #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+    struct FakeArchiverConfig {
+        #[serde(default)]
+        enabled: bool,
+        #[serde(default)]
+        archive_dir: String,
+    }
+
+    const EXISTING_CONFIG_TOML: &str = r#"
+        recording_dir = "/home/user/Recordings"
+
+        [crunchr]
+        enabled = true
+        tandem_channels = ["Twitch:123456"]
+
+        [archiver]
+        enabled = true
+        archive_dir = "/home/user/Archives"
+    "#;
+
+    #[test]
+    fn existing_config_toml_with_plugin_sections_parses() {
+        let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
+        assert!(cfg.extensions.contains_key("crunchr"));
+        assert!(cfg.extensions.contains_key("archiver"));
+    }
+
+    #[test]
+    fn plugin_section_delivers_typed_values_to_the_owning_plugin() {
+        let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
+        let crunchr: FakeCrunchrConfig = cfg.plugin_section("crunchr");
+        assert!(crunchr.enabled);
+        assert_eq!(crunchr.tandem_channels, vec!["Twitch:123456".to_string()]);
+
+        let archiver: FakeArchiverConfig = cfg.plugin_section("archiver");
+        assert!(archiver.enabled);
+        assert_eq!(archiver.archive_dir, "/home/user/Archives");
+    }
+
+    #[test]
+    fn missing_section_defaults_instead_of_failing() {
+        let cfg: AppConfig = toml::from_str(r#"recording_dir = "/tmp""#).unwrap();
+        let crunchr: FakeCrunchrConfig = cfg.plugin_section("crunchr");
+        assert_eq!(crunchr, FakeCrunchrConfig::default());
+    }
+
+    #[test]
+    fn save_and_reload_round_trips_plugin_sections_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, EXISTING_CONFIG_TOML).unwrap();
+
+        let cfg = AppConfig::load(Some(&path)).unwrap();
+        cfg.save(Some(&path)).unwrap();
+
+        let reloaded = AppConfig::load(Some(&path)).unwrap();
+        let crunchr: FakeCrunchrConfig = reloaded.plugin_section("crunchr");
+        assert!(crunchr.enabled);
+        assert_eq!(crunchr.tandem_channels, vec!["Twitch:123456".to_string()]);
+        let archiver: FakeArchiverConfig = reloaded.plugin_section("archiver");
+        assert!(archiver.enabled);
+        assert_eq!(archiver.archive_dir, "/home/user/Archives");
+    }
+
+    #[test]
+    fn legacy_section_name_is_reachable_via_plugin_section_aliased() {
+        // A config.toml saved before Crunchr's section was renamed from
+        // "sloptube" to "crunchr" — must still deliver its values.
+        let cfg: AppConfig = toml::from_str(
+            r#"
+            [sloptube]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+        let crunchr: FakeCrunchrConfig = cfg.plugin_section_aliased(&["crunchr", "sloptube"]);
+        assert!(crunchr.enabled);
+    }
+
+    #[test]
+    fn post_pull_markers_still_honours_crunchr_enabled() {
+        let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
+        assert_eq!(
+            cfg.post_pull_markers(false),
+            vec![".crunchr-auto".to_string()]
+        );
+        assert_eq!(cfg.post_pull_markers(true), Vec::<String>::new());
+
+        let disabled: AppConfig = toml::from_str(r#"recording_dir = "/tmp""#).unwrap();
+        assert!(disabled.post_pull_markers(false).is_empty());
     }
 }

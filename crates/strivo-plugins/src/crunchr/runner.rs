@@ -15,8 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::crunchr::types::CrunchrConfig;
 use anyhow::{bail, Context, Result};
-use strivo_core::config::CrunchrConfig;
 use uuid::Uuid;
 
 use super::transcribe::create_backend;

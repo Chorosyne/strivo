@@ -318,3 +318,148 @@ pub struct CrunchrRecordingInfo {
     pub completion_tokens: u64,
     pub cost_cents: u64,
 }
+
+/// Crunchr's `[crunchr]` `config.toml` section (legacy TOML key alias:
+/// `sloptube`, from before the plugin was renamed — accepted on read via
+/// [`strivo_core::config::AppConfig::plugin_section`], never written back).
+/// Owned here (not in `strivo-core`) because it's Creator-Edition-only
+/// vocabulary — core only stores it as an untyped `AppConfig::extensions`
+/// entry so an existing `config.toml`'s `[crunchr]`/`[sloptube]` section
+/// round-trips unchanged.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CrunchrConfig {
+    /// Whether the plugin is enabled (gates tandem auto-processing).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Whether the first-run config modal has been completed.
+    #[serde(default)]
+    pub configured: bool,
+
+    #[serde(default = "default_crunchr_backend")]
+    pub backend: String,
+
+    /// Env var name for the transcription API key.
+    /// Defaults: `OPENROUTER_API_KEY` for `voxtral-openrouter` (default backend),
+    /// `MISTRAL_API_KEY` for `voxtral-api`.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
+    /// Base URL for self-hosted Voxtral (vLLM, RunPod, etc.).
+    /// Only used when backend = "voxtral-local".
+    #[serde(default)]
+    pub endpoint: Option<String>,
+
+    /// Preferred whisper model for CLI backend.
+    #[serde(default)]
+    pub whisper_model: Option<String>,
+
+    /// Max seconds for whisper subprocess before timeout.
+    #[serde(default = "default_whisper_timeout")]
+    pub whisper_timeout_secs: u64,
+
+    /// When true, request speaker diarization. Only honoured by backends that
+    /// can produce speaker labels (`voxtral-api`, `whisperx-local`). Enables
+    /// the Speaker Editor modal.
+    #[serde(default)]
+    pub diarize: bool,
+
+    /// Force a fixed number of speakers in re-diarization (voice-embedding
+    /// re-clustering). Set this to the known cast size for consistent content
+    /// (e.g. a podcast with a fixed panel); leave unset to auto-detect.
+    #[serde(default)]
+    pub diarize_speakers: Option<u32>,
+
+    /// When true, mux the generated `.vtt` subtitles back into the recording's
+    /// `.mkv` via `mkvmerge` after a transcription job finishes.
+    #[serde(default = "default_embed_subs")]
+    pub embed_subs: bool,
+
+    #[serde(default)]
+    pub analysis: CrunchrAnalysisConfig,
+
+    /// Tandem mode: auto-trigger on RecordingFinished for these channels.
+    /// Each entry is "Platform:channel_id" (e.g., "Twitch:123456").
+    #[serde(default)]
+    pub tandem_channels: Vec<String>,
+
+    /// Tandem mode: auto-trigger for recordings from these playlists.
+    #[serde(default)]
+    pub tandem_playlists: Vec<String>,
+
+    /// Soft budget for paid transcription/analysis backends, in cents
+    /// per month. 0 disables the warning. Crunchr surfaces a status
+    /// chip when spend ≥80% and refuses pre-submission of jobs that
+    /// would tip spend over budget unless --force-spend is passed.
+    /// (C2.) Backwards-compatible default keeps the warning off so
+    /// existing configs upgrade silently.
+    #[serde(default)]
+    pub budget_cents_per_month: u64,
+
+    /// Active preset name from the user's preset library (C1). When
+    /// empty, the historical `backend` field path is used.
+    #[serde(default)]
+    pub active_preset: Option<String>,
+}
+
+impl Default for CrunchrConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            configured: false,
+            backend: default_crunchr_backend(),
+            api_key_env: None,
+            endpoint: None,
+            whisper_model: None,
+            whisper_timeout_secs: default_whisper_timeout(),
+            diarize: false,
+            diarize_speakers: None,
+            embed_subs: default_embed_subs(),
+            analysis: CrunchrAnalysisConfig::default(),
+            tandem_channels: Vec::new(),
+            tandem_playlists: Vec::new(),
+            budget_cents_per_month: 0,
+            active_preset: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CrunchrAnalysisConfig {
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Env var name for OpenRouter API key (e.g., "OPENROUTER_API_KEY").
+    #[serde(default)]
+    pub openrouter_api_key_env: Option<String>,
+
+    /// OpenRouter model ID for analysis (e.g., "mistralai/mistral-7b-instruct").
+    #[serde(default = "default_analysis_model")]
+    pub model: String,
+}
+
+impl Default for CrunchrAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            openrouter_api_key_env: None,
+            model: default_analysis_model(),
+        }
+    }
+}
+
+fn default_crunchr_backend() -> String {
+    "voxtral-openrouter".to_string()
+}
+
+fn default_whisper_timeout() -> u64 {
+    7200
+}
+
+fn default_embed_subs() -> bool {
+    true
+}
+
+fn default_analysis_model() -> String {
+    "mistralai/mistral-7b-instruct".to_string()
+}

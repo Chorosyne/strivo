@@ -3,6 +3,67 @@ use std::path::PathBuf;
 use strivo_core::platform::PlatformKind;
 use uuid::Uuid;
 
+/// Archiver's `[archiver]` `config.toml` section. Owned here (not in
+/// `strivo-core`) because it's Creator-Edition-only vocabulary — core
+/// only stores it as an untyped `AppConfig::extensions` entry (see
+/// `AppConfig::plugin_section`/`set_plugin_section`) so an existing
+/// `config.toml`'s `[archiver]` section round-trips unchanged.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArchiverConfig {
+    /// Whether the plugin is enabled (gates tandem auto-processing).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Whether the first-run config modal has been completed.
+    #[serde(default)]
+    pub configured: bool,
+
+    #[serde(default = "default_archive_dir")]
+    pub archive_dir: PathBuf,
+    #[serde(default = "default_archive_format")]
+    pub format: String,
+    #[serde(default = "default_concurrent_fragments")]
+    pub concurrent_fragments: u32,
+    #[serde(default)]
+    pub rate_limit: String,
+
+    /// Tandem mode: auto-trigger archiving for these channels.
+    /// Each entry is "Platform:channel_id" (e.g., "Twitch:123456").
+    #[serde(default)]
+    pub tandem_channels: Vec<String>,
+
+    /// Tandem mode: auto-trigger archiving for recordings from these playlists.
+    #[serde(default)]
+    pub tandem_playlists: Vec<String>,
+}
+
+impl Default for ArchiverConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            configured: false,
+            archive_dir: default_archive_dir(),
+            format: default_archive_format(),
+            concurrent_fragments: default_concurrent_fragments(),
+            rate_limit: String::new(),
+            tandem_channels: Vec::new(),
+            tandem_playlists: Vec::new(),
+        }
+    }
+}
+
+fn default_archive_dir() -> PathBuf {
+    dirs::home_dir()
+        .map(|h| h.join("Videos/StriVo/Archives"))
+        .unwrap_or_else(|| PathBuf::from("./archives"))
+}
+fn default_archive_format() -> String {
+    "best".to_string()
+}
+fn default_concurrent_fragments() -> u32 {
+    4
+}
+
 /// Config modal state for the Archiver plugin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigModalState {

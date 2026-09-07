@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use super::types::Segment;
-use strivo_core::config::CrunchrConfig;
+use crate::crunchr::types::CrunchrConfig;
 
 /// Result of a transcription operation.
 pub struct TranscriptionResult {

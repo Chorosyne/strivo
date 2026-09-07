@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use strivo_core::config::CrunchrAnalysisConfig;
+use crate::crunchr::types::CrunchrAnalysisConfig;
 
 /// Result of LLM analysis on a video's transcript.
 #[derive(Debug, Clone)]
