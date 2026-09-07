@@ -18,7 +18,15 @@ const PORT = process.env.PORT || 8199;
 // SPA's own runtime `creator_enabled` route gating (S10's
 // pvr-edition-gating.spec.ts) — it does not test the build-time module
 // selection, which check-pvr-bundle.mjs covers against the real artifact.
+// `STRIVO_E2E_ASSETS_DIR` overrides both loaders with a PREBUILT bundle
+// (i.e. a build.rs output tree). Release builds minify spa.js/spa.css, and
+// the source modules this file otherwise assembles are never minified — so
+// without this override the 71-test mock lane would give a minified bundle
+// zero coverage, and a minifier that broke the SPA would still go green.
+const PREBUILT = process.env.STRIVO_E2E_ASSETS_DIR || "";
+
 async function readSpaJs() {
+  if (PREBUILT) return readFile(join(PREBUILT, "spa.js"));
   const spaDir = join(ASSETS, "spa");
   const names = (await readdir(spaDir)).filter((n) => n.endsWith(".js")).sort();
   const parts = await Promise.all(names.map((n) => readFile(join(spaDir, n))));
@@ -30,6 +38,7 @@ async function readSpaJs() {
 // `assets/spa-css/`. Like readSpaJs above, this always includes every
 // module (pvr + creator) so the mock lane exercises the full UI.
 async function readSpaCss() {
+  if (PREBUILT) return readFile(join(PREBUILT, "spa.css"));
   const cssDir = join(ASSETS, "spa-css");
   const names = (await readdir(cssDir)).filter((n) => n.endsWith(".css")).sort();
   const parts = await Promise.all(names.map((n) => readFile(join(cssDir, n))));

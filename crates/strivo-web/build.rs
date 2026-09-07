@@ -48,6 +48,101 @@ fn main() {
         // The research UI is Creator-only in its entirety; ship none of it.
         let _ = fs::remove_dir_all(dst_assets.join("research"));
     }
+
+    // Release builds ship a minified bundle. Beyond the size win, this is
+    // what removes source comments from the served asset: the SPA is
+    // otherwise shipped verbatim, so explanatory comments naming Creator
+    // plugins survive into the binary and show up under `strings` even
+    // though no Creator code or UI is present (ADR 0002's invisibility
+    // bar). Debug builds keep the readable bundle for development.
+    if env::var("PROFILE").as_deref() == Ok("release") {
+        minify_js(&dst_assets.join("spa.js")).expect("failed to minify spa.js");
+        minify_css(&dst_assets.join("spa.css")).expect("failed to minify spa.css");
+        // strivo.css is a small static sheet served alongside the SPA.
+        let strivo_css = dst_assets.join("strivo.css");
+        if strivo_css.exists() {
+            minify_css(&strivo_css).expect("failed to minify strivo.css");
+        }
+        if creator_enabled {
+            // The research UI ships as separate ES modules, not through the
+            // assembled bundle, so it needs minifying in its own right.
+            minify_js_tree(&dst_assets.join("research"))
+                .expect("failed to minify research modules");
+        }
+    }
+}
+
+/// Minify one JavaScript file in place.
+///
+/// Deliberately parse-and-regenerate only: whitespace and comments are
+/// dropped, but identifiers are NOT mangled and the compressor is NOT run.
+/// The bundle is hand-written, relies on top-level function hoisting across
+/// concatenated modules, and guards Creator entry points with
+/// `typeof f === "function"` — all of which the aggressive passes in this
+/// version of the minifier are not proven safe against. Comment and
+/// whitespace removal is what the invisibility bar actually needs, and it
+/// is the transform with a behaviour-preserving guarantee we can state.
+fn minify_js(path: &Path) -> io::Result<()> {
+    use oxc_allocator::Allocator;
+    use oxc_codegen::{CodeGenerator, CodegenOptions};
+    use oxc_parser::Parser;
+    use oxc_span::SourceType;
+
+    let source = fs::read_to_string(path)?;
+    let allocator = Allocator::default();
+    // The SPA is served as `<script type="module">`.
+    let source_type = SourceType::js().with_module(true);
+    let parsed = Parser::new(&allocator, &source, source_type).parse();
+    assert!(
+        parsed.errors.is_empty(),
+        "refusing to minify {}: parse reported {} error(s); first: {:?}",
+        path.display(),
+        parsed.errors.len(),
+        parsed.errors.first()
+    );
+    let out = CodeGenerator::new()
+        .with_options(CodegenOptions {
+            single_quote: false,
+            minify: true,
+        })
+        .build(&parsed.program)
+        .source_text;
+    fs::write(path, out)
+}
+
+/// Minify every `.js` file under `dir`, recursively. No-op if absent.
+fn minify_js_tree(dir: &Path) -> io::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            minify_js_tree(&path)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("js") {
+            minify_js(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Minify one stylesheet in place.
+fn minify_css(path: &Path) -> io::Result<()> {
+    use lightningcss::stylesheet::{MinifyOptions, ParserOptions, PrinterOptions, StyleSheet};
+
+    let source = fs::read_to_string(path)?;
+    let mut sheet = StyleSheet::parse(&source, ParserOptions::default())
+        .unwrap_or_else(|e| panic!("refusing to minify {}: {e}", path.display()));
+    sheet
+        .minify(MinifyOptions::default())
+        .unwrap_or_else(|e| panic!("failed to minify {}: {e}", path.display()));
+    let out = sheet
+        .to_css(PrinterOptions {
+            minify: true,
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("failed to print {}: {e}", path.display()));
+    fs::write(path, out.code)
 }
 
 /// Build `$OUT_DIR/assets/spa.<ext>` by concatenating the ordered module
