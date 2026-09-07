@@ -679,3 +679,62 @@ fn quality_tier_selectors_are_valid_ytdlp_format_strings() {
         );
     }
 }
+
+// ── Shared jobs.db handle wiring (R05/V08) ─────────────────────────────
+//
+// The prior remediation attempt's only coverage exercised `AppState::jobs_db()`
+// directly against its own temp state — never through a route. That let a
+// handler silently revert to a per-request `PersistDb::open(..)` (the exact
+// regression this branch fixes) while the suite stayed green. This test
+// drives the REAL router (`build_router`, like every other test in this
+// file) and observes the *effect* of the shared handle from outside the
+// handler, rather than calling the accessor itself.
+
+/// `GET /api/v1/history`, authenticated with `api_key`.
+fn history_request(api_key: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri("/api/v1/history")
+        .header("x-api-key", api_key)
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Two authenticated `/api/v1/history` calls through the real router must
+/// initialise `AppState.jobs_db` exactly once. A handler that reverted to
+/// opening its own `PersistDb` per request would never touch this cell at
+/// all, so `jobs_db_cell.get()` would still read `None` after the requests
+/// — that is the wiring gap this test is built to catch (proved by mutation
+/// below; see the R05 report for the failing-then-passing transcript).
+#[tokio::test]
+async fn shared_jobs_db_handle_is_initialised_by_a_real_route() {
+    let api_key = "jobs-db-wiring-test-key";
+    let mut state = AppState::test_state(api_key);
+    let dir = tempfile::tempdir().expect("tempdir");
+    state.jobs_db_path = std::sync::Arc::new(dir.path().join("jobs.db"));
+    // Retain a handle to the shared cell *before* `state` moves into the
+    // router, so the test can inspect it after real requests run without
+    // ever calling `jobs_db()` itself.
+    let jobs_db_cell = state.jobs_db.clone();
+    let router = build_router(state);
+
+    let resp1 = router.clone().oneshot(history_request(api_key)).await.unwrap();
+    assert_eq!(
+        resp1.status(),
+        StatusCode::OK,
+        "first /api/v1/history call must succeed"
+    );
+    assert!(
+        jobs_db_cell.get().is_some(),
+        "AppState.jobs_db must be initialised after a real request reaches a jobs.db-backed \
+         handler — a handler that opens its own PersistDb per request instead of going through \
+         state.jobs_db() would leave this cell empty"
+    );
+
+    let resp2 = router.clone().oneshot(history_request(api_key)).await.unwrap();
+    assert_eq!(
+        resp2.status(),
+        StatusCode::OK,
+        "second /api/v1/history call must succeed"
+    );
+}
