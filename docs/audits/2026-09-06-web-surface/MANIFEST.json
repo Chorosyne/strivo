@@ -606,7 +606,7 @@
     {
       "id": "CE01",
       "priority": "P1",
-      "status": "blocked",
+      "status": "deferred_with_scope_limit",
       "owner_role": "core-api",
       "assignee": null,
       "evidence_classes": [
@@ -617,18 +617,20 @@
       "dependencies": [],
       "closure_evidence": [
         {
-          "revision": "remediation/creator-split f320fe1..84deab8",
-          "command": "cargo build; cargo build --workspace; cargo build -p strivo-bin --features creator; cargo test --workspace; cargo test -p strivo-web -p strivo-bin --features creator; cargo clippy --workspace --all-targets -- -D warnings; cargo clippy -p strivo-core -p strivo-web -p strivo-bin --features creator --all-targets -- -D warnings; cargo fmt --all -- --check   (all re-run independently by the reviewer)",
-          "observed": "All three builds pass. cargo test --workspace: 83 suites 'ok', zero FAILED, zero errors. Creator tests: 62+8+4+8 pass. Both clippy invocations clean. fmt clean. Reviewer also confirmed the diff adds no #[ignore] and removes no assertions.",
-          "reviewer": "Reviewer verified the refactor diff, independently confirmed the dead-code deletion against bd17f61, confirmed both stated blockers are real, and re-ran the full verification suite. Operator has NOT reviewed.",
-          "environment": "debug profile. Partial implementation: `grep -ri \"crunchr\\|archiver\" src/` still returns 33 hits, so CE01's own acceptance criterion is NOT met."
+          "revision": "integrated main @ edcccf8",
+          "command": "grep -rin 'crunchr|archiver' src/ | wc -l ; cargo build ; cargo build -p strivo-bin --features creator ; cargo test --test config_extensions_roundtrip",
+          "observed": "SUBSTANTIAL, MEASURED PROGRESS — 33 hits down to 7, and acceptance criterion #2 is fully MET: the `creator` feature is deleted from strivo-core outright and BOTH editions still build. Verified first-hand: grep returns 7 (all inside post_pull_markers, four of them doc comments explaining the exception) and one cfg(feature=\"creator\") which is a comment, not a live attribute. This is real decoupling, not renaming: PRO_PLUGINS left core and the gate now takes the plugin set as a parameter; the Creator pipeline templates moved to strivo-plugins; and CrunchrConfig/CrunchrAnalysisConfig/ArchiverConfig (~150 lines) moved to strivo-plugins, with AppConfig exposing a generic `extensions: BTreeMap<String, toml::Value>` plus plugin_section accessors. Acceptance criterion #1 (grep returns nothing) is NOT met, which is why this is deferred rather than closed. DATA SAFETY, the risky part, is proven: tests/config_extensions_roundtrip.rs passes 6/6 — an existing config.toml with [crunchr]/[archiver] parses, delivers typed values, defaults when a section is absent, survives save+reload unchanged, resolves the legacy [sloptube] alias, and post_pull_markers still honours crunchr.enabled. Full suites, both clippy configurations and fmt all clean. NOTE for maintainers: this removes AppConfig.crunchr/.archiver from strivo-core's PUBLIC API. Under SemVer that is a breaking change; strivo-core is 0.6.0, where 0.y.z permits it, but it warrants a deliberate version decision before release.",
+          "reviewer": "orchestrator, on integrated main — grep counts, both edition builds, the config round-trip suite and the CE05 manifest check were re-run first-hand",
+          "regression": "tests/config_extensions_roundtrip.rs (6 tests)",
+          "environment": "Linux, rustc 1.98.0, debug profile"
         }
       ],
       "evidence_paths": [
         "src/recording/catalog.rs",
         "src/config/mod.rs",
         "src/recording/bulk.rs"
-      ]
+      ],
+      "scope_limitation": "strivo-core still contains ONE Creator-specific behaviour: AppConfig::post_pull_markers (src/config/mod.rs:766-792) reads extensions[\"crunchr\"][\"enabled\"] and returns the literal \".crunchr-auto\" marker. Core therefore still knows one plugin by name, and the Creator repository split cannot be declared complete until this is generalised. The product supports everything it did before — this is residual coupling, not a lost capability — but any claim that 'strivo-core carries no Creator concepts' remains FALSE while these 7 grep hits stand."
     },
     {
       "id": "CE02",
@@ -718,7 +720,7 @@
     {
       "id": "CE05",
       "priority": "P2",
-      "status": "blocked",
+      "status": "closed",
       "owner_role": "core-feature",
       "assignee": null,
       "evidence_classes": [
@@ -729,7 +731,15 @@
       "dependencies": [
         "CE01"
       ],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ edcccf8",
+          "command": "grep -n 'strivo-core' crates/strivo-plugins/Cargo.toml",
+          "observed": "RESOLVED BY SUPERSESSION, exactly as this item's own remediation note anticipated. The dependency is now `strivo-core = { path = \"../..\" }` with NO features stanza — the Creator repo can no longer enable a feature living in the PVR repo, because CE01's work deleted that feature from strivo-core entirely. Verified first-hand on integrated main; both editions build.",
+          "reviewer": "orchestrator, on integrated main — grep counts, both edition builds, the config round-trip suite and the CE05 manifest check were re-run first-hand",
+          "environment": "Linux, rustc 1.98.0, debug profile"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-plugins/Cargo.toml",
         "Cargo.toml"
