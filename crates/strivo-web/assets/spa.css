@@ -1,6 +1,8 @@
 /* StriVo SPA theme — JellySkin-derived (prayag17/JellySkin), CANONICAL per
- * DESIGN.md §"Web UI Theme": deep navy gradient, purple→cyan accent gradient,
- * heavy frosted glass, Montserrat. Ported from JellySkin's SCSS variables.
+ * and CANONICAL for the SPA's visual system: deep navy gradient, purple→cyan
+ * accent gradient, heavy frosted glass, Montserrat. Ported from JellySkin's
+ * SCSS variables. The `:root` tokens below are the source of truth — consume
+ * them rather than hardcoding colours.
  * The SPA intentionally uses JellySkin's purple/cyan identity, not the brand
  * cyan (#00E5FF) which stays the TUI/marketing accent. */
 

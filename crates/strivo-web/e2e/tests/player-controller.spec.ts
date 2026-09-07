@@ -445,8 +445,8 @@ test("multi-view settings offer Twitch quality and are honest about YouTube", as
 
 // ── YouTube ─────────────────────────────────────────────────────────────
 //
-// Google's script must never load merely because the wall was opened —
-// DESIGN.md records avoiding Google for fonts on exactly this reasoning.
+// Google's script must never load merely because the wall was opened — the
+// same reasoning that puts fonts on Bunny rather than Google Fonts.
 // It may load only once a YouTube tile is actually played, by which point
 // the viewer has chosen to contact Google anyway.
 test("YouTube's script loads on demand, not on page load", async ({ page }) => {

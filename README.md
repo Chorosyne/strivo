@@ -193,7 +193,7 @@ unauthenticated so a container orchestrator can probe readiness.
 Use `strivo config path` and `strivo log path` rather than assuming a path.
 On a standard Linux installation, configuration is under
 `~/.config/strivo/`, logs and runtime state follow the XDG directories, and
-recordings default to `~/Videos/strivo`. The detailed path map, first-run flow,
+recordings default to `~/Videos/StriVo`. The detailed path map, first-run flow,
 and troubleshooting live in [First run](docs/FIRST-RUN.md). For every
 configuration field and default, start with the annotated
 [`config.toml.example`](config.toml.example).

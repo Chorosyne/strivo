@@ -123,21 +123,19 @@ ui-ux, backend) and `research/exemplars/`.
 | Quality profiles (tiered) | ✅ | `bd75f9c` + `0fa189e` — `QualityTier` enum in `CaptureProfile`; threaded through streamlink and yt-dlp. |
 | Filename-token browser, JSON channel import/export | ✅ | `bd75f9c` — token browser SPA pane + JSON import/export routes shipped. |
 
-### DESIGN.md compliance ✅ (resolved — JellySkin is canonical)
-DESIGN.md previously mandated ElegantFin while the SPA shipped JellySkin. Owner
-decision: **JellySkin is the trajectory.** DESIGN.md §"Web UI Theme" + Typography
-were rewritten to JellySkin (tokens mirror `spa.css`), the SPA font is Montserrat,
-and `spa.css` font loading moved Google Fonts → Bunny Fonts (privacy). The SPA
-uses JellySkin purple/cyan; brand cyan `#00E5FF` stays the TUI/marketing accent.
-The stale ElegantFin reference CSS under `docs/reference/` was archived.
+### SPA theme ✅ (resolved — JellySkin is canonical)
+The SPA theme is JellySkin-derived and **`crates/strivo-web/assets/spa.css` is the
+canonical, in-tree source of truth for it.** An earlier ElegantFin direction was
+dropped; its reference CSS is archived under `docs/archive/`. The settled facts:
 
-> **Note (design authority location):** `DESIGN.md` is intentionally
-> `.gitignore`d ("Internal docs — kept local only") and is not present in any
-> fresh clone, CI checkout, or `git worktree` — only on the owner's own
-> machine. The §"Web UI Theme" reference above (and CLAUDE.md's "always read
-> DESIGN.md" instruction) are therefore unresolvable from source control
-> alone; treat the design authority as maintained out-of-tree until the owner
-> decides whether to track it. See finding S11.
+- Deep navy gradient ground, purple→cyan accent gradient, heavy frosted glass.
+- Typeface **Montserrat**, served from **Bunny Fonts** rather than Google Fonts so
+  no client IP or referer leaks to Google.
+- The SPA uses JellySkin's purple/cyan identity. Brand cyan `#00E5FF` is the
+  marketing accent and is deliberately *not* the SPA's primary.
+
+Read `spa.css`'s `:root` token block for the authoritative values; new SPA
+components consume those tokens rather than hardcoding colours.
 
 ---
 
@@ -289,7 +287,8 @@ fork.
 ## Conventions
 
 - Commit prefixes: `feat:` `fix:` `chore:` `refactor:` `ci:` `docs:` `test:` `perf:`.
-- **No AI attribution** in commits, PRs, or code comments (per project CLAUDE.md).
+- **No AI attribution** in commits, PRs, or code comments. The human author is the
+  sole author of record: no `Co-Authored-By` or generated-with trailers.
 - **Editions:** default build = PVR; `--features creator` = Creator Edition. Keep
   the PVR build free of creator deps; gate new creator surfaces behind the feature.
 - A PVR slice is: change + tests + daemon/web wiring + SPA surface + E2E verify.

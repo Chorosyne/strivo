@@ -1,5 +1,5 @@
-/* Skeleton CSS — palette pulled from DESIGN.md (neon dark).
-   Refine per-page in later phases. */
+/* Skeleton CSS — neon-dark palette. Superseded for the SPA by spa.css, whose
+   `:root` block is canonical; kept for the few pages not yet migrated. */
 :root {
   --bg: #0a0e14;
   --bg-2: #11161d;

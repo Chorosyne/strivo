@@ -150,8 +150,8 @@ Reasoning:
   convenience. Reverting it is the smallest change that gets a working
   two-repo split, and it's a mechanism this codebase has already
   operated with once.
-- **Versioning:** pin by tag (`vMAJOR.MINOR.PATCH`, per this repo's SemVer
-  policy — see the global CLAUDE.md conventions), not by branch or commit
+- **Versioning:** pin by tag (`vMAJOR.MINOR.PATCH`, per the SemVer 2.0.0
+  policy recorded in ROADMAP.md), not by branch or commit
   SHA, so a Creator Edition release states an explicit, auditable
   dependency on a specific PVR core release. CI on both repos should
   matrix-build against at least the last N tags of the other, to catch

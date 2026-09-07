@@ -6740,9 +6740,10 @@ function makeTwitchController(spec) {
 /// Load YouTube's IFrame Player API — ON DEMAND ONLY.
 ///
 /// This is a Google-hosted script executing with page privileges, which is a
-/// heavier trust posture than a sandboxed cross-origin iframe. DESIGN.md
-/// records choosing Bunny Fonts specifically to avoid leaking IP/referer to
-/// Google, so this must never load merely because someone opened the wall:
+/// heavier trust posture than a sandboxed cross-origin iframe. This project
+/// deliberately serves fonts from Bunny Fonts rather than Google to avoid
+/// leaking client IP/referer, so this must never load merely because someone
+/// opened the wall:
 /// it loads the first time a YouTube tile is actually played, at which point
 /// the viewer has already chosen to contact Google.
 ///
