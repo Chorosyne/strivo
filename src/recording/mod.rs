@@ -1037,6 +1037,28 @@ pub async fn run_manager(
                                         "Recorder exited: {status} after {} retries{stderr_excerpt}",
                                         rec.retry_count
                                     );
+                                    // A recogniseable "your cookies don't
+                                    // work anymore" phrase from yt-dlp means
+                                    // the imported cookie jar (YouTube,
+                                    // Patreon) is stale — surface it as an
+                                    // auth issue distinct from the generic
+                                    // recorder failure above.
+                                    if matches!(
+                                        rec.job.platform,
+                                        crate::platform::PlatformKind::YouTube
+                                            | crate::platform::PlatformKind::Patreon
+                                    ) {
+                                        if let Some(reason) =
+                                            crate::recording::ytdlp::classify_recorder_auth_failure(
+                                                &stderr_tail,
+                                            )
+                                        {
+                                            let _ = event_tx.send(DaemonEvent::CookieSessionRejected {
+                                                kind: rec.job.platform,
+                                                reason,
+                                            });
+                                        }
+                                    }
                                     rec.job.state = RecordingState::Failed;
                                     rec.job.error = Some(error_msg.clone());
                                     finished.push((*id, RecordingState::Failed, Some(error_msg)));

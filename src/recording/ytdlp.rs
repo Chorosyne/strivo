@@ -487,6 +487,37 @@ async fn wait_for_graceful_exit(child: &mut Child, timeout: Duration) -> bool {
     matches!(tokio::time::timeout(timeout, child.wait()).await, Ok(Ok(_)))
 }
 
+/// Phrases yt-dlp's stderr uses when the session it was given (cookies —
+/// OAuth failures are a separate signal, handled in `platform::*`) is no
+/// longer accepted by the platform: expired session, signed-out browser,
+/// or an age/bot challenge the cookies used to clear.
+///
+/// Best-effort and yt-dlp-version-dependent: these are plain substring
+/// matches against upstream's human-readable error text, not a stable API.
+/// yt-dlp releases can reword them; when a real failure stops matching,
+/// widen this list rather than assume the cookie jar is fine.
+const COOKIE_REJECTION_PHRASES: &[&str] = &[
+    "sign in to confirm you're not a bot",
+    "sign in to confirm your age",
+    "available to this channel's members",
+    "cookies are no longer valid",
+    "please sign in",
+    "this video is private",
+    "login required",
+];
+
+/// Classify a yt-dlp stderr tail as a rejected cookie session, if it
+/// matches one of the known phrases. Returns the matched phrase (for the
+/// `AuthIssue` reason) rather than the whole tail, which can be long and
+/// full of unrelated noise.
+pub fn classify_recorder_auth_failure(stderr_tail: &str) -> Option<String> {
+    let lower = stderr_tail.to_lowercase();
+    COOKIE_REJECTION_PHRASES
+        .iter()
+        .find(|phrase| lower.contains(*phrase))
+        .map(|phrase| phrase.to_string())
+}
+
 impl Drop for YtDlpProcess {
     fn drop(&mut self) {
         match self.child.try_wait() {
@@ -653,5 +684,72 @@ mod tests {
         assert!(parse_download_line("ERROR: nope").is_none());
         // Completion line uses "in" instead of "ETA" — out of scope, ignored.
         assert!(parse_download_line("[download] 100% of 1.23GiB in 04:23").is_none());
+    }
+}
+
+#[cfg(test)]
+mod cookie_rejection_tests {
+    use super::classify_recorder_auth_failure;
+
+    #[test]
+    fn detects_bot_challenge() {
+        let tail = "ERROR: [youtube] abc123: Sign in to confirm you're not a bot.";
+        assert_eq!(
+            classify_recorder_auth_failure(tail),
+            Some("sign in to confirm you're not a bot".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_age_gate() {
+        let tail = "ERROR: Sign in to confirm your age. This video may be inappropriate.";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn detects_members_only() {
+        let tail = "ERROR: This video is available to this channel's members on level: ...";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn detects_stale_cookies() {
+        let tail = "WARNING: The provided cookies are no longer valid.";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn detects_please_sign_in() {
+        let tail = "ERROR: Please sign in.";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn detects_private_video() {
+        let tail = "ERROR: This video is private.";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn detects_login_required() {
+        let tail = "ERROR: Login required to access this content.";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn is_case_insensitive() {
+        let tail = "ERROR: SIGN IN TO CONFIRM YOU'RE NOT A BOT";
+        assert!(classify_recorder_auth_failure(tail).is_some());
+    }
+
+    #[test]
+    fn unrelated_failure_is_none() {
+        let tail = "ERROR: unable to download webpage: HTTP Error 503: Service Unavailable";
+        assert_eq!(classify_recorder_auth_failure(tail), None);
+    }
+
+    #[test]
+    fn empty_tail_is_none() {
+        assert_eq!(classify_recorder_auth_failure(""), None);
     }
 }
