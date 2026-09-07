@@ -16,7 +16,7 @@ use axum::http::{header, Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use strivo_web::auth::ApiKey;
-use strivo_web::server::{build_router, AppState};
+use strivo_web::server::{build_router, AppState, PUBLIC_ROUTES};
 
 fn key() -> ApiKey {
     ApiKey("test-key-12345".into())
@@ -202,20 +202,25 @@ async fn s07_pipelines_dag_rejects_bogus_key() {
 // (zero tolerance, not a printed warning) so a regression that reopens it
 // fails loudly instead of being silently absorbed as "inconclusive".
 
-/// Public by design — see server.rs's `is_public_route` (the same list,
-/// enforced at runtime by `require_auth`) and the remediation brief.
-/// `/app` is not named explicitly in that brief but serves the exact same
-/// `spa_shell` handler as `/` with no auth of its own, so it's treated as
-/// part of "the SPA shell" here.
-const KNOWN_PUBLIC: &[(&str, &str)] = &[
-    ("get", "/api/v1/health"),
-    ("get", "/"),
-    ("get", "/app"),
-    ("get", "/assets/{*path}"),
-    ("get", "/yt-websub"),
-    ("post", "/yt-websub"),
-    ("post", "/api/v1/auth/login"),
-];
+/// Public by design — imported directly from `server::PUBLIC_ROUTES`, the
+/// one place every intentionally-unauthenticated route is declared (also
+/// enforced at runtime by `require_auth`'s `is_public_route`), so this
+/// sweep can't silently drift from the runtime allowlist. See the
+/// remediation brief. `/app` is not named explicitly in that brief but
+/// serves the exact same `spa_shell` handler as `/` with no auth of its
+/// own, so it's treated as part of "the SPA shell" here.
+const KNOWN_PUBLIC: &[(&str, &str)] = PUBLIC_ROUTES;
+
+/// Guards against a future refactor accidentally reintroducing a second,
+/// independently-maintained public-route list: `KNOWN_PUBLIC` above must
+/// stay a direct alias of `server::PUBLIC_ROUTES`, not a copy of it.
+#[test]
+fn known_public_matches_library_public_routes() {
+    assert_eq!(
+        KNOWN_PUBLIC, PUBLIC_ROUTES,
+        "the sweep's public-route list has diverged from strivo_web::server::PUBLIC_ROUTES"
+    );
+}
 
 /// Always-compiled surface (PVR + Creator builds both mount these).
 const ALWAYS_ROUTES: &[(&str, &str)] = &[

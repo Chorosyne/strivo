@@ -219,19 +219,40 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// The only routes reachable with no credential at all: the SPA shell
-/// (`/`, `/app`), its static bundle (`/assets/*`), the health probe the
-/// SPA polls before it knows whether it's logged in, and the login POST
-/// itself. Every other route under `guarded` requires a valid session
-/// cookie or `X-Api-Key` (see `require_auth`). `/yt-websub` is public too,
-/// but it's merged onto the router *after* `require_auth`'s `route_layer`
-/// runs, so it never reaches this check at all — see `build_router`.
+/// The single source of truth for every intentionally-public (no
+/// credential required) route, as `(method, path-or-pattern)` pairs — the
+/// same shape `.route(...)` call sites and the S08 auth-sweep test
+/// (`crates/strivo-web/tests/routes.rs`) already use. `is_public_route`
+/// interprets this table at runtime; the test imports it directly instead
+/// of hand-maintaining its own copy, so the two can no longer drift apart.
+///
+/// A `{*path}` catch-all pattern (only `/assets/{*path}` uses one) is
+/// matched as a path prefix, regardless of method — matching the
+/// static-asset handler, which isn't method-gated either. Every other
+/// entry is matched by exact method + path.
+///
+/// `/yt-websub` is public too, but it's merged onto the router *after*
+/// `require_auth`'s `route_layer` runs, so `is_public_route` never
+/// actually gets called with that path — see `build_router`. It's still
+/// listed here so the auth-sweep test can treat it as accounted-for.
+pub const PUBLIC_ROUTES: &[(&str, &str)] = &[
+    ("get", "/api/v1/health"),
+    ("get", "/"),
+    ("get", "/app"),
+    ("get", "/assets/{*path}"),
+    ("get", "/yt-websub"),
+    ("post", "/yt-websub"),
+    ("post", "/api/v1/auth/login"),
+];
+
 fn is_public_route(method: &Method, path: &str) -> bool {
-    matches!(
-        (method, path),
-        (&Method::GET, "/api/v1/health") | (&Method::GET, "/") | (&Method::GET, "/app")
-    ) || (*method == Method::POST && path == "/api/v1/auth/login")
-        || path.starts_with("/assets/")
+    PUBLIC_ROUTES.iter().any(|&(m, pattern)| {
+        if let Some(prefix) = pattern.strip_suffix("{*path}") {
+            path.starts_with(prefix)
+        } else {
+            method.as_str().eq_ignore_ascii_case(m) && path == pattern
+        }
+    })
 }
 
 /// S16: auth gate applied via `route_layer` (see `build_router`) so it runs
