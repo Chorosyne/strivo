@@ -25,6 +25,17 @@ async function readSpaJs() {
   return Buffer.concat(parts);
 }
 
+// `assets/spa.css` no longer exists as a single source file either (mirrors
+// the spa.js split): it's assembled from the ordered modules under
+// `assets/spa-css/`. Like readSpaJs above, this always includes every
+// module (pvr + creator) so the mock lane exercises the full UI.
+async function readSpaCss() {
+  const cssDir = join(ASSETS, "spa-css");
+  const names = (await readdir(cssDir)).filter((n) => n.endsWith(".css")).sort();
+  const parts = await Promise.all(names.map((n) => readFile(join(cssDir, n))));
+  return Buffer.concat(parts);
+}
+
 const CHANNELS = [
   {
     id: "UClive0000000000000000aa",
@@ -893,11 +904,14 @@ const server = createServer(async (req, res) => {
   let file;
   if (path === "/" || path === "/app") file = join(ASSETS, "spa.html");
   else if (path === "/assets/spa.js") file = "spa.js"; // assembled, not read
+  else if (path === "/assets/spa.css") file = "spa.css"; // assembled, not read
   else if (path.startsWith("/assets/")) file = join(ASSETS, path.slice("/assets/".length));
   if (file) {
     try {
-      const buf = file === "spa.js" ? await readSpaJs() : await readFile(file);
-      const ext = file === "spa.js" ? ".js" : file.slice(file.lastIndexOf("."));
+      const buf = file === "spa.js" ? await readSpaJs()
+        : file === "spa.css" ? await readSpaCss()
+        : await readFile(file);
+      const ext = file === "spa.js" ? ".js" : file === "spa.css" ? ".css" : file.slice(file.lastIndexOf("."));
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream" });
       res.end(buf);
       return;

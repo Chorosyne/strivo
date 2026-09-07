@@ -104,9 +104,10 @@ function callSitesFor(strippedText, name) {
 }
 
 // 1. Build the real PVR (non-creator) bundle into an isolated target dir,
-//    so we read exactly one, unambiguous out/assets/spa.js.
+//    so we read exactly one, unambiguous out/assets/spa.js (and spa.css).
 const scratch = mkdtempSync(join(tmpdir(), "strivo-pvr-bundle-check-"));
 let builtSpaJs;
+let builtSpaCss;
 try {
   execFileSync("cargo", ["build", "-p", "strivo-web"], {
     cwd: crateDir,
@@ -121,6 +122,7 @@ try {
     throw new Error(`expected exactly one built spa.js, found ${out.length}: ${out.join(", ")}`);
   }
   builtSpaJs = readFileSync(out[0], "utf8");
+  builtSpaCss = readFileSync(join(dirname(out[0]), "spa.css"), "utf8");
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
@@ -216,4 +218,97 @@ console.log(
   `OK — PVR bundle has zero surviving call sites and zero occurrences of ` +
   `Creator-only symbols (checked ${creatorOnlyNames.size} names found only ` +
   `in assets/spa/*-creator.js).`,
+);
+
+// 5. Creator product-vocabulary denylist, checked against the actual built
+//    artifact (js AND css) — independent of the identifier-based checks
+//    above, which only catch names that are *defined* in a `-creator.js`
+//    module. A marketing string, a price, or a plugin's display name is
+//    never "defined" anywhere in the S10 sense, so it needs its own check.
+//
+//    Each entry is a case-insensitive substring/regex. A hit is allowed
+//    through only if it matches one of the explicit ALLOWLIST entries below
+//    — never by a blanket "it's probably fine" — so every exception is
+//    named and justified in one place.
+const DENYLIST = [
+  { term: "crunchr", desc: "Crunchr (transcription plugin) product name" },
+  { term: "viewguard", desc: "Viewguard (fraud-scoring plugin) product name" },
+  { term: "insights", desc: "Insights (analytics plugin) product name" },
+  { term: "upsell", desc: "pro-gate upsell copy" },
+  { term: "upgrade", desc: "Strivo Pro upgrade-card copy" },
+  { term: "licen[cs]e", desc: "Strivo Pro licence/license copy or API" },
+  { term: "\\btrial\\b", desc: "Strivo Pro trial offer" },
+  { term: "\\$25", desc: "Strivo Pro one-time-unlock price" },
+  { term: "3-day", desc: "Strivo Pro trial length" },
+  { term: "marketplace", desc: "plugin marketplace catalog" },
+  { term: "progated|pro-gated", desc: "plugin-registry pro-gating marker" },
+];
+
+// Explicit, commented allowlist. Each entry documents WHY a denylist hit at
+// that exact spot is not a leak — see the inventory in the pvr-invisibility
+// remediation report for the full classification.
+const ALLOWLIST = [
+  // Route-parsing / hash-structure comments: explanatory only, never
+  // rendered. E.g. "// #/plugins/crunchr → transcribed-recordings list".
+  { pattern: /^\s*(\/\/|\*|\/\*)/, desc: "full-line source comment" },
+  // Live-data feature probe: checks the daemon's actual /plugins response
+  // for a plugin named "crunchr". A PVR daemon never reports one available
+  // (it mounts no crunchr route), so this is dead-but-harmless, and it is
+  // an identifier/URL-segment check against runtime data, not shipped copy.
+  { pattern: /p\.name === "crunchr"/, desc: "live plugin-availability check, not marketing copy" },
+  { pattern: /#\/plugins\/crunchr\/rec\//, desc: "deep-link built only when the check above is true" },
+  { pattern: /\bconst crunchr = /, desc: "local variable bound to the live-data check above" },
+  { pattern: /showTranscriptHtml = crunchr && crunchr\.available/, desc: "reads the same local variable, not a string literal" },
+  // Command-palette / keyboard-help nav row lists: the underlying "Go to
+  // Pipelines" / "Go to Plugins" routes already bounce Home in a PVR build
+  // (CREATOR_ROUTES, see 008-pvr.js) and are filtered out of the palette at
+  // runtime (036-pvr.js's commandList()) — the same "needed by the gating
+  // mechanism itself" exception already applied to navItems/CREATOR_ROUTES.
+  { pattern: /\["pipelines", "Go to Pipelines"\]/, desc: "filtered command-palette entry" },
+  { pattern: /\["plugins", "Go to Plugins"\]/, desc: "filtered command-palette entry" },
+];
+
+function isAllowlisted(line) {
+  return ALLOWLIST.some((a) => a.pattern.test(line));
+}
+
+function scanForDenylist(text, fileLabel) {
+  const hits = [];
+  const lines = text.split("\n");
+  lines.forEach((line, i) => {
+    if (isAllowlisted(line)) return;
+    for (const { term, desc } of DENYLIST) {
+      const re = new RegExp(term, "i");
+      if (re.test(line)) {
+        hits.push({ file: fileLabel, lineNo: i + 1, term, desc, line: line.trim().slice(0, 160) });
+      }
+    }
+  });
+  return hits;
+}
+
+const vocabHits = [
+  ...scanForDenylist(builtSpaJs, "out/assets/spa.js"),
+  ...scanForDenylist(builtSpaCss, "out/assets/spa.css"),
+];
+
+if (vocabHits.length) {
+  console.error(
+    "PVR bundle contains Creator product vocabulary (pvr-invisibility remediation violated):",
+  );
+  for (const h of vocabHits) {
+    console.error(`  ${h.file}:${h.lineNo} — "${h.term}" (${h.desc})`);
+    console.error(`    ${h.line}`);
+  }
+  console.error(
+    "\nMove the offending copy into a `-creator.js`/`-creator.css` module, or " +
+    "add a justified ALLOWLIST entry in check-pvr-bundle.mjs if this is a " +
+    "genuinely legitimate PVR-side occurrence.",
+  );
+  process.exit(1);
+}
+
+console.log(
+  `OK — PVR bundle (js + css) has zero un-allowlisted occurrences of ` +
+  `Creator product vocabulary (checked ${DENYLIST.length} denylist terms).`,
 );
