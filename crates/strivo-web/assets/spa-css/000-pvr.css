@@ -426,15 +426,25 @@ th[data-sort]:hover {
   align-self: center;
 }
 
-/* Left rail = channel list (TUI-style). */
+/* Left rail = channel list (TUI-style). Floats as a rounded card, inset
+   from the topbar and viewport bottom by `lg` (1.5rem / 24px) — roughly two
+   rows of the rail's own .ch-row vertical rhythm (0.4rem padding × 2) —
+   rather than welded flush top-to-bottom. Scroll clipping and the
+   border-radius live on the same box, so the channel list and its
+   scrollbar are clipped to the rounded corners instead of spilling square
+   over them. */
 .leftrail {
   grid-area: leftrail;
+  margin: 1.5rem 0;
   background: rgba(30, 40, 54, 0.55);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
-  border-right: 1px solid var(--border-light);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
   padding: 0.5rem 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 /* Rail sort control. Sits above the sections so it reads as governing the
    whole rail rather than belonging to either list. */
@@ -1161,8 +1171,7 @@ button.sm {
   }
   .leftrail {
     max-height: 35vh;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
+    margin: 1rem;
   }
 }
 
