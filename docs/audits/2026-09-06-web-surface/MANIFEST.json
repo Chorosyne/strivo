@@ -525,6 +525,13 @@
           "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
           "regression": "shared_jobs_db_handle_is_initialised_by_a_real_route",
           "environment": "Linux, rustc 1.98.0. Tests debug profile; the V07 benchmark used release binaries."
+        },
+        {
+          "revision": "integrated main @ 2f5a15a",
+          "command": "see V07's controlled benchmark",
+          "observed": "CROSS-REFERENCE, recorded so this closure is not read as broader than it is. R05 remains closed: its finding was per-request connection opens re-running the PRAGMA + CREATE TABLE batch, and that is genuinely eliminated at all ten sites, with sequential latency measurably improved as a result. But the MECHANISM chosen — one process-wide Mutex<Connection> — is now measured to cost roughly 1.0-1.35x under concurrent load at 50k rows, so V07 is reopened to replace it with a pool. R05's own closure evidence cited an EMPTY-table benchmark, which could not have surfaced this; that limitation was stated at the time and is now resolved.",
+          "reviewer": "orchestrator",
+          "environment": "see V07"
         }
       ],
       "evidence_paths": [
@@ -1168,7 +1175,7 @@
     {
       "id": "V07",
       "priority": "P2",
-      "status": "closed",
+      "status": "open",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -1176,7 +1183,7 @@
         "G"
       ],
       "finding": "The R05 fix replaces per-request connections with ONE process-wide tokio::sync::Mutex<Connection> (strivo-core src/recording/persist.rs:76). The lock is never held across an await (verified) and the PRAGMAs are correct and now applied once, but synchronous rusqlite calls still run on the Tokio worker thread inside the lock — pre-existing, though now concentrated. Consequence: requests that previously ran their SQLite work in parallel on independent connections (WAL permits concurrent readers) now serialise on one mutex. This is a plausible THROUGHPUT REGRESSION traded for reduced per-request setup, and no measurement exists in either direction — the branch carries no benchmark, no timing harness, and no numbers in its commit message.",
-      "remediation_and_acceptance": "Measure before/after on a stated workload with stated concurrency — e.g. N concurrent GETs of the history page against the real server, using the real-server e2e harness (e2e/real-server.sh) that now exists, on a release build. Report raw numbers per workload; do not average across differing workloads. If serialisation costs more than the setup it saves, prefer a connection pool or spawn_blocking over a single shared mutex. Acceptance: a measured result that justifies the chosen design.",
+      "remediation_and_acceptance": "Measure before/after on a stated workload with stated concurrency — e.g. N concurrent GETs of the history page against the real server, using the real-server e2e harness (e2e/real-server.sh) that now exists, on a release build. Report raw numbers per workload; do not average across differing workloads. If serialisation costs more than the setup it saves, prefer a connection pool or spawn_blocking over a single shared mutex. Acceptance: a measured result that justifies the chosen design.\n\nREVISION 13 (orchestrator, controlled measurement): a single global Mutex<Connection> is the wrong shape — it wins sequentially by removing per-request schema setup, then gives that back under concurrency because SQLite WAL would otherwise let independent readers run in parallel. The correct fix gets both: a small connection pool, or a handful of persistent read connections behind a semaphore. Acceptance: the same controlled A/B (one tree, one line different, populated corpus) shows the pooled design at least matching per-request-open at c=8 and c=16 AND matching the shared handle sequentially. PRIORITY NOTE: the measured penalty is ~1.0-1.35x at c=8-16 against a 50k-row table, which for a self-hosted PVR serving a few browser tabs is not urgent; this is a correctness-of-design item, not a live performance incident.",
       "dependencies": [],
       "closure_evidence": [
         {
@@ -1186,14 +1193,20 @@
           "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
           "regression": "n/a — a measurement, not a regression test",
           "environment": "release profile via real-server.sh sandboxed XDG root; shared dev workstation"
+        },
+        {
+          "revision": "integrated main @ 2f5a15a",
+          "command": "two release binaries built from the IDENTICAL tree differing only in the history handler (state.jobs_db() vs a per-request PersistDb::open); 50,000-row jobs.db seeded in a sandboxed XDG root; sequential/c=8/c=16 against GET /api/v1/history",
+          "observed": "THE BOUNDED CAVEAT IS DISCHARGED, AND THE EARLIER EMPTY-TABLE RESULT DOES NOT SURVIVE — but a delegated agent's headline was ALSO overstated and is corrected here. That agent reported the shared mutex losing ~2x under concurrency; its 'per-request' side was built from bd17f61, which predates all the auth remediation and has ZERO require_auth references, so its two binaries differed by the default-deny auth middleware running on every request plus ~230 lines of other request-path changes. That is not a controlled test of the database handle. Orchestrator re-ran it controlled — same tree, one handler line different. At 50k rows: SEQUENTIAL the shared handle WINS (1.54 vs 2.05 ms; repeat 1.71 vs 2.33 ms; unpaginated 0.66 vs 0.80 ms). Under CONCURRENCY per-request wins modestly: c=8 10.70 vs 9.49, repeat 13.84 vs 10.66, unpaginated 4.07 vs 3.37 — roughly 1.13-1.30x. c=16 is noisier: 21.82 vs 21.18 (wash), repeat 24.01 vs 23.73 (wash), unpaginated 9.74 vs 7.20 (1.35x). So the serialisation effect is REAL and directionally as feared, but roughly 1.0-1.35x, not 2x, and it reverses sequentially. Shared dev workstation; direction reproduced across three paired runs, absolute numbers not lab-grade.",
+          "reviewer": "orchestrator — built both binaries, seeded the corpus and ran every measurement first-hand, and rejected the delegated agent's uncontrolled baseline",
+          "environment": "release profile, sandboxed XDG root under a short path (the daemon's Unix socket hits SUN_LEN on long paths), 50,000 finished Recording rows, 29 MB jobs.db"
         }
       ],
       "evidence_paths": [
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
         "src/recording/persist.rs"
-      ],
-      "bounded": true
+      ]
     },
     {
       "id": "V08",
@@ -1292,7 +1305,7 @@
     {
       "id": "V11",
       "priority": "P2",
-      "status": "open",
+      "status": "closed",
       "owner_role": "cli",
       "assignee": null,
       "evidence_classes": [
@@ -1301,7 +1314,15 @@
       "finding": "Found while verifying S09's README claims: `strivo enable` is broken on macOS, and the CLI's own help text asserts otherwise. handle_enable (crates/strivo-bin/src/main.rs:1130) is gated `#[cfg(unix)]` and unconditionally renders a systemd unit, writes it to ~/.config/systemd/user/strivo.service, then shells out to `systemctl --user daemon-reload`. macOS is unix but ships no systemd, so the command writes a file into a directory that means nothing there and then fails at systemctl. The subcommand help nevertheless reads 'a systemd user service on Linux/macOS', and main.rs:1268 repeats 'unlike the systemd unit on Linux/macOS'. The README is the accurate source here — it says macOS users should run strivo directly or use their own supervisor — so this is a code/help defect, not a docs defect.",
       "remediation_and_acceptance": "Decide whether macOS gets real service support (a launchd plist, which is the platform-native answer) or is explicitly unsupported. Then make the help text and the runtime agree: either implement launchd, or gate handle_enable to `#[cfg(target_os = \"linux\")]` and have macOS exit with a clear message pointing at the supervisor guidance. Acceptance: on macOS, `strivo enable` either installs a working launchd service or fails immediately with an actionable message, and no help string claims systemd support on macOS. NOTE for this operator: enable writes ~/.config/systemd/user/strivo.service directly, which will overwrite a hand-maintained unit — relevant to any envchain-wrapped deployment.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 2f5a15a",
+          "command": "grep for cfg(target_os) gating in crates/strivo-bin/src/main.rs; cargo build -p strivo-bin; cargo test -p strivo-bin",
+          "observed": "Option (a) taken. The systemd path (resolve_on_path, render_systemd_unit, handle_enable, systemd_quote, handle_disable, dirs_home) is re-gated from cfg(unix) to cfg(target_os = \"linux\"), so macOS can no longer write a systemd unit or shell to systemctl. Dedicated cfg(target_os = \"macos\") handle_enable/handle_disable refuse outright via message constants that point at running strivo/strivo daemon under a user supervisor. Help text in cli.rs and the Windows note were corrected; the only surviving 'systemd user service on Linux/macOS' string in the tree is inside a test asserting the message does NOT contain it. Linux behaviour is unchanged — the diff on those functions is cfg attribute lines only, bodies byte-for-byte identical. 10 strivo-bin tests pass. Verified first-hand on integrated main. NOT verified: the macOS path was never executed, because this is a Linux box; it is covered by unit tests over the plain message constants and by reading the cfg-gated code.",
+          "reviewer": "orchestrator, on integrated main",
+          "environment": "Linux, rustc 1.98.0"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-bin/src/main.rs",
         "crates/strivo-bin/src/cli.rs"
