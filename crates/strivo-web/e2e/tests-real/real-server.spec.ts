@@ -39,3 +39,27 @@ test("login then recordings list round-trips through the real daemon", async ({ 
   await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
   await expect(page.getByText("No recordings yet")).toBeVisible();
 });
+
+// CE03 — this lane runs against the REAL `cargo build -p strivo-web`
+// artifact (no --features creator, via real-server.sh), unlike
+// tests/pvr-edition-gating.spec.ts which exercises the source SPA through
+// the mock server. This is the decisive check that S10's defect (a PVR
+// bundle dispatching into Creator UI whose definitions the build never
+// shipped) stays fixed against the actual emitted bundle, not just the
+// runtime gate logic over unstripped source.
+test("PVR build: #/studio bounces to Home with no uncaught error", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("strivo-tour-done", "1"));
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err));
+
+  await page.goto("/app#/login");
+  await page.locator("#api-key").fill(API_KEY);
+  await page.locator("#login-form button[type=submit]").click();
+  await expect(page.locator("#channel-list")).toBeVisible();
+
+  await page.goto("/app#/studio");
+  await expect(page).toHaveURL(/#\/library/);
+  await expect(page.locator("#channel-list")).toBeVisible();
+
+  expect(pageErrors, "uncaught error navigating to #/studio against the real PVR build").toEqual([]);
+});
