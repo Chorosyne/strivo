@@ -1,0 +1,115 @@
+
+
+/* EDL editor — Loudness panel. Mirrors .rec-branding / .rec-history. */
+.rec-loudness {
+  margin-top: 0.7rem; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-light); border-radius: 6px;
+  background: var(--bg-soft, rgba(255,255,255,0.02));
+}
+.rec-loudness h5 { margin: 0 0 0.5rem; font-size: 0.95em; }
+.rec-loud-bar { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; }
+.rec-loud-bar label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85em; }
+.rec-loud-bar select {
+  padding: 0.35rem 0.55rem;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px; color: inherit;
+}
+.rec-loud-result { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.rec-loud-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-light); border-radius: 4px;
+  font-size: 0.82em;
+}
+.rec-loud-label { font-weight: 600; }
+.rec-loud-meas { font-family: monospace; }
+.rec-loud-target { opacity: 0.7; }
+.rec-loud-delta { font-family: monospace; font-weight: 700; text-align: right; }
+.rec-loud-delta.over  { color: #ef4444; }
+.rec-loud-delta.under { color: #4ec9b0; }
+.rec-loud-filter {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  background: rgba(0,0,0,0.25);
+  border-radius: 4px;
+  font-size: 0.78em;
+}
+.rec-loud-filter pre { margin: 0.3rem 0 0; white-space: pre-wrap; word-break: break-all; }
+
+/* EDL editor — Scene snapshots panel. Mirrors .rec-history layout. */
+.rec-scenes {
+  margin-top: 0.7rem; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-light); border-radius: 6px;
+  background: var(--bg-soft, rgba(255,255,255,0.02));
+}
+.rec-scenes h5 { margin: 0 0 0.5rem; font-size: 0.95em; }
+.rec-scene-capture {
+  display: flex; gap: 0.4rem; margin-bottom: 0.6rem;
+}
+.rec-scene-name-input {
+  flex: 1;
+  padding: 0.35rem 0.55rem;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px; color: inherit;
+}
+.rec-scene-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.rec-scene-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0.3rem 0.6rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border-light); border-radius: 4px;
+  background: rgba(0,0,0,0.15);
+}
+.rec-scene-head { grid-column: 1; grid-row: 1; display: flex; gap: 0.6rem; align-items: baseline; }
+.rec-scene-name { font-weight: 600; }
+.rec-scene-meta { font-size: 0.78em; }
+.rec-scene-tags { grid-column: 1; grid-row: 2; display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.rec-scene-tag {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  background: rgba(110,86,207,0.18);
+  border-radius: 999px;
+  color: var(--accent2);
+}
+.rec-scene-actions {
+  grid-column: 2; grid-row: 1 / span 2;
+  display: inline-flex; gap: 0.35rem; align-items: center;
+}
+
+/* Schedule-optimizer panel — 7×24 heatmap + top-pick cards. */
+.sopt-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
+}
+@media (max-width: 900px) { .sopt-grid { grid-template-columns: 1fr; } }
+.sopt-input, .sopt-output { display: flex; flex-direction: column; gap: 0.6rem; }
+.sopt-samples {
+  width: 100%; min-height: 240px; resize: vertical;
+  padding: 0.55rem 0.7rem;
+  font-family: monospace; font-size: 0.78em;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border-light);
+  border-radius: 4px; color: inherit;
+}
+.sopt-controls {
+  display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap;
+}
+/* Auto-feed row above the samples textarea — pulls real signals
+   (recordings history, chat-density) so users don't have to
+   hand-roll the JSON. */
+.sopt-autofeed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.2rem; }
+.sopt-autofeed-hint { font-style: italic; }
+/* Heatmap → schedule-optimizer bridge: action button below 'Top
+   moments' and a small label-attached link on the capability matrix
+   audience_retention row. */
+.cr-hm-actions { margin-top: 0.5rem; }
+.pg-cap-bridge { margin-left: 0.4rem; font-size: 0.8em; color: var(--accent, #b07cff); text-decoration: none; }
+.pg-cap-bridge:hover { text-decoration: underline; }

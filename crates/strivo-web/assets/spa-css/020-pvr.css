@@ -1,0 +1,746 @@
+
+/* ── Player view — right-rail chat ─────────────────────────────────
+   The watch root is a two-column grid: stage on the left, chat rail on
+   the right (32px collapsed, 340px open). Pinned to the visible
+   viewport (minus chrome) so the rail's message body can scroll inside
+   its share instead of growing the page — without this the chat
+   "infinitely extended" while the stage stayed locked. */
+.watch-root {
+  display: grid;
+  grid-template-columns: 1fr 32px;
+  gap: 0.6rem;
+  padding: 0.5rem 0.8rem;
+  align-items: stretch;
+  height: calc(100vh - 80px);
+  min-height: 0;
+}
+.watch-root.has-chat-rail {
+  grid-template-columns: 1fr 340px;
+}
+.watch-content {
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  gap: 0.6rem;
+}
+/* Stage fills the remaining vertical space inside .watch-content; the
+   `height: calc(100vh - 180px)` override on `.ms-stage` is replaced by
+   flex sizing so the chat rail's height matches the stage exactly. */
+.watch-content .ms-stage {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+.player-chat-rail {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.18);
+  overflow: hidden;
+  min-height: 0;
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-title,
+.player-chat-rail[data-open="false"] .player-chat-rail-room,
+.player-chat-rail[data-open="false"] .player-chat-rail-tabs,
+.player-chat-rail[data-open="false"] .player-chat-rail-body {
+  display: none;
+}
+.player-chat-rail-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.25);
+  flex-shrink: 0;
+}
+.player-chat-rail-toggle {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  padding: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.9rem;
+}
+.player-chat-rail-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.player-chat-rail-room {
+  font-size: 0.78rem;
+  opacity: 0.7;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.player-chat-rail-tabs {
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
+  padding: 0.4rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.12);
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.player-chat-rail-tab {
+  appearance: none; -webkit-appearance: none;
+  border: 2px solid transparent;
+  background: transparent;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 80ms ease;
+}
+.player-chat-rail-tab:hover { transform: scale(1.08); }
+.player-chat-rail-tab.active {
+  border-color: var(--accent, #ffcc00);
+}
+.player-chat-rail-avatar {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+  font-size: 0.85rem;
+  user-select: none;
+}
+.player-chat-rail-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.player-chat-rail-body .chat-msg {
+  /* Same .chat-msg rules from /chat — overflow-wrap so long emote
+     names don't blow out the narrower rail width. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 0.1rem 0;
+}
+.player-chat-rail-empty {
+  padding: 0.6rem; text-align: center;
+}
+
+/* ── /chat route — collapsible channel list ───────────────────────── */
+.chat-root.tabs-collapsed {
+  grid-template-columns: 0 1fr;
+}
+.chat-root.tabs-collapsed .chat-tabs {
+  display: none;
+}
+.chat-main-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.15rem 0.2rem 0;
+}
+.chat-tabs-toggle {
+  flex-shrink: 0;
+}
+.chat-main-active {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* ── Chatterino-grade compose bar ───────────────────────────────────
+   Used by both the /chat route (`.chat-compose-host`) and the player
+   right-rail (`.player-chat-rail-compose`). Per-platform accent set via
+   the `data-platform` attribute — Twitch purple, YouTube red,
+   Patreon coral. All other surfaces inherit the default accent. */
+.chat-compose-bar {
+  --cc-accent: var(--accent, #ffcc00);
+  --cc-accent-soft: color-mix(in srgb, var(--cc-accent) 25%, transparent);
+  position: relative;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-light);
+  border-top-color: var(--cc-accent-soft);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.22);
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.4rem 0.3rem;
+}
+.chat-compose-bar[data-platform="twitch"]  { --cc-accent: #a970ff; }  /* Twitch brand purple */
+.chat-compose-bar[data-platform="youtube"] { --cc-accent: #ff4d4d; }  /* YouTube red, slightly desaturated */
+.chat-compose-bar[data-platform="patreon"] { --cc-accent: #f96854; }  /* Patreon coral */
+.chat-compose-bar[data-platform="none"]    { --cc-accent: var(--accent, #ffcc00); }
+.chat-compose-bar .cc-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 0.35rem;
+  align-items: end;
+}
+.chat-compose-bar .cc-tool {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  align-self: stretch;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 120ms, background 120ms;
+}
+.chat-compose-bar .cc-tool:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-tool[aria-expanded="true"] {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-input {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.35);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  resize: none;
+  min-height: 1.95em;
+  line-height: 1.35;
+  overflow-y: auto;
+  outline: none;
+  transition: border-color 120ms;
+}
+.chat-compose-bar .cc-input:focus {
+  border-color: var(--cc-accent);
+  box-shadow: 0 0 0 1px var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-input:disabled {
+  opacity: 0.55; cursor: not-allowed;
+}
+.chat-compose-bar .cc-meta {
+  display: flex; flex-direction: column; align-items: stretch;
+  gap: 0.2rem; min-width: 4ch;
+}
+.chat-compose-bar .cc-count {
+  font-size: 0.7rem; opacity: 0.6;
+  text-align: right;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.chat-compose-bar .cc-count.near-cap { opacity: 0.95; color: #f4b042; }
+.chat-compose-bar .cc-count.at-cap   { color: #ef4444; opacity: 1; }
+.chat-compose-bar .cc-send {
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--cc-accent);
+  background: var(--cc-accent);
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  transition: filter 120ms, transform 80ms;
+}
+.chat-compose-bar .cc-send:hover { filter: brightness(1.12); }
+.chat-compose-bar .cc-send:active { transform: translateY(1px); }
+.chat-compose-bar .cc-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-compose-bar .cc-hint {
+  margin-top: 0.25rem;
+  min-height: 1em;
+  font-size: 0.74rem;
+}
+
+/* Popups (emote + slash-command palettes) */
+.chat-compose-bar .cc-popup {
+  position: absolute;
+  bottom: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--cc-accent);
+  border-radius: 8px;
+  background: var(--surface-bg, rgba(20,20,28,0.96));
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  z-index: 50;
+  overflow: hidden;
+}
+.chat-compose-bar .cc-popup[hidden] { display: none; }
+.chat-compose-bar .cc-popup-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.25);
+}
+.chat-compose-bar .cc-popup-tab {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  opacity: 0.7;
+}
+.chat-compose-bar .cc-popup-tab:hover { opacity: 1; }
+.chat-compose-bar .cc-popup-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--cc-accent);
+}
+.chat-compose-bar .cc-popup-search {
+  padding: 0.35rem 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+}
+.chat-compose-bar .cc-popup-search input {
+  width: 100%;
+  appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--border-light);
+  background: rgba(0,0,0,0.35);
+  color: inherit;
+  border-radius: 5px;
+  padding: 0.25rem 0.45rem;
+  font: inherit;
+  outline: none;
+}
+.chat-compose-bar .cc-popup-search input:focus { border-color: var(--cc-accent); }
+.chat-compose-bar .cc-popup-body {
+  flex: 1; overflow-y: auto;
+  padding: 0.35rem;
+}
+.chat-compose-bar .cc-emote-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: 0.2rem;
+}
+.chat-compose-bar .cc-emote-cell {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px;
+  cursor: pointer;
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1;
+}
+.chat-compose-bar .cc-emote-cell:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-emote-cell img {
+  max-width: 28px; max-height: 28px;
+  display: block;
+}
+.chat-compose-bar .cc-emoji-cell { font-size: 22px; }
+.chat-compose-bar .cc-popup-empty {
+  padding: 0.6rem; text-align: center; font-size: 0.85rem;
+}
+.chat-compose-bar .cc-cmd-body {
+  display: flex; flex-direction: column;
+}
+.chat-compose-bar .cc-cmd-cell {
+  appearance: none; -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  text-align: left;
+  display: flex; flex-direction: column;
+  gap: 0.1rem;
+  color: inherit;
+}
+.chat-compose-bar .cc-cmd-cell:hover {
+  border-color: var(--cc-accent);
+  background: var(--cc-accent-soft);
+}
+.chat-compose-bar .cc-cmd-label {
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.chat-compose-bar .cc-cmd-hint { font-size: 0.74rem; }
+
+/* Compact (rail) variant — fewer pixels, smaller font, popup is wider
+   than the rail so emote grids stay scannable. */
+.chat-compose-bar[data-compact="1"] {
+  margin: 0;
+  padding: 0.25rem 0.3rem;
+  border-radius: 0;
+  border-left: none; border-right: none; border-bottom: none;
+}
+.chat-compose-bar[data-compact="1"] .cc-input {
+  font-size: 0.82rem;
+  padding: 0.3rem 0.4rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-tool {
+  padding: 0.2rem 0.3rem;
+  font-size: 0.95rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-send {
+  padding: 0.25rem 0.45rem;
+}
+.chat-compose-bar[data-compact="1"] .cc-popup {
+  /* Edge-to-edge within the rail. Trying to spill outside (an earlier
+     `left: -180px` attempt to widen the grid) was clipped by the rail's
+     `overflow: hidden`. With auto-fill emote columns the narrower
+     width still lays out cleanly — 7–8 cells per row inside the rail. */
+  left: 0;
+  right: 0;
+  width: auto;
+}
+
+/* Container for the rail's compose region — sits below the message
+   body, anchored to the bottom of the aside. */
+.player-chat-rail-compose {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-light);
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-compose { display: none; }
+
+/* Container for the /chat route's compose — replaces the old inline
+   form's positioning. */
+.chat-compose-host { /* no extra rules — compose-bar styles itself */ }
+
+/* ── Task 1: 7-day calendar strip (Monitor / Schedule page) ─────────── */
+.cal-section { margin-bottom: 0.5rem; }
+.cal-subtitle { font-size: 0.75em; font-weight: 400; opacity: 0.6; margin-left: 0.4rem; }
+.cal-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+@media (max-width: 720px) {
+  .cal-strip { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 480px) {
+  .cal-strip { grid-template-columns: repeat(2, 1fr); }
+}
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 3.5rem;
+}
+.cal-day-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.cal-today .cal-day-label {
+  color: var(--accent2);
+}
+.cal-day-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+}
+.cal-block {
+  display: block;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: filter 0.12s ease;
+}
+.cal-block:hover { filter: brightness(1.25); }
+.cal-no-fire {
+  font-size: 0.8rem;
+  color: var(--dim);
+  align-self: flex-start;
+}
+
+/* ── Task 2: Segmented storage gauge (System page) ─────────────────── */
+.sys-gauge-wrap {
+  height: 10px;
+  background: var(--overlay);
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  margin-top: 0.75rem;
+}
+.sys-gauge-seg {
+  height: 100%;
+  transition: width 0.2s ease;
+}
+.sys-gauge-wrap.gauge-warn { outline: 1px solid var(--secondary); }
+.sys-gauge-wrap.gauge-crit { outline: 1px solid var(--recording); }
+.sys-gauge-legend {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0;
+  align-items: center;
+}
+.sys-gauge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 0.2rem;
+}
+
+/* ── Task 3: Concurrent-slot pill (topbar) ──────────────────────────── */
+/* storage-pill already covers the base style; this adds the warn variant. */
+.storage-pill.storage-pill-warn {
+  background: color-mix(in srgb, var(--secondary) 25%, transparent);
+  color: var(--secondary);
+}
+/* Make the slot pill clickable-looking so users know they can open Monitor. */
+#rec-slot-pill { cursor: pointer; }
+#rec-slot-pill:hover { filter: brightness(1.15); }
+
+/* ── Task 4: Per-channel format/profile selects (Monitor page) ──────── */
+.mon-fmt-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
+  margin-top: 0.25rem;
+}
+.mon-fmt-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.mon-fmt-sel {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.4rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+.mon-fmt-sel:focus { outline: 2px solid var(--primary); }
+
+/* ── Multi-view composer ─────────────────────────────────────────────
+   Sources on the left, a proportional mini-map of the layout tree on the
+   right. The map is rendered from the same tree the stage uses, so cell
+   paths and drop semantics match the real tiles exactly. */
+.msc-card { width: min(1080px, 96vw); }
+.msc-title { font-size: 1.05rem; font-weight: 600; margin: 0; }
+.msc-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 0.9rem;
+  padding: 0.9rem;
+  min-height: 0;
+}
+@media (max-width: 720px) {
+  .msc-body { grid-template-columns: 1fr; }
+}
+
+.msc-sources { display: flex; flex-direction: column; gap: 0.8rem; min-width: 0; }
+.msc-src-group { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.msc-src-head {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.msc-src-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.msc-src {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  text-align: left;
+  background: var(--overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.5rem;
+  cursor: grab;
+}
+.msc-src:hover { border-color: var(--accent); }
+.msc-src:active { cursor: grabbing; }
+.msc-src-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msc-src-meta { color: var(--dim); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.msc-src-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live, #39ff7f); flex: none; }
+.msc-src-dot.youtube { background: hsl(0, 70%, 60%); }
+.msc-src-dot.patreon { background: var(--secondary, #f5a623); }
+.msc-src-dot.rec { background: var(--dim); }
+
+.msc-plane { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.msc-presets { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.msc-preset.active { border-color: var(--accent); color: var(--fg); }
+
+.msc-map {
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+  display: flex;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+}
+.msc-map > * { flex: 1; min-width: 0; }
+.msc-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 2px; }
+.msc-branch { display: flex; min-width: 0; min-height: 0; }
+.msc-branch > * { flex: 1; min-width: 0; }
+
+.msc-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  margin: 2px;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  overflow: hidden;
+  min-width: 0;
+}
+.msc-cell:hover { border-color: var(--accent); }
+.msc-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.msc-cell.is-filled {
+  border-style: solid;
+  background: var(--overlay);
+  color: var(--fg);
+  cursor: grab;
+}
+.msc-cell.is-filled:active { cursor: grabbing; }
+.msc-cell.is-selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.msc-cell.is-drop-target { border-color: var(--accent); background: var(--accent-soft, rgba(176, 124, 255, 0.18)); }
+.msc-cell.is-stale { border-color: hsl(0, 70%, 60%); }
+.msc-cell.is-rec .msc-cell-name { font-style: italic; }
+.msc-cell-name {
+  padding: 0 1.4rem 0 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.msc-cell-empty { font-size: 1.2rem; color: var(--dim); }
+.msc-cell-warn { font-size: 0.65rem; color: hsl(0, 70%, 70%); }
+.msc-cell-clear {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.2rem;
+}
+.msc-cell-clear:hover { color: var(--fg); }
+
+.msc-hint { font-size: 0.72rem; }
+.msc-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.msc-foot-spacer { flex: 1; }
+.msc-toggle { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; cursor: pointer; }
+
+/* Press-to-play overlay on a paused live tile. */
+.ms-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  color: var(--fg);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 3;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.ms-play:hover { transform: scale(1.06); background: rgba(0, 0, 0, 0.7); }
+.ms-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Paused live tile: a still frame standing in for a player that has not
+   been mounted yet. */
+.ms-poster {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.ms-poster-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.55;
+}
+
+/* Mount point a PlayerController appends its media element into. The
+   controller owns that element across repaints; this box is disposable. */
+.ms-mount {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* A download is activity, but it is not live — so it never wears the
+   recording red. */
+.live-pill.live-pill-download {
+  background: var(--overlay);
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+/* Per-tile level. Kept narrow and low-contrast so a wall of nine reads as
+   video with controls, not as a mixing desk. */
+.ms-vol {
+  width: 54px;
+  height: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  vertical-align: middle;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.ms-leaf:hover .ms-vol,
+.ms-vol:hover,
+.ms-vol:focus-visible { opacity: 1; }
+
+/* Shown over a tile whose media will never play, so a broken file reads as
+   broken rather than as "still loading". */
+.ms-media-error {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.7rem;
+  background: hsla(0, 60%, 20%, 0.92);
+  border-top: 1px solid hsl(0, 70%, 60%);
+  color: var(--fg);
+  font-size: 0.78rem;
+  z-index: 4;
+}
+.ms-media-error strong { font-size: 0.82rem; }

@@ -1,0 +1,3 @@
+
+/* Editor topbar 📸 Auto-snap toggle — active state mirrors the gauge classes. */
+.rec-ed-autosnap.active { box-shadow: inset 0 0 0 1px rgba(72, 200, 128, 0.55); }

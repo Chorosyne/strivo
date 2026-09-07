@@ -1,0 +1,2008 @@
+/* StriVo SPA theme — JellySkin-derived (prayag17/JellySkin), CANONICAL per
+ * and CANONICAL for the SPA's visual system: deep navy gradient, purple→cyan
+ * accent gradient, heavy frosted glass, Montserrat. Ported from JellySkin's
+ * SCSS variables. The `:root` tokens below are the source of truth — consume
+ * them rather than hardcoding colours.
+ * The SPA intentionally uses JellySkin's purple/cyan identity, not the brand
+ * cyan (#00E5FF) which stays the TUI/marketing accent. */
+
+/* Montserrat via Bunny Fonts (privacy-friendly Google Fonts mirror — no client
+   IP/referer leak to Google). */
+@import url("https://fonts.bunny.net/css?family=montserrat:300,400,500,600,700");
+:root {
+  /* Navy background gradient (JellySkin $background-darker → $background-dark). */
+  --bg: hsl(208, 89%, 5%);
+  --bg-lighter: hsl(208, 89%, 20%);
+  --bg-gradient: linear-gradient(45deg, hsl(208, 89%, 5%), hsl(208, 89%, 20%));
+  /* Translucent navy glass — the heavy --blur darkens/saturates it. */
+  --surface: hsla(208, 60%, 13%, 0.5);
+  --overlay: hsla(208, 50%, 30%, 0.4);
+  --border: hsla(0, 0%, 100%, 0.12);
+  --border-light: hsla(0, 0%, 100%, 0.18);
+  --fg: #eef3f8;
+  --muted: hsl(208, 22%, 72%);
+  --dim: hsl(208, 16%, 55%);
+  /* JellySkin accents: purple (accent1) + cyan/blue (accent2) + the signature
+     130deg gradient used for primary actions/icons. */
+  --primary: hsl(285, 46%, 56%);
+  --accent: hsl(285, 46%, 56%);
+  --accent2: hsl(195, 100%, 43%);
+  --gradient: linear-gradient(130deg, hsl(285, 46%, 56%), hsl(195, 100%, 43%));
+  --submit: hsl(285, 46%, 56%);
+  --secondary: #f5a623;
+  --live: hsl(150, 60%, 50%);
+  --recording: hsl(0, 70%, 60%);
+  --twitch: #9146ff;
+  --youtube: #ff0000;
+  --patreon: #ff424d;
+  /* Rounding (JellySkin $rounding-*). */
+  --radius-lg: 20px;
+  --radius: 10px;
+  --radius-sm: 8px;
+  /* Frosted glass: JellySkin's blur 25px + saturate/brightness/contrast. */
+  --blur: blur(25px) saturate(110%) brightness(50%) contrast(110%);
+  --shadow: 0 8px 24px hsla(208, 89%, 3%, 0.55);
+  --font: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Themed scrollbars (JellySkin palette). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-gradient) fixed;
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ElegantFin non-primary button: translucent black, rounded 10px, soft glow. */
+button {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-light);
+  color: var(--fg);
+  padding: 0.4rem 0.8rem;
+  border-radius: 10px;
+  box-shadow: 0 0 0.5em rgba(0, 0, 0, 0.75);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.875rem;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+button:hover {
+  background: rgba(0, 0, 0, 0.5);
+  border-color: var(--primary);
+}
+button.primary {
+  background: var(--gradient);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+}
+button.primary:hover {
+  filter: brightness(1.1);
+}
+button.danger {
+  border-color: var(--recording);
+  color: var(--recording);
+}
+button.danger:hover {
+  background: var(--recording);
+  color: var(--bg);
+}
+
+input[type="text"],
+input[type="password"],
+select,
+textarea {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-light);
+  color: var(--fg);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 0.875rem;
+  width: 100%;
+}
+input[type="text"]:focus,
+input[type="password"]:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(119, 91, 244, 0.25);
+}
+
+/* Boot splash */
+.boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+.boot-glyph {
+  color: var(--recording);
+  font-size: 1.5rem;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Layout chrome — *arr top-bar + left-rail */
+.chrome {
+  display: grid;
+  grid-template-areas:
+    "topbar topbar"
+    "leftrail content";
+  grid-template-rows: 56px 1fr;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+/* Top-bar route nav (icon links). */
+.topnav {
+  display: flex;
+  gap: 0.25rem;
+}
+.topnav-link {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-size: 1.1rem;
+  color: var(--accent2);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.topnav-link:hover {
+  background: var(--overlay);
+  color: var(--accent);
+}
+.topnav-link.active {
+  background: var(--gradient);
+  color: #fff;
+}
+/* Vendored candy-icons (GPL-3.0, EliverLara/candy-icons). The SVGs are
+ * full-colour app-launcher art, so don't recolour on hover/active — just
+ * brighten the active one slightly so the gradient pill backdrop still
+ * reads as "selected". */
+.topnav-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+.topnav-link.active .topnav-icon {
+  filter: brightness(1.12) drop-shadow(0 0 4px rgba(255, 255, 255, 0.28));
+}
+.topnav-link:hover .topnav-icon {
+  filter: brightness(1.1);
+}
+/* The logout button already had no specific sizing; constrain it to match
+ * the topnav buttons so the icon doesn't overflow the topbar. */
+#logout { padding: 0.3rem 0.45rem; line-height: 0; }
+#logout .topnav-icon { width: 22px; height: 22px; }
+
+.topbar {
+  grid-area: topbar;
+  background: rgba(30, 40, 54, 0.8);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  gap: 1rem;
+}
+.topbar .brand {
+  font-weight: 800;
+  font-size: 1.25rem;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-decoration: none;
+  cursor: pointer;
+}
+.topbar .brand:hover {
+  text-decoration: none;
+  filter: brightness(1.15);
+}
+.topbar .live-pill {
+  background: var(--recording);
+  color: var(--bg);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+.topbar .spacer {
+  flex: 1;
+}
+.topbar .user-info {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: var(--mono);
+}
+.storage-pill {
+  background: var(--overlay);
+  color: var(--muted);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+/* W6 — visible focus ring on every interactive element. The browser
+ * default is often inadequate against our dark theme. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* R03 — skip link: the first focusable element in `chrome()`, hidden until
+ * keyboard focus lands on it so sighted mouse users never see it. */
+.skip-link {
+  position: absolute;
+  top: -1000px;
+  left: 0;
+  z-index: 200;
+  padding: 0.6rem 1rem;
+  background: var(--bg-lighter);
+  color: var(--fg);
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip-link:focus-visible {
+  top: 0;
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* W6 — keyboard help overlay (? key). */
+.kbd-help {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.kbd-help.open { display: flex; }
+/* .app-modal — dedicated centered-overlay for SPA modals (add-channel,
+   playlist picker, etc.). Same visual as .kbd-help but with its own
+   class so we can manage open/close and route-aware dismissal without
+   colliding with the keyboard-help overlay. */
+.app-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.app-modal.open { display: flex; }
+.app-modal .card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1.5rem 2rem;
+  width: 480px;
+  max-width: 92vw;
+}
+.kbd-help .card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1.5rem 2rem;
+  width: 480px;
+  max-width: 92vw;
+  position: relative;
+}
+.kbd-help-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: inherit;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+.kbd-help-close:hover { background: rgba(255,255,255,0.18); }
+/* #74 — playlist scope picker modal (reuses .kbd-help overlay). */
+.pl-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.pl-row {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.pl-row:hover,
+.pl-row.sel {
+  background: var(--overlay);
+  color: var(--primary);
+}
+
+/* W4-alt — grid filter input + ⌘K palette input. */
+.grid-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.grid-filter:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+th[data-sort]:hover {
+  color: var(--primary);
+}
+
+.kbd-help h2 {
+  margin: 0 0 1rem 0;
+  color: var(--primary);
+  font-size: 1.25rem;
+}
+.kbd-help dl {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+.kbd-help dt {
+  font-family: var(--mono);
+  background: var(--overlay);
+  color: var(--secondary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 0.75rem;
+}
+.kbd-help dd {
+  margin: 0;
+  color: var(--fg);
+  font-size: 0.875rem;
+  align-self: center;
+}
+
+/* Left rail = channel list (TUI-style). */
+.leftrail {
+  grid-area: leftrail;
+  background: rgba(30, 40, 54, 0.55);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border-right: 1px solid var(--border-light);
+  padding: 0.5rem 0;
+  overflow-y: auto;
+}
+/* Rail sort control. Sits above the sections so it reads as governing the
+   whole rail rather than belonging to either list. */
+.ch-sort {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem 0.25rem;
+}
+.ch-sort-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+.ch-sort-select {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  background: var(--overlay);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+.ch-sort-select:hover { border-color: var(--accent); }
+.ch-sort-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.ch-section-title {
+  /* A button now, so it needs the control chrome stripped back to the
+     original div's appearance. */
+  appearance: none;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.5rem 1rem 0.25rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.ch-section-title:hover { color: var(--fg); }
+.ch-section-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm, 8px);
+}
+.ch-section-label { flex: 1; min-width: 0; }
+.ch-caret {
+  display: inline-block;
+  font-size: 0.6rem;
+  transition: transform 0.15s ease;
+}
+.ch-section-title[aria-expanded="false"] .ch-caret { transform: rotate(-90deg); }
+
+.ch-count {
+  color: var(--dim);
+  font-weight: 600;
+}
+.ch-empty {
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.ch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.9rem;
+  text-decoration: none;
+  color: var(--fg);
+  border-left: 3px solid transparent;
+  font-size: 0.875rem;
+}
+.ch-row:hover {
+  background: var(--overlay);
+}
+.ch-row.sel {
+  background: var(--overlay);
+  border-left-color: var(--primary);
+}
+.ch-row.live .ch-name {
+  font-weight: 700;
+}
+.ch-plat {
+  font-size: 0.7rem;
+}
+.ch-plat.twitch { color: var(--twitch); }
+.ch-plat.youtube { color: var(--youtube); }
+.ch-plat.patreon { color: var(--patreon); }
+/* Patreon rows: a patreon-tinted left accent so the section reads as
+   distinct from Twitch/YouTube at a glance (item 6). */
+.ch-row.patreon {
+  border-left-color: color-mix(in srgb, var(--patreon) 45%, transparent);
+}
+.ch-row.patreon.sel {
+  border-left-color: var(--patreon);
+}
+.ch-tier {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--patreon) 22%, transparent);
+  color: var(--patreon);
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.ch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-viewers {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.ch-lastlive {
+  font-size: 0.7rem;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ch-live {
+  color: var(--live);
+  font-size: 0.7rem;
+}
+.ch-rec {
+  color: var(--recording);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.content {
+  grid-area: content;
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+/* R03 — #content is the skip-link's landing target (tabindex="-1" in
+ * chrome() so it's programmatically focusable without joining tab order);
+ * give it the same focus ring as every other interactive element. */
+.content:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+/* ElegantFin section title: white, with a short leading bar. */
+.page-title {
+  display: flex;
+  align-items: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 1rem 0;
+}
+.page-title::before {
+  content: "";
+  height: 3px;
+  width: 1.3em;
+  margin-right: 0.5em;
+  background: var(--gradient);
+  border-radius: 3px;
+  flex: none;
+}
+.page-subtitle {
+  color: var(--muted);
+  margin: -0.5rem 0 1.5rem 0;
+}
+
+/* ── Channel detail (center) ── */
+.channel-detail {
+  margin-bottom: 1.5rem;
+}
+.cd-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.cd-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin: 0;
+}
+.cd-viewers {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.cd-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+.cd-close:hover {
+  color: var(--fg);
+}
+.cd-section {
+  margin-top: 1.25rem;
+}
+.cd-section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem 0;
+  color: var(--secondary);
+}
+/* Past Broadcasts gets a larger, centered treatment per user request:
+ * +33% size (0.95rem → 1.26rem) and text-align: center. */
+.cd-section-title.past-broadcasts {
+  font-size: 1.26rem;
+  text-align: center;
+  margin: 0.6rem 0 0.8rem 0;
+}
+.vod-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.vod-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  text-decoration: none;
+  color: var(--fg);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.vod-row:last-child {
+  border-bottom: none;
+}
+.vod-row:hover {
+  background: var(--overlay);
+}
+.vod-date {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.vod-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vod-pull {
+  color: var(--primary);
+  font-size: 0.75rem;
+}
+
+/* ── Recordings dashboard ── */
+.dash-band {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+.dash-row {
+  margin-bottom: 1rem;
+}
+.dash-row:first-of-type {
+  margin-top: 0.25rem;
+}
+.dash-row-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.6rem 0;
+}
+.dash-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+/* Home rows: a viewport-responsive grid that wraps instead of scrolling
+ * horizontally. auto-fill packs each row with as many cards as fit and
+ * minmax(min(W, 100%), 1fr) clamps the track to the container width, so
+ * cards stay neatly gridded and never spill off-page at any viewport size.
+ * Media-pill rows use a wider track than the thumbnail-sized Live Now
+ * cards (.live-now-row). */
+.dash-scroll {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 0.6rem;
+  align-items: start;
+}
+.live-now-row .dash-scroll {
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
+}
+/* min-width:0 lets grid items shrink so long titles ellipsize rather than
+ * widen the track past its column. */
+.dash-scroll > .media-pill,
+.dash-scroll > .live-card {
+  min-width: 0;
+}
+/* Empty-state note spans the row instead of sitting in one card slot. */
+.dash-scroll > .empty.sm {
+  grid-column: 1 / -1;
+}
+/* Live Now card — channel thumbnail + name + viewers + LIVE chip. */
+.live-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.live-card:hover { transform: translateY(-2px); border-color: var(--accent, #b07cff); }
+/* C20: when a tile inside a transformed ancestor enters fullscreen, the
+ * transform creates a stacking context that clips the top-layer escape.
+ * Drop the transform while ANY descendant is fullscreen so the iframe
+ * can lift cleanly to the viewport. */
+.live-card:has(:fullscreen) { transform: none; }
+.live-card-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: linear-gradient(135deg, rgba(255, 68, 68, 0.18), rgba(176, 124, 255, 0.18));
+}
+.live-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.live-card-badge {
+  position: absolute; top: 0.3rem; left: 0.3rem;
+  background: var(--recording, #f04444); color: white;
+  font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
+  padding: 0.1rem 0.3rem; border-radius: 3px;
+  text-transform: uppercase;
+}
+.live-card-meta {
+  display: flex; flex-direction: column; gap: 0.05rem;
+  padding: 0.3rem 0.45rem 0.4rem;
+}
+.live-card-name { font-size: 0.78rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-card-sub { font-size: 0.66rem; }
+/* Click-to-play affordance on home pills */
+.media-pill.mp-clickable { cursor: pointer; }
+.media-pill.mp-clickable:focus-visible { outline: 2px solid var(--accent, #b07cff); outline-offset: 2px; }
+.media-pill.mp-clickable:hover { border-color: var(--accent, #b07cff); }
+.dash-strip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+.rec-card {
+  flex: 0 0 220px;
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 0.75rem;
+}
+.rec-card.recording {
+  border-color: var(--recording);
+}
+.rec-card.upcoming {
+  border-style: dashed;
+}
+.rec-card-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rec-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  align-items: center;
+}
+.empty.sm {
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+button.sm {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  margin-top: 0.4rem;
+}
+
+/* Channel cards (Library) */
+.live-now {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 68, 68, 0.15),
+    rgba(0, 229, 255, 0.05)
+  );
+  border: 1px solid var(--recording);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 2rem;
+}
+.live-now h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+}
+.live-now h2 .rec-dot {
+  color: var(--recording);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.live-now-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.channel-card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  transition: border-color 0.15s;
+}
+.channel-card:hover {
+  border-color: var(--primary);
+}
+.channel-card.live {
+  border-color: var(--live);
+}
+.channel-card.recording {
+  border-color: var(--recording);
+}
+.channel-card .row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+:is(.channel-card, .channel-detail) .platform-icon {
+  font-weight: 700;
+  font-size: 0.625rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+:is(.channel-card, .channel-detail) .platform-icon.twitch { background: var(--twitch); color: white; }
+:is(.channel-card, .channel-detail) .platform-icon.youtube { background: var(--youtube); color: white; }
+:is(.channel-card, .channel-detail) .platform-icon.patreon { background: var(--patreon); color: white; }
+.channel-card .name {
+  font-weight: 600;
+  flex: 1;
+}
+:is(.channel-card, .channel-detail) .status {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--overlay);
+  color: var(--muted);
+}
+:is(.channel-card, .channel-detail) .status.live {
+  background: var(--live);
+  color: var(--bg);
+  font-weight: 600;
+}
+.channel-card .stream-title {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin: 0.5rem 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.channel-card .meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--dim);
+  margin-bottom: 0.75rem;
+}
+:is(.channel-card, .channel-detail) .actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Recordings table */
+.recordings-table {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  width: 100%;
+  border-collapse: collapse;
+}
+.recordings-table { font-variant-numeric: tabular-nums; }
+.recordings-table th,
+.recordings-table td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.recordings-table th {
+  background: var(--overlay);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+.recordings-table tr:hover {
+  background: var(--overlay);
+}
+.recordings-table .state-pill {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.recordings-table .state-pill.recording {
+  background: var(--recording);
+  color: var(--bg);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+/* VOD pulls (DownloadVod) share the in-flight class but get a distinct
+ * cyan accent so live captures and yt-dlp pulls don't read identically. */
+.state-pill.downloading,
+.recordings-table .state-pill.downloading {
+  background: var(--accent2);
+  color: var(--bg);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+/* In-flight downloads with a known/projected percentage get a fill
+   bar inside the pill driven by --state-fill, replacing the pulsing
+   "Downloading" text with a live "NN%" label. The fill colour mirrors
+   the standalone .vod-dl-fill gradient so the two surfaces read as
+   the same thing. */
+.state-pill.has-fill {
+  position: relative;
+  overflow: hidden;
+  /* Cancel the pulse — the fill width is now the activity signal. */
+  animation: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--fg);
+  min-width: 4.2em;
+  text-align: center;
+  padding: 0.15rem 0.55rem;
+}
+.state-pill.has-fill .state-pill-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--state-fill, 0%);
+  background: linear-gradient(90deg, var(--secondary) 0%, var(--accent2) 60%, var(--live) 100%);
+  z-index: 0;
+  transition: width 250ms ease-out;
+}
+.state-pill.has-fill .state-pill-label {
+  position: relative;
+  z-index: 1;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  /* Drop-shadow keeps the digits legible no matter where the fill
+     boundary lands on the label. */
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+}
+.recordings-table .state-pill.finished {
+  background: var(--live);
+  color: var(--bg);
+}
+.recordings-table .state-pill.failed {
+  background: var(--secondary);
+  color: var(--bg);
+}
+/* Terminal data-loss state — the journal says Finished but the recording's
+ * output_path is gone. Solid red (no pulse — pulse means in-flight) with a
+ * brighter inner border so it reads clearly distinct from Failed (amber).
+ * Diagonal hatching adds a "data integrity" visual cue separate from the
+ * solid-fill Failed pill. */
+.state-pill.file-error,
+.recordings-table .state-pill.file-error {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      var(--recording) 0 6px,
+      hsl(0, 70%, 45%) 6px 12px
+    );
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  font-weight: 700;
+}
+
+/* File-error remediation modal — surfaced from the Re-scan / Show path
+ * action buttons when a recording is flagged file_exists=false. */
+.rec-locate-card { padding: 1.2rem 1.4rem; max-width: 640px; }
+.rec-locate-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 0.4rem;
+}
+.rec-locate-head h2 { margin: 0; font-size: 1.05em; }
+.rec-locate-row {
+  display: flex; gap: 0.6rem; align-items: center;
+  margin-top: 0.6rem;
+}
+.rec-locate-path {
+  flex: 1; padding: 0.5rem 0.7rem;
+  background: rgba(0,0,0,0.35);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85em;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* Login screen */
+.login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2rem;
+  width: 380px;
+  max-width: 92vw;
+}
+.login-card h1 {
+  margin: 0 0 0.25rem 0;
+  color: var(--primary);
+  font-size: 1.75rem;
+}
+.login-card .subtitle {
+  color: var(--muted);
+  margin: 0 0 1.5rem 0;
+  font-size: 0.875rem;
+}
+.login-card label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+.login-card button {
+  width: 100%;
+  margin-top: 1rem;
+}
+.login-card .error {
+  margin-top: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(255, 68, 68, 0.1);
+  border: 1px solid var(--recording);
+  color: var(--recording);
+  font-size: 0.875rem;
+}
+.login-card .hint {
+  margin-top: 1rem;
+  color: var(--dim);
+  font-size: 0.75rem;
+  font-family: var(--mono);
+  line-height: 1.5;
+}
+
+/* Empty state */
+.empty {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--muted);
+}
+.empty .glyph {
+  font-size: 3rem;
+  color: var(--dim);
+  margin-bottom: 1rem;
+}
+
+/* Responsive — channel rail above content on narrow screens */
+@media (max-width: 768px) {
+  .chrome {
+    grid-template-areas:
+      "topbar"
+      "leftrail"
+      "content";
+    grid-template-rows: 56px auto 1fr;
+    grid-template-columns: 1fr;
+  }
+  .leftrail {
+    max-height: 35vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ── Toasts (item 2 / research §D) ── */
+.toast-wrap {
+  position: fixed;
+  top: 64px;
+  right: 1rem;
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  max-width: 360px;
+  pointer-events: none;
+}
+.toast-region {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--muted);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
+  animation: toast-in 0.18s ease-out;
+}
+.toast.out {
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.toast.success { border-left-color: var(--live); }
+.toast.error { border-left-color: var(--recording); }
+.toast.info { border-left-color: var(--primary); }
+.toast-msg { flex: 1; }
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+}
+.toast-close:hover { color: var(--fg); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+  .toast.out { transition: none; }
+}
+
+/* ── Confirm dialog (item 2) ── */
+.confirm-modal .card { width: 380px; max-width: 92vw; }
+.confirm-msg { margin: 0 0 1rem 0; font-size: 0.95rem; }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* ── Button busy state (item 2) ── */
+button.busy {
+  opacity: 0.7;
+  cursor: progress;
+  position: relative;
+}
+button.busy::after {
+  content: "";
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: 0.4em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button.busy::after { animation: none; }
+}
+
+/* Reduced motion (F-18/F-19): the REC dot, boot glyph, and in-flight
+ * state-pill pulses are decorative attention animations, not progress
+ * indicators — the pill's actual progress is conveyed by its text/fill
+ * (see .state-pill.has-fill above), not the pulse. Suppress them both when
+ * the OS signals `prefers-reduced-motion` and when the user has the
+ * Settings → Accessibility → Reduce motion toggle on; spa.js keeps
+ * `.reduce-motion` on <html> in sync with both signals (see
+ * applyReducedMotion()). The busy-spinner and toast-slide rules above stay
+ * pure media-query so this class mirrors them for parity when the user
+ * opts in without OS support. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-glyph,
+  .ch-rec,
+  .live-now h2 .rec-dot,
+  .recordings-table .state-pill.recording,
+  .state-pill.downloading,
+  .recordings-table .state-pill.downloading { animation: none; }
+}
+html.reduce-motion .boot-glyph,
+html.reduce-motion .ch-rec,
+html.reduce-motion .live-now h2 .rec-dot,
+html.reduce-motion .recordings-table .state-pill.recording,
+html.reduce-motion .state-pill.downloading,
+html.reduce-motion .recordings-table .state-pill.downloading,
+html.reduce-motion button.busy::after { animation: none; }
+html.reduce-motion .toast { animation: none; }
+html.reduce-motion .toast.out { transition: none; }
+
+/* Inline field validation (item 25). */
+input[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--recording);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--recording) 25%, transparent);
+}
+
+/* ── Live preview hero (item 4) ── */
+.cd-preview {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  aspect-ratio: 16 / 9;
+  margin: 0.75rem 0 1rem 0;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cd-preview iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+/* Cross-origin iframe (Twitch/YouTube) can't match parent :fullscreen
+ * pseudo-selectors, so we toggle a marker class via fullscreenchange in
+ * JS. When the marker is on, drop the overflow:hidden + aspect-ratio
+ * clip that was stranding the iframe's intrinsic box at 0 during the
+ * top-layer transition, and lift the iframe into a fixed full-viewport
+ * rect. Restored on exit. */
+.cd-preview.is-fullscreen,
+.cd-preview:has(iframe:fullscreen) {
+  overflow: visible;
+  aspect-ratio: auto;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+.cd-preview.is-fullscreen iframe,
+.cd-preview:has(iframe:fullscreen) iframe {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  z-index: 9999;
+}
+/* Progressive live preview (item 23): poster thumbnail + play overlay. */
+.cd-preview.poster { cursor: default; }
+.cd-preview.poster img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cd-preview .cd-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 999px;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.cd-preview .cd-play:hover { background: var(--accent); }
+
+/* ── Settings / System pages (item 7) ── */
+.cfg-grid {
+  display: grid;
+  /* Match channel-grid + live-now-grid 260px breakpoint so all card
+   * grids collapse at the same width (audit L4). */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.cfg-card {
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+}
+.cfg-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.6rem 0;
+  color: var(--secondary);
+}
+.cfg-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.9rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+/* Tasks section — scheduled vs on-demand duality (item 14). */
+.task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.task-row:last-child { border-bottom: none; }
+.task-info { display: flex; flex-direction: column; gap: 0.1rem; }
+.task-name { font-size: 0.85rem; font-weight: 600; }
+.task-cadence { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; font-family: var(--mono, monospace); }
+.agenda-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--fg); }
+
+/* Add-Channel wizard (item 19). */
+.wizard-step { font-size: 0.72rem; color: var(--muted); margin: 0 0 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.wizard-row { display: flex; gap: 0.5rem; align-items: center; }
+.wizard-row #aw-query { flex: 1; }
+.wizard-row select { width: auto; }
+.wizard-result { margin-top: 0.8rem; }
+.wizard-confirm .task-row { border: none; }
+.wizard-confirm #aw-confirm { margin-top: 0.6rem; width: 100%; }
+.cfg-list dt { color: var(--muted); }
+.cfg-list dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.cfg-badge {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cfg-badge.ok { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+.cfg-badge.warn { background: color-mix(in srgb, var(--secondary) 22%, transparent); color: var(--secondary); }
+.cfg-badge.err { background: color-mix(in srgb, var(--recording) 22%, transparent); color: var(--recording); }
+
+.sys-checks { display: flex; flex-direction: column; gap: 0.4rem; }
+.sys-check {
+  display: grid;
+  grid-template-columns: 1.2rem auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.sys-check .sys-sev { text-align: center; font-weight: 700; }
+.sys-check.ok .sys-sev { color: var(--live); }
+.sys-check.warn .sys-sev { color: var(--secondary); }
+.sys-check.error .sys-sev { color: var(--recording); }
+.sys-check .sys-msg { color: var(--muted); text-align: right; }
+
+.sys-gauge {
+  height: 10px;
+  background: var(--overlay);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.sys-gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+}
+.sys-gauge-label {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* ── SSE connection-status pill (item 8 / research §A) ── */
+.conn-status {
+  background: color-mix(in srgb, var(--secondary) 22%, transparent);
+  color: var(--secondary);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.conn-status[hidden] { display: none; }
+.conn-status::first-letter { /* the dot */ }
+
+/* Topbar health pill (item 13) — only shown when degraded. */
+.health-pill {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.health-pill[hidden] { display: none; }
+.health-pill.warn {
+  background: color-mix(in srgb, var(--secondary) 22%, transparent);
+  color: var(--secondary);
+}
+.health-pill.error {
+  background: color-mix(in srgb, var(--recording) 25%, transparent);
+  color: var(--recording);
+}
+
+/* System page — checks grouped by domain (item 13). */
+/* Media pills — Jellyseerr/*arr-style horizontal rows: thumbnail + rich info
+   block + trailing badges. Used by VOD lists and History. */
+.media-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.media-pill {
+  display: flex;
+  align-items: stretch;
+  gap: 0.9rem;
+  min-height: 84px;
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--fg);
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+a.media-pill:hover,
+.media-pill[data-action]:hover,
+.media-pill:has(.mp-link:hover) { transform: translateY(-1px); border-color: var(--accent); }
+.media-pill[data-action] { cursor: pointer; }
+/* Inner link wrapper used by VOD pills (button-sibling layout). Inherits
+ * the flex layout the outer .media-pill used to provide directly. */
+.mp-link {
+  display: flex;
+  align-items: stretch;
+  gap: 0.9rem;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+/* Per-VOD download button: three states, color-coded.
+ *   idle        → primary (purple/cyan gradient via --accent2)
+ *   downloading → secondary amber
+ *   downloaded  → live green
+ */
+.vod-dl {
+  align-self: center;
+  margin-right: 0.9rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.vod-dl:disabled { cursor: default; }
+.vod-dl-idle {
+  background: color-mix(in srgb, var(--accent2) 22%, transparent);
+  color: var(--accent2);
+  border-color: color-mix(in srgb, var(--accent2) 40%, transparent);
+}
+.vod-dl-idle:hover {
+  background: var(--accent2);
+  color: #fff;
+}
+.vod-dl-downloading {
+  background: color-mix(in srgb, var(--secondary) 12%, transparent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--secondary) 40%, transparent);
+  /* Switch from a chip to a wider widget that hosts the bar + label. */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.8rem;
+  min-width: 14rem;
+}
+.vod-dl-downloading .vod-dl-bar {
+  flex: 1;
+  height: 0.55rem;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+.vod-dl-downloading .vod-dl-fill {
+  display: block;
+  height: 100%;
+  /* Gradient runs amber → green so the visible end of the bar shifts greener
+   * as the download approaches 100%. Bar width = pct%; the fill itself is a
+   * fixed-size gradient anchored to the bar so colour stops correspond to
+   * progress, not to the (clipped) fill width. */
+  background: linear-gradient(90deg, var(--secondary) 0%, var(--accent2) 60%, var(--live) 100%);
+  background-size: 100% 100%;
+  background-attachment: local;
+  transition: width 250ms ease-out;
+}
+.vod-dl-downloading .vod-dl-label {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+.vod-dl-downloaded {
+  background: color-mix(in srgb, var(--live) 22%, transparent);
+  color: var(--live);
+  border-color: color-mix(in srgb, var(--live) 40%, transparent);
+}
+.mp-thumb {
+  position: relative;
+  flex: none;
+  width: 150px;
+  align-self: stretch;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Recording card (.mp-card) ────────────────────────────────────────
+   Title-first vertical card, used by the Home dashboard's recording rows.
+   Scoped to the modifier because .media-pill is also worn by schedule
+   pills, VOD pills, and History rows, which stay row-shaped. */
+.media-pill.mp-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-height: 0;
+}
+/* Full-bleed and deliberately short. object-fit: cover on the image keeps
+   the frame undistorted — it crops rather than squashes. */
+.mp-card .mp-thumb {
+  width: 100%;
+  height: 84px;
+  align-self: auto;
+}
+.mp-thumb::after { content: "▶"; color: var(--dim); font-size: 1.1rem; }
+.mp-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mp-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.6rem 0;
+}
+/* Titles get the full width of the card instead of a ~30% middle column,
+   which is what made almost every row read as "BINGO BRAWLERS...". */
+.mp-title {
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* One dense footer row replaces the old two-column info/meta split. */
+.mp-card .mp-title {
+  font-size: 0.9rem;
+  padding: 0.5rem 0.7rem 0.45rem;
+}
+.mp-card .mp-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding: 0.4rem 0.7rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 0;
+}
+.mp-card .mp-channel {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.mp-card .mp-when {
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.mp-card .mp-spacer { flex: 1 1 auto; min-width: 0.25rem; }
+.mp-sub { font-size: 0.78rem; color: var(--muted); }
+.mp-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 0.9rem;
+  flex: none;
+}
+.mp-size { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mp-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--overlay);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mp-badge.live { background: color-mix(in srgb, var(--recording) 25%, transparent); color: var(--recording); }
+
+/* Recording cover thumbnails (source stream thumbnail; falls through to a
+ * channel-initials placeholder when the cached jpg is missing). */
+.rec-title-cell { display: flex; align-items: center; gap: 0.6rem; }
+.rec-thumb-wrap {
+  position: relative;
+  display: inline-block;
+  width: 84px;
+  height: 47px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: none;
+  box-shadow: var(--shadow);
+  /* Channel-coloured gradient under the (eventual) jpg. */
+  background: linear-gradient(
+    135deg,
+    hsl(var(--ch-hue, 285deg), 55%, 32%),
+    hsl(calc(var(--ch-hue, 285deg) + 40deg), 60%, 18%)
+  );
+  vertical-align: middle;
+}
+.rec-thumb-wrap::before {
+  content: attr(data-init);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.rec-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Stays above the initials placeholder; img is removed on 404 so the
+   * initials show through. */
+  z-index: 1;
+}
+.recordings-table.compact .rec-thumb-wrap { width: 56px; height: 32px; }
+.recordings-table.compact .rec-thumb-wrap::before { font-size: 0.7rem; }
+
+/* File-missing badge — translucent black over the thumb (or initials tile,
+ * if the jpg also 404s and self-removes), red caps centred. ::after stacks
+ * above the .rec-thumb img (z-index 1) so it survives extraction success. */
+.rec-thumb-missing::after {
+  content: "FILE MISSING";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--recording);
+  font-weight: 800;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+}
+/* Slightly tighter type when the thumb is in the compact table density. */
+.recordings-table.compact .rec-thumb-missing::after { font-size: 0.5rem; }
+/* When the info modal's larger thumb shows it, scale up so the label
+ * matches the 220px tile. */
+.rec-info-thumb .rec-thumb-missing::after { font-size: 1rem; letter-spacing: 0.15em; }
+
+/* Recordings index density + multi-select mass-edit (item 22). */
+.rec-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
+.rec-toolbar .grid-filter { flex: 1; }
+.recordings-table.compact th,
+.recordings-table.compact td { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
+.recordings-table th.rec-check,
+.recordings-table td.rec-check { width: 1.5rem; text-align: center; }
+.recordings-table tr.rec-sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.massbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+  background: var(--surface);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.massbar[hidden] { display: none; }
+.massbar-count { font-weight: 600; margin-right: auto; }
+
+/* First-run setup wizard (item 20). */
+.fr-card { max-width: 620px; }
+.fr-step {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.fr-step:last-of-type { border-bottom: none; }
+.fr-mark { font-weight: 700; font-size: 1.1rem; }
+.fr-step.done .fr-mark { color: var(--live); }
+.fr-step.todo .fr-mark { color: var(--secondary); }
+.fr-label { font-weight: 600; margin-bottom: 0.2rem; }
+.fr-detail { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+.fr-pills { margin-top: 0.4rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.fr-pill {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--overlay);
+  color: var(--muted);
+}
+.fr-pill.ok { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+.fr-actions { display: flex; gap: 0.6rem; margin-top: 1rem; }
+
+/* Logs viewer (item 15). */
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+.logs-toolbar label { font-size: 0.8rem; color: var(--muted); }
+.logs-toolbar select { width: auto; }
+.logs-file { font-size: 0.72rem; color: var(--muted); }
+.logs-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+.logs-search:focus { outline: 0; border-color: var(--accent2); }
+.logs-sources { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.logs-chip {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.logs-chip:hover { color: var(--text); border-color: var(--accent2); }
+.logs-chip.is-active { background: rgba(0, 188, 212, 0.18); color: var(--text); border-color: var(--accent2); }
+.logs-output {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.75rem 1rem;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  word-break: break-word;
+  max-width: 140ch;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+}
+.log-line { white-space: pre-wrap; padding: 0.05rem 0; }
+.log-multi summary { cursor: pointer; list-style: none; white-space: pre-wrap; }
+.log-multi summary::-webkit-details-marker { display: none; }
+.log-multi summary::before { content: "▸ "; color: var(--muted); }
+.log-multi[open] summary::before { content: "▾ "; }
+.log-multi pre {
+  margin: 0.2rem 0 0.4rem 1.2rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--accent2);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.76rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+.log-more { color: var(--accent2); font-size: 0.7rem; margin-left: 0.4rem; }
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0.4rem 0;
+}
+.login-recovery { color: var(--muted); display: block; margin-top: 0.5rem; }
+.cmd-card { width: min(640px, 92vw); padding: 0; overflow: hidden; }
+#cmd-q {
+  width: 100%;
+  padding: 0.9rem 1.1rem;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+  border-bottom: 1px solid var(--border-light);
+}
+#cmd-q:focus { outline: 0; }
+.cmd-results { max-height: 50vh; overflow-y: auto; }
+.cmd-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.5rem 1.1rem;
+  text-decoration: none;
+  color: inherit;
+  border-left: 2px solid transparent;
+  gap: 1rem;
+}
+.cmd-item .cmd-label { color: var(--text); }
+.cmd-item .cmd-sub { color: var(--muted); font-size: 0.78rem; }
+.cmd-item.is-active,
+.cmd-item:hover {
+  background: rgba(0, 188, 212, 0.08);
+  border-left-color: var(--accent2);
+}
+.mp-missing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #f97171;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: inherit;
+}
+.mp-thumb { position: relative; }
+.mp-broken .mp-title,
+.mp-broken .mp-sub { opacity: 0.6; }
+.rec-info-pathwrap { display: inline-flex; gap: 0.4rem; align-items: center; max-width: 100%; }
+.rec-info-pathwrap code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  word-break: break-all;
+  overflow: hidden;
+}
+.rec-copy {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.rec-copy:hover { color: var(--text); border-color: var(--accent2); }
+.mp-source {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  background: rgba(0, 188, 212, 0.18);
+  color: var(--accent2);
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+.cmd-hint {
+  margin: 0;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border-light);
+}
+
+.sys-domain { margin-bottom: 0.8rem; }
+.sys-domain-title {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0.4rem 0 0.3rem;
+}
+.sys-fix { color: var(--muted); font-style: italic; }
+
+/* ── Plugins (hub + per-plugin views) ───────────────────────────────── */
+/* Neutral badge fallback so status pills without ok/warn/err read clearly. */
+.cfg-badge { background: var(--overlay); color: var(--muted); }
+

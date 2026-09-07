@@ -1,0 +1,35 @@
+/* ── Pro app tabbed panes (Studio / Analytics / Publish) ─────────── */
+.pro-tabs {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 1rem;
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 0.5rem;
+}
+.pro-tab {
+  text-decoration: none;
+  color: var(--muted, #aaa);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.pro-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.pro-tab.is-active {
+  background: rgba(176,124,255,0.12);
+  border-color: var(--accent, #b07cff);
+  color: var(--text);
+}
+.pro-pane-card { padding: 1rem 1.25rem; }
+.pro-tab-body p { margin: 0.5rem 0; }
+.pro-tab-detail summary { cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--muted); }
+.pro-tab-detail pre {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  overflow-x: auto;
+}
