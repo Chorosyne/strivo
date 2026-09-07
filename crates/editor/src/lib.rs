@@ -554,4 +554,117 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Regression test for the scenario the finding was actually written
+    /// about: a *multi-cut* render where an earlier cut succeeds (writing
+    /// a real sub-clip file to the `.edl-temp` scratch dir) and a later
+    /// cut fails. The single-cut test above only proves the guard fires
+    /// against an empty scratch dir (ffmpeg fails on the very first
+    /// sub-clip, before anything is written); this proves it also cleans
+    /// up real sub-clip files left behind by cuts that already succeeded.
+    #[test]
+    fn failed_render_after_partial_success_leaves_no_scratch_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "strivo-editor-test-multi-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Synthesize a small, real, valid source video with ffmpeg's
+        // testsrc generator rather than committing a binary fixture.
+        let source = dir.join("source.mp4");
+        let gen_status = Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "testsrc=duration=2:size=128x72:rate=10"])
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&source)
+            .status()
+            .expect("ffmpeg must be on PATH to generate the test fixture");
+        assert!(gen_status.success(), "failed to synthesize source fixture");
+        assert!(source.exists(), "source fixture was not written");
+
+        // Pre-flight proof (not part of the render under test): run the
+        // *exact* sub-clip command render_edl_with_filters issues for cut
+        // 0 — same flags, same source, same range — into a scratch
+        // location of our own, and confirm it succeeds and produces a
+        // real, non-empty file. This establishes empirically that this
+        // specific ffmpeg invocation, against this fixture, does succeed
+        // and does write sub-clip output; combined with the fact that the
+        // render loop is a strictly sequential `for` over
+        // `Command::status()` calls (each one blocks until the child
+        // process exits before the next iteration starts), this proves
+        // cut 0's sub-clip is fully written to disk before cut 1 (which
+        // points at a nonexistent source and fails) is even attempted —
+        // there is no concurrency in the loop that could reorder this.
+        let preflight_clip = dir.join("preflight_clip_000.mkv");
+        let preflight_status = Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-ss", "0.000"])
+            .arg("-i")
+            .arg(&source)
+            .args(["-t", "1.000", "-c", "copy"])
+            .arg(&preflight_clip)
+            .status()
+            .unwrap();
+        assert!(
+            preflight_status.success(),
+            "the exact sub-clip command cut 0 will run must itself succeed against this fixture"
+        );
+        let preflight_meta = std::fs::metadata(&preflight_clip)
+            .expect("preflight sub-clip should exist and be readable");
+        assert!(
+            preflight_meta.len() > 0,
+            "preflight sub-clip should be a real, non-empty file"
+        );
+        let _ = std::fs::remove_file(&preflight_clip);
+
+        let output = dir.join("out.mkv");
+        let edl = Edl {
+            recording_id: "r1".into(),
+            cuts: vec![
+                // Cut 0: real source, valid range — succeeds and writes
+                // .edl-temp/clip_000.mkv.
+                Cut {
+                    start_sec: 0.0,
+                    end_sec: 1.0,
+                    kind: CutKind::Source {
+                        source_path: source.display().to_string(),
+                    },
+                    fade_in_sec: 0.0,
+                    fade_out_sec: 0.0,
+                },
+                // Cut 1: nonexistent source — ffmpeg fails partway
+                // through the render, after cut 0's sub-clip already
+                // exists on disk.
+                Cut {
+                    start_sec: 0.0,
+                    end_sec: 1.0,
+                    kind: CutKind::Source {
+                        source_path: dir.join("does-not-exist.mkv").display().to_string(),
+                    },
+                    fade_in_sec: 0.0,
+                    fade_out_sec: 0.0,
+                },
+            ],
+        };
+
+        let result = render_edl(&edl, &output);
+        assert!(
+            result.is_err(),
+            "expected render to fail on cut 1's missing source file"
+        );
+
+        let scratch = dir.join(".edl-temp");
+        assert!(
+            !scratch.exists(),
+            "scratch dir {scratch:?} (and cut 0's sub-clip inside it) should have been \
+             cleaned up after a failed multi-cut render"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
