@@ -28,8 +28,8 @@
   },
   "counts": {
     "P0": 2,
-    "P1": 12,
-    "P2": 11,
+    "P1": 13,
+    "P2": 13,
     "P3": 9
   },
   "closure_requirements": [
@@ -496,7 +496,7 @@
     {
       "id": "R05",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "blocked",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -505,7 +505,11 @@
       ],
       "finding": "Prior finding F-26, re-verified this session: AppState (crates/strivo-web/src/server.rs:25-45) still holds no shared database handle. open_jobs_db() (routes/api.rs:1928) is called fresh per request at :1879,1947,1968,1997, each re-running the schema batch. The daemon side holds one shared connection, so the pattern to copy already exists in-tree.",
       "remediation_and_acceptance": "Thread a shared handle into AppState, mirroring the daemon. Closure: a measured before/after on a representative history page load, stated with its exact workload and concurrency — never averaged across differing workloads.",
-      "dependencies": [],
+      "dependencies": [
+        "V06",
+        "V07",
+        "V08"
+      ],
       "closure_evidence": [
         {
           "revision": "remediation/web-perf 559b726",
@@ -602,7 +606,7 @@
         "C"
       ],
       "finding": "OBSERVED COUPLING (not a defect): strivo-core carries Creator vocabulary in its own public API. CatalogPullOptions.crunchr_auto (src/recording/catalog.rs:43) is an UNGATED bool field naming a Creator plugin, present in pure-PVR builds; its comment (:36-42) records that gating it broke Cargo feature unification under --workspace. src/config/mod.rs has 17 cfg(feature=\"creator\") sites defining CrunchrConfig/ArchiverConfig and their defaults (:50-56, 102-260); src/recording/bulk.rs:317-320 sets the field from config.crunchr.enabled. UPDATE 2026-09-06 (revision 5), branch remediation/creator-split: PARTIALLY IMPLEMENTED. CatalogPullOptions.crunchr_auto is gone, replaced by a generic `post_pull_markers: Vec<String>` that core writes verbatim with no opinion on meaning (catalog.rs:50, consumed at :190-192); the field is deliberately left ungated with an in-source comment, correctly avoiding the known feature-unification trap rather than re-applying the cfg. AppConfig::post_pull_markers(&self, suppress) (config/mod.rs:981-992) is now the single place that knows about crunchr.enabled and the .crunchr-auto filename, so bulk.rs and strivo-bin/main.rs no longer reference either. Dead crunchr_queue table, CrunchrQueueEntry and its three CRUD methods removed — reviewer independently confirmed via `git grep` at bd17f61 that the only reference outside the definition file was a comment in daemon.rs:309, so the code was genuinely dead. TaskKind::ArchiverPull/CrunchrAnalyze renamed to CatalogPull/PostProcess. NOT clean: 33 hits remain in exactly three annotated clusters — src/config/mod.rs (20), src/pipeline/templates.rs (7), src/licence/gate.rs (6). BLOCKER VERIFIED BY REVIEWER: crates/strivo-web/src/routes/api.rs reads cfg.archiver.* by field name at 12 sites, and gate_pro( appears 93 times in routes/plugins.rs. Both files were placed off-limits to this agent to avoid colliding with a concurrent sibling workstream, so the blocker was created by the audit's own dispatch split, not by the implementer.",
-      "remediation_and_acceptance": "Replace the plugin-named field with a generic post-pull hook so core names no Creator concept; move the Crunchr/Archiver config structs to the Creator repo with core exposing an untyped extension table. Acceptance: `grep -ri \"crunchr\\|archiver\" src/` returns nothing AND the PVR build compiles with the creator feature deleted from strivo-core entirely. Load-bearing item: the rest of the CE series is mechanical once core is clean. Write the ADR (Context/Decision/Consequences/roads not taken) as part of this item, before implementation. REMAINING: the three clusters can only move once routes/api.rs and routes/plugins.rs are available to the same workstream — i.e. after the auth branch lands. Sequence CE01's completion after it rather than in parallel.",
+      "remediation_and_acceptance": "Replace the plugin-named field with a generic post-pull hook so core names no Creator concept; move the Crunchr/Archiver config structs to the Creator repo with core exposing an untyped extension table. Acceptance: `grep -ri \"crunchr\\|archiver\" src/` returns nothing AND the PVR build compiles with the creator feature deleted from strivo-core entirely. Load-bearing item: the rest of the CE series is mechanical once core is clean. Write the ADR (Context/Decision/Consequences/roads not taken) as part of this item, before implementation. REMAINING: the three clusters can only move once routes/api.rs and routes/plugins.rs are available to the same workstream — i.e. after the auth branch lands. Sequence CE01's completion after it rather than in parallel.\n\nMEASURED DISTANCE-TO-DONE (revision 10, verified on integrated main @ 4ee8d1c): the acceptance grep `grep -rin \"crunchr\\|archiver\" src/` returns **33**, not 0 — src/config/mod.rs 20, src/pipeline/templates.rs 7, src/licence/gate.rs 6 — plus 19 `cfg(feature=\"creator\")` sites. Real progress: `CatalogPullOptions.crunchr_auto` is genuinely gone, replaced by `post_pull_markers: Vec<String>` fed from `AppConfig::post_pull_markers()`; core now holds no opinion on the marker filename. That is decoupling, not a rename. What remains is a whole config subsystem (CrunchrConfig/ArchiverConfig, ~150 lines), the `\"crunchr\"` literals in pipeline dispatch, and PRO_PLUGINS in the entitlement gate. Experiment deleting `creator = []` from the root Cargo.toml: the PVR build SUCCEEDS (18 harmless unexpected-cfg warnings), while `--workspace`/creator builds fail with exactly 5 errors, all in crates/strivo-plugins (E0432 on CrunchrConfig x2 and CrunchrAnalysisConfig, E0609 no field `crunchr` on &AppConfig, plus the compile summary). So the remaining work is 3 Cargo.toml edits plus relocating the config types out of core — a real chunk, not stragglers. Experiment reverted; tree confirmed clean.",
       "dependencies": [],
       "closure_evidence": [
         {
@@ -622,14 +626,14 @@
     {
       "id": "CE02",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "open",
       "owner_role": "web-api",
       "assignee": null,
       "evidence_classes": [
         "C"
       ],
       "finding": "OBSERVED COUPLING: crates/strivo-web is a shared surface serving both editions. routes/api.rs alone has 29 cfg(feature=\"creator\") sites, plus one each in server.rs and routes/mod.rs, and routes/plugins.rs (86 route registrations) is mounted wholesale under #[cfg(feature=\"creator\")] at server.rs:122-123. UPDATE 2026-09-06: DECISION RECORDED in ADR 0001 — keep one strivo-web in the PVR repo, taking an optional dependency on a Creator-contributed Router merged at the existing server.rs:114-123 seam. Splitting the web crate was considered and rejected: auth, CSRF, telemetry and settings are all currently shared, so the blast radius is far larger for a problem the existing merge seam already solves. No code changed.",
-      "remediation_and_acceptance": "Decide the boundary explicitly: either strivo-web stays in the PVR repo and takes an optional dependency on a strivo-creator-web crate contributing a Router, or the web crate splits too. The router-merge seam at server.rs:114-123 already suits the former. Acceptance: no cfg(feature=\"creator\") remains in the PVR repo's web crate.",
+      "remediation_and_acceptance": "Decide the boundary explicitly: either strivo-web stays in the PVR repo and takes an optional dependency on a strivo-creator-web crate contributing a Router, or the web crate splits too. The router-merge seam at server.rs:114-123 already suits the former. Acceptance: no cfg(feature=\"creator\") remains in the PVR repo's web crate. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
       "dependencies": [
         "CE01"
       ],
@@ -650,7 +654,7 @@
     {
       "id": "CE03",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "open",
       "owner_role": "web-assets",
       "assignee": null,
       "evidence_classes": [
@@ -658,7 +662,7 @@
         "C"
       ],
       "finding": "OBSERVED COUPLING: both editions are produced from ONE 15,448-line spa.js by deleting lines at build time (build.rs:82-104). This mechanism produced defect S10. There is no separate Creator SPA source, and spa.css carries no markers at all (0 @creator-start), so all Creator styling ships in the PVR bundle unconditionally. UPDATE 2026-09-06: DECISION RECORDED in ADR 0001 — split spa.js into PVR and Creator modules using the assets/research/ directory-exclusion pattern already proven in build.rs, replacing line-marker deletion. No code changed here deliberately: a sibling workstream is concurrently fixing S10, a live defect in that same mechanism.",
-      "remediation_and_acceptance": "Split the SPA into real modules along the edition line. assets/research/ already demonstrates the pattern: build.rs:41-43 removes that whole directory for PVR builds cleanly, with no marker surgery. Acceptance: the PVR bundle is built by INCLUDING PVR modules, never by deleting lines from a shared file, and contains zero Creator symbols.",
+      "remediation_and_acceptance": "Split the SPA into real modules along the edition line. assets/research/ already demonstrates the pattern: build.rs:41-43 removes that whole directory for PVR builds cleanly, with no marker surgery. Acceptance: the PVR bundle is built by INCLUDING PVR modules, never by deleting lines from a shared file, and contains zero Creator symbols. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
       "dependencies": [],
       "closure_evidence": [
         {
@@ -678,14 +682,14 @@
     {
       "id": "CE04",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "open",
       "owner_role": "packaging",
       "assignee": null,
       "evidence_classes": [
         "C"
       ],
       "finding": "OBSERVED COUPLING: all 35 Creator crates are path = \"../…\" dependencies (crates/strivo-web/Cargo.toml:63-97) and crates/strivo-plugins/Cargo.toml:12 sets publish = false. Nothing is consumable from outside this workspace today. Positive counterpart worth recording: every Creator crate is already optional = true and reached only via the creator feature (:18-56), and default-members restricts a bare cargo build to the three PVR crates — the Cargo seam is already clean. UPDATE 2026-09-06: RECOMMENDATION DELIVERED in ADR 0001 — git dependency at pinned tags, not crates.io and not vendoring. Reasoning: the repo already folded strivo-plugins in FROM a git dependency (comment at strivo-plugins/Cargo.toml:29-32), crates.io forces per-crate semver and publish discipline before a release process exists to justify it, and vendoring recreates the single-history coupling the split exists to remove. No Cargo.toml was changed — deliberately, as premature before a second repository exists.",
-      "remediation_and_acceptance": "Choose and record a distribution mechanism: crates.io, git ref, or vendoring. The comment at strivo-plugins/Cargo.toml:29-32 notes it was a git dependency before being folded into this workspace; that history is worth consulting first. Acceptance: the Creator repo builds from a clean clone against a released PVR core at a pinned version.",
+      "remediation_and_acceptance": "Choose and record a distribution mechanism: crates.io, git ref, or vendoring. The comment at strivo-plugins/Cargo.toml:29-32 notes it was a git dependency before being folded into this workspace; that history is worth consulting first. Acceptance: the Creator repo builds from a clean clone against a released PVR core at a pinned version. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
       "dependencies": [
         "CE01"
       ],
@@ -714,7 +718,7 @@
         "C"
       ],
       "finding": "OBSERVED COUPLING: crates/strivo-plugins/Cargo.toml:33 depends on strivo-core = { path = \"../..\", features = [\"creator\"] }, so the Creator repo would enable a feature defined in the PVR repo's core crate across the repository boundary. UPDATE 2026-09-06: ANSWERED — the feature is NOT deletable, and this is a direct consequence of CE01's stopping point. AppConfig.crunchr/.archiver remain cfg(feature=\"creator\")-gated typed fields because routes/api.rs pins them by field name, so core still needs the flag to exclude them from pure-PVR builds. strivo-plugins/Cargo.toml:33's features=[\"creator\"] edge is therefore still load-bearing.",
-      "remediation_and_acceptance": "Resolve as part of CE01: once core carries no Creator concepts, the creator feature on strivo-core should be deletable outright rather than exported across the boundary. If it must survive the split, that is a scope limitation to state explicitly rather than a closure.",
+      "remediation_and_acceptance": "Resolve as part of CE01: once core carries no Creator concepts, the creator feature on strivo-core should be deletable outright rather than exported across the boundary. If it must survive the split, that is a scope limitation to state explicitly rather than a closure. \n\nREVISION 10: unchanged in code. ADR 0001 now argues this dependency is correct and necessary for as long as CE01 is incomplete, which is consistent with the measured state above. Remains blocked on CE01.",
       "dependencies": [
         "CE01"
       ],
@@ -727,14 +731,14 @@
     {
       "id": "CE06",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "open",
       "owner_role": "licensing",
       "assignee": null,
       "evidence_classes": [
         "C"
       ],
       "finding": "OBSERVED COUPLING: entitlement lives on the PVR side of the line. gate_pro(...) appears at 20+ sites in routes/plugins.rs, and routes/licence.rs (4 routes, including the ungated trial of S06) is merged into the shared guarded router at server.rs:117. UPDATE 2026-09-06: DECISION RECORDED in ADR 0001 — entitlement (is_entitled / PRO_PLUGINS) should move to the Creator repo. Not executed: blocked by the same off-limits routes/plugins.rs and routes/licence.rs.",
-      "remediation_and_acceptance": "Decide which repository owns entitlement checking and keep it on the side that owns the gated code. Acceptance: gating and the code it gates ship from one repository.",
+      "remediation_and_acceptance": "Decide which repository owns entitlement checking and keep it on the side that owns the gated code. Acceptance: gating and the code it gates ship from one repository. \n\nSTATUS CORRECTION (revision 10): `remediation/creator-split` is merged, but it changed NO code for this item — ADR 0001 records a decision only. An ADR is a plan, not an implementation, so this returns to `open` rather than standing as awaiting verification. Independently confirmed: the branch diff touches no file relevant to this item.",
       "dependencies": [
         "CE02"
       ],
@@ -1056,6 +1060,64 @@
       "closure_evidence": [],
       "evidence_paths": [
         "crates/strivo-web"
+      ]
+    },
+    {
+      "id": "V06",
+      "priority": "P1",
+      "status": "open",
+      "owner_role": "web-perf",
+      "assignee": null,
+      "evidence_classes": [
+        "C"
+      ],
+      "finding": "Scope gap in the unmerged `remediation/web-perf` fix for R05, confirmed on main. That branch converts only routes/api.rs's six open_jobs_db() sites. crates/strivo-web/src/routes/plugins.rs still opens jobs.db fresh at four PersistDb::open sites (cuepoints_generate :133; resolve_recording_path :193; resolve_recording_meta :1256; resolve_recording_meta_full :1466) plus a Connection::open_with_flags at :3667, each re-running the PRAGMA + CREATE TABLE IF NOT EXISTS batch. resolve_recording_path alone has 16 call sites in that file. The branch touched plugins.rs only to add two fields to a test AppState literal — no production change. The Creator plugin surface is the busier one in practice, so the commit message's claim of sharing a handle 'across the web process' overstates what it does.",
+      "remediation_and_acceptance": "Extend the shared handle to plugins.rs's four open sites and the three resolve_* helpers before R05 can close. Acceptance: `grep -rn \"PersistDb::open\\|open_jobs_db\" crates/strivo-web/src/` returns only the single shared initialiser.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web/src/routes/plugins.rs",
+        "crates/strivo-web/src/server.rs",
+        "src/recording/persist.rs"
+      ]
+    },
+    {
+      "id": "V07",
+      "priority": "P2",
+      "status": "open",
+      "owner_role": "web-perf",
+      "assignee": null,
+      "evidence_classes": [
+        "C",
+        "G"
+      ],
+      "finding": "The R05 fix replaces per-request connections with ONE process-wide tokio::sync::Mutex<Connection> (strivo-core src/recording/persist.rs:76). The lock is never held across an await (verified) and the PRAGMAs are correct and now applied once, but synchronous rusqlite calls still run on the Tokio worker thread inside the lock — pre-existing, though now concentrated. Consequence: requests that previously ran their SQLite work in parallel on independent connections (WAL permits concurrent readers) now serialise on one mutex. This is a plausible THROUGHPUT REGRESSION traded for reduced per-request setup, and no measurement exists in either direction — the branch carries no benchmark, no timing harness, and no numbers in its commit message.",
+      "remediation_and_acceptance": "Measure before/after on a stated workload with stated concurrency — e.g. N concurrent GETs of the history page against the real server, using the real-server e2e harness (e2e/real-server.sh) that now exists, on a release build. Report raw numbers per workload; do not average across differing workloads. If serialisation costs more than the setup it saves, prefer a connection pool or spawn_blocking over a single shared mutex. Acceptance: a measured result that justifies the chosen design.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web/src/routes/plugins.rs",
+        "crates/strivo-web/src/server.rs",
+        "src/recording/persist.rs"
+      ]
+    },
+    {
+      "id": "V08",
+      "priority": "P2",
+      "status": "open",
+      "owner_role": "web-perf",
+      "assignee": null,
+      "evidence_classes": [
+        "B"
+      ],
+      "finding": "The R05 branch's only test, server::tests::jobs_db_handle_is_shared_across_calls, exercises the AppState::jobs_db() accessor in isolation against its own temp_state and never drives a route. The verifier reverted the `history` handler to open a fresh PersistDb per request — exactly the pre-fix pattern — and the entire suite still passed with identical counts (63 + 4 + 8). No test confirms any HTTP handler actually uses the shared handle; the suite verifies the accessor exists, not that anything is wired to it.",
+      "remediation_and_acceptance": "Add a test driving the real router (the build_router harness added for S03 now makes this possible) that asserts the shared handle is the one a handler actually uses — e.g. by observing that a second request does not re-run schema setup, or by asserting handle identity through an instrumented accessor. Acceptance: reverting any handler to a per-request open turns that test red.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web/src/routes/plugins.rs",
+        "crates/strivo-web/src/server.rs",
+        "src/recording/persist.rs"
       ]
     }
   ]
