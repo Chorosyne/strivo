@@ -252,7 +252,7 @@ source-layout* problem, not a dependency-untangling one.
 | --- | --- | --- |
 | **CE01 · core-api** | **C:** `strivo-core` carries Creator vocabulary in its own public API. `CatalogPullOptions.crunchr_auto` (`src/recording/catalog.rs:43`) is an **ungated** `bool` field naming a Creator plugin, present in pure-PVR builds; its own comment (`:36-42`) records that gating it broke Cargo feature unification under `--workspace`. `src/config/mod.rs` has 17 `cfg(feature = "creator")` sites defining `CrunchrConfig`/`ArchiverConfig` and their defaults (`:50-56, 102-260`), and `src/recording/bulk.rs:317-320` sets the field from `config.crunchr.enabled`. | Replace the plugin-named field with a generic post-pull hook (a marker-writer callback or an opaque `Vec<PostPullAction>`) so core names no Creator concept. Move the Crunchr/Archiver config structs into the Creator repo, with core exposing an untyped extension table. Acceptance: `grep -ri "crunchr\|archiver" src/` returns nothing, and the PVR build compiles with the `creator` feature deleted from `strivo-core` entirely. **This is the load-bearing item — the others are mechanical once core is clean.** |
 | **CE02 · web-api** | **C:** `crates/strivo-web` is a shared surface serving both editions: `routes/api.rs` alone has 29 `cfg(feature = "creator")` sites, plus one each in `server.rs` and `routes/mod.rs`, and `routes/plugins.rs` (86 route registrations) is mounted wholesale under `#[cfg(feature = "creator")]` (`server.rs:122-123`). | Decide the boundary explicitly: either `strivo-web` stays in the PVR repo and takes an optional dependency on a `strivo-creator-web` crate that contributes a `Router`, or the web crate splits too. The router-merge seam in `server.rs:114-123` already has the right shape for the former. Acceptance: no `cfg(feature = "creator")` remains in the PVR repo's web crate. |
-| **CE03 · web-assets** | **B+C:** Both editions are produced from **one** 15,448-line `spa.js` by deleting lines at build time (`build.rs:82-104`). This mechanism is what produced S10. There is no separate Creator SPA source, and `spa.css` carries no markers at all (0 `@creator-start`), so all Creator styling ships in the PVR bundle unconditionally. | Split the SPA into real modules along the edition line — the `assets/research/` tree already demonstrates the pattern (`build.rs:41-43` removes that whole directory for PVR builds, cleanly, with no marker surgery). Acceptance: the PVR bundle is built by *including* PVR modules, never by deleting lines from a shared file, and contains zero Creator symbols. |
+| **CE03 · web-assets** (open — spa.js fixed, spa.css remains) | **B+C, revision 12:** `spa.js` is now split into 37 ordered modules under `assets/spa/<seq>-<edition>.js`, and `build.rs` assembles the served bundle by concatenating them (creator modules only when the `creator` feature is on) instead of deleting lines. Verified against the real built artifact: PVR bundle zero Creator symbols, Creator bundle byte-identical to full source concatenation. `spa.css` is **unchanged** — still 0 `@creator-start`, so all Creator styling still ships in the PVR bundle unconditionally. | Split the SPA into real modules along the edition line — the `assets/research/` tree already demonstrates the pattern (`build.rs:41-43` removes that whole directory for PVR builds, cleanly, with no marker surgery). Acceptance: the PVR bundle is built by *including* PVR modules, never by deleting lines from a shared file, and contains zero Creator symbols. **Met for spa.js; spa.css split deferred** — no marker or comparable signal exists to derive a safe split, and no visual-regression coverage exists to catch a wrong one. |
 | **CE04 · packaging** | **C:** All 35 Creator crates are `path = "../…"` dependencies, and `crates/strivo-plugins/Cargo.toml:12` sets `publish = false`. Nothing is currently consumable from outside this workspace. | Choose and record a distribution mechanism: publish to crates.io, consume by git ref (the comment at `strivo-plugins/Cargo.toml:29-32` notes it was a `git` dep before being folded in — that history is worth consulting), or vendor. Acceptance: the Creator repo builds from a clean clone against a released PVR core, with a pinned version. |
 | **CE05 · core-feature** | **C:** `crates/strivo-plugins/Cargo.toml:33` depends on `strivo-core = { path = "../..", features = ["creator"] }`, so the Creator repo would turn on a feature that lives in the PVR repo's core. | Resolve as part of CE01: once core carries no Creator concepts, the `creator` feature on `strivo-core` should be deletable outright rather than exported across the repo boundary. If it must survive, that is a scope limitation to state explicitly. |
 | **CE06 · licensing** | **C:** Entitlement lives on the PVR side of the line: `gate_pro(...)` appears at 20+ sites in `routes/plugins.rs`, and `routes/licence.rs` (4 routes, including the ungated `trial` of S06) is merged into the shared `guarded` router (`server.rs:117`). | Decide which repo owns entitlement checking, and keep it on the side that owns the gated code. Depends on CE02. Acceptance: gating and the code it gates ship from one repository. |
@@ -300,6 +300,36 @@ strictly inside its file lane. Notes that matter:
   reading the diff, **and its tests were subsequently re-run by the reviewer** once disk space
   was recovered: `cargo test -p strivo-editor` → 23 passed including
   `failed_render_leaves_no_scratch_directory`.
+
+### Revision 12 — CE03's spa.js half fixed, spa.css deliberately left
+
+Branch `remediation/ce03-spa-modules` (`7c16693..daac9c5`) replaces the `/* @creator-start */`
+line-marker mechanism entirely, for `spa.js`. `assets/spa.js` no longer exists as a single source
+file: it is split into 37 ordered modules under `assets/spa/<seq>-<edition>.js`, one boundary per
+former marker pair, and `build.rs` now assembles `$OUT_DIR/assets/spa.js` by concatenating them in
+filename order — including `-creator.js` modules only when the `creator` feature is on — instead of
+stripping lines out of a shared file. The marker-stripping code is deleted from `build.rs`, not
+left as a dormant second path.
+
+Verified against the actual built artifact, both editions: the PVR bundle is 10,804 lines with zero
+occurrences of the eight named Creator symbols and no `research/` or `spa/` directory in
+`out/assets/`; the Creator bundle is 15,577 lines and byte-identical to concatenating all 37 source
+modules, with `research/` intact. `check-pvr-bundle.mjs` — the S10 regression guard — was rewritten
+for the new mechanism (it now diffs names defined only in `-creator.js` source against the real
+built PVR artifact) and reports **zero surviving call sites and zero occurrences of Creator-only
+symbols, checked across 174 names**; a mutation test (a stray call appended to a PVR module) turns
+it red, confirming it still catches the S10 defect class. `cargo fmt`/`clippy` (both feature
+configurations) clean, `cargo test --workspace --all-targets` all green, the Playwright mock lane
+71/71, and the real-server lane 4/4 — including a new test added this pass that drives the actual
+compiled PVR binary to `#/studio` and asserts zero uncaught page errors, which is the decisive
+check S10's closure could previously only make against unstripped source.
+
+**`spa.css` is unchanged and CE03 stays `open`.** It still has no edition markers, so all Creator
+styling ships in the PVR bundle unconditionally — the other half of this finding. Unlike `spa.js`,
+there is no marker or comparably strong signal to derive a safe split from, and the Playwright suite
+asserts DOM structure and route behaviour, not visual/CSS correctness, so a guessed split could
+silently break PVR styling with nothing to catch it. Left for a follow-up that either adds visual
+coverage first or does a conservative per-selector audit.
 
 ### Revision 7 — the edition boundary, and how badly this audit undercounted it
 
