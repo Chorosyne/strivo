@@ -1,23 +1,22 @@
-//! Host-owned executable workflow templates.
+//! Creator Edition's executable pipeline workflow templates.
+//!
+//! These build [`Pipeline`] graphs out of concrete Creator plugin names
+//! (`crunchr`, `cuepoints`, `chapters`, `clipper`, …) — real, externally
+//! visible identifiers that `routes::plugins`' `gate_pro(..)` calls and the
+//! plugin registry's `name()` also match on. That vocabulary belongs here,
+//! in the Creator plugin host, not in `strivo-core`: core only supplies the
+//! generic `Pipeline`/`Stage`/`StageDispatch` types these templates are
+//! built from (see ADR 0001, CE01). Moved out of
+//! `strivo-core::pipeline::templates` for exactly that reason.
+//!
+//! Living in the one Creator Edition process (not duplicated per call
+//! site) still ensures manual web runs, plugin-triggered runs, and future
+//! schedule/API triggers produce byte-for-byte equivalent graphs.
 
 use uuid::Uuid;
 
-use super::stage::ResourceLock;
-use super::{Pipeline, Stage, StageDispatch, StageKind};
-
-/// The first production Creator workflow. A Creator Edition plugin
-/// implements the capability as an idempotent stage while the host
-/// supplies orchestration guarantees.
-///
-/// The dispatch target's plugin identifier below (`"crunchr"`) is a real,
-/// externally-visible name — it's also what strivo-web's route handlers
-/// and licence gate match on (`gate_pro("crunchr")`, the plugin registry's
-/// `name()`) — so it can't be renamed to something more generic without
-/// touching those call sites too. See ADR 0001.
-///
-/// Keeping this template in core ensures manual web runs, plugin-triggered
-/// runs, and future schedule/API triggers produce byte-for-byte equivalent
-/// graphs.
+use strivo_core::pipeline::stage::ResourceLock;
+use strivo_core::pipeline::{Pipeline, Stage, StageDispatch, StageKind};
 pub fn creator_intelligence(recording_id: Uuid, trigger: impl Into<String>) -> Pipeline {
     let mut pipeline = Pipeline::new("Creator intelligence")
         .for_recording(recording_id)

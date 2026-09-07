@@ -16,7 +16,6 @@
 pub mod executor;
 pub mod runtime;
 pub mod stage;
-pub mod templates;
 
 pub use executor::{PipelineRegistry, ResourceRegistry};
 pub use runtime::PipelineRuntime;

@@ -15,4 +15,5 @@ pub mod crunchr;
 pub mod dirs;
 pub mod editor;
 pub mod insights;
+pub mod pipeline_templates;
 pub mod viewguard;

@@ -63,9 +63,7 @@ impl CrunchrPlugin {
     }
 
     fn transcription_pipeline(&self, id: Uuid, trigger: &str) -> PluginAction {
-        PluginAction::SubmitPipeline(strivo_core::pipeline::templates::creator_intelligence(
-            id, trigger,
-        ))
+        PluginAction::SubmitPipeline(crate::pipeline_templates::creator_intelligence(id, trigger))
     }
 }
 

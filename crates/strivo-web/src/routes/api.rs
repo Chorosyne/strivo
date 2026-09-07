@@ -3082,10 +3082,10 @@ async fn pipeline_run(
     }
     let pipeline = match body.template.as_str() {
         "creator_publish" => {
-            strivo_core::pipeline::templates::creator_publish(body.recording_id, "manual")
+            strivo_plugins::pipeline_templates::creator_publish(body.recording_id, "manual")
         }
         "creator_intelligence" => {
-            strivo_core::pipeline::templates::creator_intelligence(body.recording_id, "manual")
+            strivo_plugins::pipeline_templates::creator_intelligence(body.recording_id, "manual")
         }
         _ => {
             return Problem::bad_request(format!(
