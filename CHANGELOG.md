@@ -5,6 +5,34 @@ All notable changes to strivo will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Platform auth failures are surfaced instead of silently degrading.**
+  A rejected OAuth refresh (revoked/expired refresh token, bad app
+  credentials) is now told apart from a transient network blip or rate
+  limit, per RFC 6749 §5.2 — only a genuine rejection triggers a
+  device-code re-login; a network hiccup no longer does. YouTube and
+  Patreon report a rejected refresh the same way Twitch already did.
+  The reason and how long it's been broken flow through the IPC snapshot
+  as a per-platform `auth_issue` and show up in three places: the header
+  health pill and System page (`/api/v1/health/checks` now says
+  "credentials rejected — <reason>" with a Re-authenticate link, instead
+  of a blanket "configured but not authenticated" that used to point at
+  the since-removed TUI login), `strivo status` (one line per configured
+  platform: authenticated, waiting for a device code, or "NEEDS
+  ATTENTION" with the reason and a next step), and the SSE event stream
+  (the header pill updates live, no reload needed).
+- **Cookie-jar rejection detection.** `strivo setup cookies` imports a
+  browser session for YouTube/Patreon, but nothing previously noticed
+  when that session went stale. yt-dlp's stderr is now checked for the
+  phrases it uses when a session is no longer accepted (bot/age
+  challenge, members-only, expired cookies, sign-in/private/login
+  required); a match surfaces a separate "cookie session rejected" issue
+  with the `strivo setup cookies <platform> --browser <browser>` fix, and
+  clears itself the next time a recording on that platform actually
+  starts.
+
 ## [0.6.0] — 2026-08-18
 
 ### Added

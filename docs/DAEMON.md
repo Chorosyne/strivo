@@ -81,6 +81,48 @@ Use that exit code in monitoring scripts. For Prometheus / observability
 integration the recommended pattern today is to tail `strivo.log` and
 match on `daemon: ` lines — a metrics endpoint is not yet exposed.
 
+### Platform auth state
+
+`strivo status` also prints one line per *configured* platform (Twitch,
+YouTube, Patreon), sourced from the daemon's live IPC snapshot:
+
+```
+Twitch: authenticated
+YouTube: NEEDS ATTENTION — Token has been expired or revoked. (since 2026-09-07 09:12)
+  next step: re-authenticate from Settings → Platforms (or `strivo setup`).
+Patreon: not yet authenticated (daemon retries automatically)
+```
+
+A platform whose cookie jar (`strivo setup cookies`) has stopped working
+gets its own line — a rejected cookie session and a rejected OAuth
+refresh are different credentials with different fixes, so they're
+reported and cleared independently:
+
+```
+YouTube cookies: NEEDS ATTENTION — cookies are no longer valid (since 2026-09-07 09:12)
+  next step: strivo setup cookies youtube --browser <browser>
+```
+
+This is *deliberately advisory only*: `strivo status` still exits 0
+whenever the daemon is running, auth state or not, because
+`crates/strivo-web/e2e/real-server.sh` (and any other liveness probe)
+uses it to mean "the process is up," not "everything is authenticated."
+
+The same information, plus a snapshot fetch, backs
+`GET /api/v1/health/checks`'s `"Platform Auth"` domain — each row is
+`{domain, name, severity, message, fix}`, and a rejected credential is
+`severity: "error"` with a `fix` pointing at Settings → Platforms or the
+`strivo setup cookies` command. The web UI's header pill and System page
+both read this endpoint and refresh live off the daemon's SSE stream
+(`PlatformAuthenticationRequired` / `PlatformAuthenticated` /
+`CookieSessionRejected` / `DeviceCodeRequired` events), so a credential
+going bad shows up without a page reload.
+
+Only a genuinely rejected refresh (RFC 6749 §5.2 `invalid_grant` /
+`invalid_client`, or Twitch's equivalent 400 body) triggers this —
+a rate limit or a network blip does not, and does not launch a
+device-code login on its own.
+
 ## Troubleshooting
 
 - **`failed to bind socket: Address already in use`** — a previous
