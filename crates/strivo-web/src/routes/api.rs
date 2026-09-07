@@ -632,6 +632,124 @@ fn add_check(
     }));
 }
 
+/// Build the "Platform Auth" domain rows for `/api/v1/health/checks`.
+///
+/// Pure so it's unit-testable without a running daemon: `snapshot` is
+/// `None` when the IPC call failed, in which case every configured
+/// platform reports "configured but not yet authenticated" (the daemon's
+/// own unreachability is already covered by the Network domain).
+///
+/// Priority per configured platform, most specific first:
+///   1. an `AuthIssue { source: OAuth }`     -> error, "credentials rejected"
+///   2. an `AuthIssue { source: Cookies }`   -> error, "cookie session rejected"
+///   3. a pending device-code login          -> warn, waiting-for-login
+///   4. connected                            -> ok
+///   5. otherwise                            -> warn, generic not-yet-authenticated
+fn platform_auth_checks(
+    cfg: &strivo_core::config::AppConfig,
+    snapshot: Option<&ServerMessage>,
+) -> Vec<serde_json::Value> {
+    use strivo_core::platform::AuthSource;
+
+    let (connected, pending_auth, auth_issues): (
+        [bool; 3],
+        Option<&(PlatformKind, String, String)>,
+        &[strivo_core::platform::AuthIssue],
+    ) = match snapshot {
+        Some(ServerMessage::StateSnapshot {
+            twitch_connected,
+            youtube_connected,
+            patreon_connected,
+            pending_auth,
+            auth_issues,
+            ..
+        }) => (
+            [*twitch_connected, *youtube_connected, *patreon_connected],
+            pending_auth.as_ref(),
+            auth_issues.as_slice(),
+        ),
+        _ => ([false, false, false], None, &[]),
+    };
+
+    let platforms = [
+        ("Twitch", PlatformKind::Twitch, cfg.twitch.is_some(), connected[0]),
+        ("YouTube", PlatformKind::YouTube, cfg.youtube.is_some(), connected[1]),
+        ("Patreon", PlatformKind::Patreon, cfg.patreon.is_some(), connected[2]),
+    ];
+
+    let mut out = Vec::new();
+    for (name, kind, configured, connected) in platforms {
+        if !configured {
+            continue;
+        }
+
+        let oauth_issue = auth_issues
+            .iter()
+            .find(|i| i.kind == kind && i.source == AuthSource::OAuth);
+        let cookie_issue = auth_issues
+            .iter()
+            .find(|i| i.kind == kind && i.source == AuthSource::Cookies);
+        let pending = pending_auth.filter(|(p, ..)| *p == kind);
+
+        // The base row for the platform's OAuth/device-code state.
+        if let Some(issue) = oauth_issue {
+            add_check(
+                &mut out,
+                "Platform Auth",
+                name,
+                "error",
+                format!("{name}: credentials rejected — {}.", issue.reason),
+                "Re-authenticate from Settings → Platforms (the daemon will show a device-code prompt).",
+            );
+        } else if let Some((_, uri, code)) = pending {
+            add_check(
+                &mut out,
+                "Platform Auth",
+                name,
+                "warn",
+                format!("Waiting for device-code login: enter {code} at {uri}."),
+                "",
+            );
+        } else if connected {
+            add_check(
+                &mut out,
+                "Platform Auth",
+                name,
+                "ok",
+                format!("{name} authenticated."),
+                "",
+            );
+        } else {
+            add_check(
+                &mut out,
+                "Platform Auth",
+                name,
+                "warn",
+                format!("{name} configured but not yet authenticated."),
+                "The daemon retries automatically; if this persists, re-authenticate from Settings → Platforms.",
+            );
+        }
+
+        // The cookie jar is a separate credential from the OAuth token, so
+        // its row is independent — a platform can show both a rejected
+        // OAuth row and a rejected cookies row at once.
+        if let Some(issue) = cookie_issue {
+            add_check(
+                &mut out,
+                "Platform Auth",
+                &format!("{name} cookies"),
+                "error",
+                format!("{name} cookie session rejected — {}.", issue.reason),
+                &format!(
+                    "Re-import with: strivo setup cookies {} --browser <browser>",
+                    name.to_lowercase()
+                ),
+            );
+        }
+    }
+    out
+}
+
 /// `GET /api/v1/health/checks` — grouped, retestable health checks for the
 /// System page (roadmap item 13). Each check carries {domain, name,
 /// severity (ok|warn|error), message, fix}; overall status is the worst
@@ -642,17 +760,8 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
     }
     let mut checks: Vec<serde_json::Value> = Vec::new();
 
-    // Network — daemon reachable, and the platform-connected flags it reports.
+    // Network — daemon reachable.
     let snap = state.ipc.snapshot().await;
-    let (tw_c, yt_c, pt_c) = match &snap {
-        Ok(ServerMessage::StateSnapshot {
-            twitch_connected,
-            youtube_connected,
-            patreon_connected,
-            ..
-        }) => (*twitch_connected, *youtube_connected, *patreon_connected),
-        _ => (false, false, false),
-    };
     if snap.is_ok() {
         add_check(
             &mut checks,
@@ -701,33 +810,10 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
         ),
     }
 
-    // Platform Auth — configured-but-not-authenticated is a warning.
+    // Platform Auth — tells the truth about *why* a platform isn't
+    // authenticated instead of a blanket "configured but not authenticated".
     if let Ok(cfg) = &cfg {
-        for (name, configured, connected) in [
-            ("Twitch", cfg.twitch.is_some(), tw_c),
-            ("YouTube", cfg.youtube.is_some(), yt_c),
-            ("Patreon", cfg.patreon.is_some(), pt_c),
-        ] {
-            if configured && connected {
-                add_check(
-                    &mut checks,
-                    "Platform Auth",
-                    name,
-                    "ok",
-                    format!("{name} authenticated."),
-                    "",
-                );
-            } else if configured {
-                add_check(
-                    &mut checks,
-                    "Platform Auth",
-                    name,
-                    "warn",
-                    format!("{name} configured but not authenticated."),
-                    "Authenticate the platform (TUI login or re-run auth).",
-                );
-            }
-        }
+        checks.extend(platform_auth_checks(cfg, snap.as_ref().ok()));
     }
 
     let worst = if checks.iter().any(|c| c["severity"] == "error") {
@@ -3515,5 +3601,156 @@ mod tests {
         assert!(take_webhook_url(&serde_json::json!("not a url")).is_err());
         assert!(take_webhook_url(&serde_json::json!("ftp://example.com/x")).is_err());
         assert!(take_webhook_url(&serde_json::json!(42)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod platform_auth_checks_tests {
+    use super::platform_auth_checks;
+    use strivo_core::config::{AppConfig, PatreonConfig, TwitchConfig, YouTubeConfig};
+    use strivo_core::ipc::ServerMessage;
+    use strivo_core::platform::{AuthIssue, AuthSource, PlatformKind};
+
+    fn cfg_with(twitch: bool, youtube: bool, patreon: bool) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.twitch = twitch.then(|| TwitchConfig {
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+        });
+        cfg.youtube = youtube.then(|| YouTubeConfig {
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+            cookies_path: None,
+            websub_callback_url: None,
+        });
+        cfg.patreon = patreon.then(|| PatreonConfig {
+            client_id: "id".into(),
+            client_secret: "secret".into(),
+            poll_interval_secs: 300,
+            cookies_path: None,
+        });
+        cfg
+    }
+
+    fn snapshot(
+        connected: (bool, bool, bool),
+        pending_auth: Option<(PlatformKind, String, String)>,
+        auth_issues: Vec<AuthIssue>,
+    ) -> ServerMessage {
+        ServerMessage::StateSnapshot {
+            version: strivo_core::ipc::IPC_PROTOCOL_VERSION,
+            channels: Vec::new(),
+            recordings: std::collections::HashMap::new(),
+            twitch_connected: connected.0,
+            youtube_connected: connected.1,
+            patreon_connected: connected.2,
+            pending_auth,
+            patreon_creators: Vec::new(),
+            patreon_posts: Vec::new(),
+            auth_issues,
+        }
+    }
+
+    fn find<'a>(checks: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
+        checks
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("no check named {name} in {checks:?}"))
+    }
+
+    #[test]
+    fn unconfigured_platform_produces_no_row() {
+        let cfg = cfg_with(false, true, false);
+        let checks = platform_auth_checks(&cfg, None);
+        assert_eq!(checks.len(), 1, "only YouTube is configured: {checks:?}");
+    }
+
+    #[test]
+    fn no_snapshot_reports_not_yet_authenticated() {
+        let cfg = cfg_with(true, false, false);
+        let checks = platform_auth_checks(&cfg, None);
+        let row = find(&checks, "Twitch");
+        assert_eq!(row["severity"], "warn");
+        assert_eq!(row["message"], "Twitch configured but not yet authenticated.");
+    }
+
+    #[test]
+    fn connected_platform_is_ok() {
+        let cfg = cfg_with(true, false, false);
+        let snap = snapshot((true, false, false), None, Vec::new());
+        let checks = platform_auth_checks(&cfg, Some(&snap));
+        let row = find(&checks, "Twitch");
+        assert_eq!(row["severity"], "ok");
+    }
+
+    #[test]
+    fn pending_device_code_is_warn_with_code_and_url() {
+        let cfg = cfg_with(true, false, false);
+        let snap = snapshot(
+            (false, false, false),
+            Some((PlatformKind::Twitch, "https://example.com/activate".into(), "ABCD-1234".into())),
+            Vec::new(),
+        );
+        let checks = platform_auth_checks(&cfg, Some(&snap));
+        let row = find(&checks, "Twitch");
+        assert_eq!(row["severity"], "warn");
+        assert!(row["message"].as_str().unwrap().contains("ABCD-1234"));
+        assert!(row["message"].as_str().unwrap().contains("https://example.com/activate"));
+    }
+
+    #[test]
+    fn oauth_rejection_is_error_and_names_no_tui() {
+        let cfg = cfg_with(false, true, false);
+        let issue = AuthIssue {
+            kind: PlatformKind::YouTube,
+            source: AuthSource::OAuth,
+            reason: "Token has been expired or revoked.".into(),
+            since: chrono::Utc::now(),
+        };
+        let snap = snapshot((false, false, false), None, vec![issue]);
+        let checks = platform_auth_checks(&cfg, Some(&snap));
+        let row = find(&checks, "YouTube");
+        assert_eq!(row["severity"], "error");
+        assert!(row["message"]
+            .as_str()
+            .unwrap()
+            .contains("credentials rejected — Token has been expired or revoked."));
+        let fix = row["fix"].as_str().unwrap();
+        assert!(fix.contains("Settings"));
+        assert!(!fix.to_lowercase().contains("tui"));
+    }
+
+    #[test]
+    fn cookie_rejection_produces_a_separate_row_alongside_oauth() {
+        let cfg = cfg_with(false, true, false);
+        let oauth_issue = AuthIssue {
+            kind: PlatformKind::YouTube,
+            source: AuthSource::OAuth,
+            reason: "invalid_grant".into(),
+            since: chrono::Utc::now(),
+        };
+        let cookie_issue = AuthIssue {
+            kind: PlatformKind::YouTube,
+            source: AuthSource::Cookies,
+            reason: "cookies are no longer valid".into(),
+            since: chrono::Utc::now(),
+        };
+        let snap = snapshot((false, false, false), None, vec![oauth_issue, cookie_issue]);
+        let checks = platform_auth_checks(&cfg, Some(&snap));
+        assert_eq!(checks.len(), 2, "{checks:?}");
+
+        let oauth_row = find(&checks, "YouTube");
+        assert_eq!(oauth_row["severity"], "error");
+
+        let cookie_row = find(&checks, "YouTube cookies");
+        assert_eq!(cookie_row["severity"], "error");
+        assert!(cookie_row["message"]
+            .as_str()
+            .unwrap()
+            .contains("cookie session rejected — cookies are no longer valid"));
+        assert_eq!(
+            cookie_row["fix"],
+            "Re-import with: strivo setup cookies youtube --browser <browser>"
+        );
     }
 }
