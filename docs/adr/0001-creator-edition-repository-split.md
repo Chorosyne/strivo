@@ -325,3 +325,57 @@ exactly the kind of collision this task's scoping was designed to avoid.
   single-consumer (in-org) dependency that a git tag already serves.
 - **Vendoring one repo's tree into the other (CE04).** Rejected: recreates
   the single-history coupling this ADR exists to remove.
+
+## Update — CE01 continued, CE05 superseded (2026-09-07)
+
+A follow-up pass closed most of what CE01 above left blocked, once
+`routes/plugins.rs`, `routes/api.rs`, and `routes/licence.rs` were back in
+scope (the concurrently-active sibling workstream referenced above had
+gone quiet by then — re-verify a file isn't mid-edit elsewhere before
+repeating this):
+
+- **`src/licence/gate.rs`'s `PRO_PLUGINS`** is gone from core.
+  `is_pro_plugin`/`is_entitled` now take the Pro plugin set as a
+  parameter; `routes/plugins.rs` supplies its own `PRO_PLUGINS` const at
+  the single `gate_pro`/`pro_entitled` choke point, and `routes/chat.rs`
+  passes that same const under `creator` or an empty slice under PVR.
+  This is CE06's recommendation, done as a mechanical parameter change
+  rather than a relocation of `is_entitled` itself.
+- **`src/pipeline/templates.rs`** (`creator_intelligence`,
+  `creator_publish`, the `"crunchr"` dispatch identifier) moved to
+  `crates/strivo-plugins/src/pipeline_templates.rs` unchanged apart from
+  import paths. Its two callers (`CrunchrPlugin` and `routes/api.rs`'s
+  `pipeline_run`) were mechanical one-line redirects.
+- **`AppConfig.crunchr`/`AppConfig.archiver`** are gone from core,
+  replaced by `AppConfig.extensions: BTreeMap<String, toml::Value>`
+  (`#[serde(flatten)]`) plus `plugin_section`/`plugin_section_aliased`/
+  `set_plugin_section` accessors. `CrunchrConfig`/`CrunchrAnalysisConfig`/
+  `ArchiverConfig` moved to `strivo-plugins` (`crunchr::types`,
+  `archiver::types`). `routes/api.rs`'s ~15 direct `cfg.archiver.*` field
+  accesses became `cfg.plugin_section("archiver")` /
+  `cfg.set_plugin_section("archiver", &a)` pairs — mechanical, one call
+  site at a time. An existing `config.toml`'s `[crunchr]`/`[archiver]`
+  sections (and the legacy `[sloptube]` alias) still round-trip; see
+  `tests/config_extensions_roundtrip.rs`.
+- **`strivo-core`'s `creator` feature is deleted** (superseding CE05's
+  "must survive" conclusion above, which was conditioned entirely on the
+  typed config fields this update removed). `creator = []` is gone from
+  the root `Cargo.toml`, and the `"strivo-core/creator"`
+  feature-forwarding is gone from `strivo-bin`/`strivo-web`'s own
+  `creator` features and from `strivo-plugins`' `strivo-core` path
+  dependency. Both editions build and their full test suites pass.
+- **One deliberate exception remains**, documented in place:
+  `AppConfig::post_pull_markers` still reads
+  `extensions["crunchr"]["enabled"]` and returns the literal
+  `.crunchr-auto"` marker name, because the daemon's bulk-download path
+  (`src/recording/bulk.rs`) calls it from inside core with no plugin
+  loaded to ask what markers it wants. Generalizing further would either
+  change observable behavior (any enabled extension section producing a
+  marker file, when today only Crunchr's does) or require a marker
+  registration callback threaded through daemon startup and the
+  bulk-download command channel — a larger structural change than a
+  config-refactor pass. `grep -ri "crunchr|archiver" src/` is down to 7
+  hits, all inside this one function's implementation and doc comment.
+- **Not touched in this update:** CE02 (`strivo-creator-web` split), CE03
+  (`spa.js` module split), CE04 (distribution mechanism) — all remain
+  decisions-only, unexecuted, exactly as originally recorded above.
