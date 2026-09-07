@@ -40,6 +40,9 @@ only rendered surface StriVo has.
 | Borders | `hsla(0,0%,100%,.12)`; lighter `hsla(0,0%,100%,.18)` |
 | Live / recording | `hsl(150,60%,50%)` / `hsl(0,70%,60%)` |
 | Radii | lg `20px`, base `10px`, sm `8px` |
+| Spacing | `--space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px; --space-12:48px; --space-16:64px` |
+| Control sizing | `--control-h:32px; --control-h-lg:40px; --icon-btn:36px; --hit-min:28px` |
+| Type floor | `--text-micro:11px; --text-xs:12px; --text-caption:13px; --text-sm:14px` |
 | Blur (glass) | `blur(25px) saturate(110%) brightness(50%) contrast(110%)` |
 | Shadow | `0 8px 24px hsla(208,89%,3%,.55)` |
 | Font | `"Montserrat", -apple-system, …` (see §Typography) |
