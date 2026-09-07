@@ -1175,8 +1175,8 @@ async function fetchEdition() {
 // keeps its Unicode glyph by the user's choice.
 const TOPNAV = [
   // Free panes — capture-loop core.
-  ["library", "▣", "Home", "l", "/assets/icons/candy/home.svg"],
-  ["recordings", "📁", "Recordings", "r", "/assets/icons/candy/recordings.svg"],
+  ["library", "▣", "Home", "l", "/assets/icons/sweet-folders/folder-home.svg"],
+  ["recordings", "📁", "Recordings", "r", "/assets/icons/sweet-folders/folder-videos.svg"],
   ["schedule", "📅", "Monitor", "s", "/assets/icons/candy/schedule.svg"],
   ["watch", "▶", "Player", "w", "/assets/icons/candy/watch.svg"],
   // Pro panes — unified app, each pane bundles every contributing
