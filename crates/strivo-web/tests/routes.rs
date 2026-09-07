@@ -718,7 +718,11 @@ async fn shared_jobs_db_handle_is_initialised_by_a_real_route() {
     let jobs_db_cell = state.jobs_db.clone();
     let router = build_router(state);
 
-    let resp1 = router.clone().oneshot(history_request(api_key)).await.unwrap();
+    let resp1 = router
+        .clone()
+        .oneshot(history_request(api_key))
+        .await
+        .unwrap();
     assert_eq!(
         resp1.status(),
         StatusCode::OK,
@@ -731,7 +735,11 @@ async fn shared_jobs_db_handle_is_initialised_by_a_real_route() {
          state.jobs_db() would leave this cell empty"
     );
 
-    let resp2 = router.clone().oneshot(history_request(api_key)).await.unwrap();
+    let resp2 = router
+        .clone()
+        .oneshot(history_request(api_key))
+        .await
+        .unwrap();
     assert_eq!(
         resp2.status(),
         StatusCode::OK,
