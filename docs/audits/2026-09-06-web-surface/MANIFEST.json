@@ -5,7 +5,7 @@
   "head": "bd17f6107c83e348162974fade941eb42f423ebc",
   "tree_dirty_paths": 1,
   "canonical_manifest": "MANIFEST.md",
-  "canonical_sha256": "5d4f1647931208f965fb82bafa580b2cd53c6b7834bcf7bfc6a23c2f2f8aa307",
+  "canonical_sha256": "69ca87e8070df23f33a688aff2f0e7187874584a04d63c7728cb1be9ef9bfc2a",
   "evidence_index": "EVIDENCE.json",
   "supersedes": [
     "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
@@ -177,6 +177,13 @@
           "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
           "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
           "regression": "real-server.spec.ts asserts res.status() === 401 for a bogus key (exact match)"
+        },
+        {
+          "revision": "integrated main @ f07a066",
+          "command": "adversarial re-audit of .github/workflows/ci.yml",
+          "observed": "FOLLOW-UP, discharging what S04's own closure evidence left outstanding: the real-server e2e lane is now present in CI as its own step, running `STRIVO_BIN=target/release/strivo npm run test:real` gated on the release-binary build. The re-audit also re-executed the lane locally: 3 passed, 0 failed, with the operator's production daemon (PID 1405, port 8181) confirmed untouched before and after.",
+          "reviewer": "independent re-audit agent, corroborated by the orchestrator's own earlier execution of the same lane",
+          "environment": "CI workflow inspection plus local execution against the compiled binary"
         }
       ],
       "evidence_paths": [
@@ -1202,7 +1209,7 @@
     {
       "id": "V09",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1219,6 +1226,13 @@
           "observed": "ROOT CAUSE WAS A REAL HARNESS RACE, reproduced before being fixed. reconcileControllers() caches a player controller against whichever factory is installed the moment a content key is first seen; installFakePlayers() only STARTED a 10ms poll waiting for the SPA to expose setPlayerControllerFactory and never waited for it to land. Under CPU contention the SPA's script evaluation loses that race, real controllers get cached, and .fake-player count stays 0. Reproduced pre-fix at 1/6 under `taskset -c 0,1` and 3/10 in plain runs. Fix adds waitForFakePlayers(), an explicit page.waitForFunction on a readiness flag, at all 9 call sites, and removes the installer's competing 5s give-up timer so Playwright's per-test timeout is the single authority. No retry, no skip, no bare sleep, no weakened assertion. Agent reports 10/10 full-suite runs, 71/71 each. STATUS IS ready_for_verification, NOT closed: the 10/10 figure is the implementing agent's attributed claim. The orchestrator did NOT re-run it, deliberately — the Playwright harness hardcodes port 8199 with reuseExistingServer and a concurrent V10 agent was running the suite in another worktree, so a simultaneous soak would have corrupted both results. Independent soak owed before this closes.",
           "reviewer": "PENDING — implementing agent only; orchestrator soak deferred to avoid port contention with an in-flight agent",
           "environment": "Linux, rustc 1.98.0, debug profile"
+        },
+        {
+          "revision": "integrated main @ f07a066",
+          "command": "10 consecutive full `npm test` runs",
+          "observed": "INDEPENDENT SOAK: PASS=10 FAIL=0, 71/71 each run, on a quiet port with no stale mock server and load dropping to ~9. This discharges the verification owed when the item was held at ready_for_verification. The prior 10/10 was the implementing agent's claim; this one is the orchestrator's own.",
+          "reviewer": "orchestrator — soak run first-hand on an unloaded port after the concurrent agents released it; this supersedes the implementing agent's attributed figure",
+          "environment": "Linux, Chromium via Playwright, port 8199 confirmed free and no stale mock-server process before starting"
         }
       ],
       "evidence_paths": [
@@ -1228,7 +1242,7 @@
     {
       "id": "V10",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1244,6 +1258,13 @@
           "observed": "THE LEAK IS REAL AND WAS REPRODUCED TWICE. Inventory: exactly two module-level mutable stores survive across requests — abRenderStore and submixStore (mock-server.mjs:175-176) — and the specs hit a FIXED recording id (11111111-...), which is what makes leakage observable. Deliberate reproduction over HTTP: a POST set a slot, and a later GET simulating a fresh run still saw the mutated value. ORGANIC reproduction as well: a mock-server child outlived its parent, a later start failed EADDRINUSE, and querying it showed a leftover `b` slot labelled 'loud-master' written by the PREVIOUS run's own assertions. Fix: a POST /__test__/reset endpoint clearing both Maps, called by a new global-setup.mjs wired via playwright.config.ts globalSetup — chosen over reuseExistingServer:false because it fixes the underlying global-state defect for anyone hitting the server by hand, not just the runner. Agent's proof: state seeded via curl, then two npm test runs against the SAME still-running process (PID unchanged, verified by ps) both 71/71, with post-run state showing real fixtures rather than the injected junk. STATUS ready_for_verification, NOT closed: this is the implementing agent's attributed evidence. The orchestrator did not re-run it — a concurrent audit agent held the hardcoded port 8199, and the workstation's swap was fully exhausted (31Gi/31Gi), making a fresh soak both unreliable and unsafe to stack.",
           "reviewer": "PENDING — implementing agent only; orchestrator verification deferred for port contention and host memory pressure",
           "environment": "Linux, Chromium via Playwright. NOTE: 1 of the agent's 6 tally runs degraded to '57 passed, 13 did not run', correlating with full swap on this shared workstation. Recorded as a gap, not smoothed over; it is NOT evidence the fix works, and it is a reason to re-soak on an unloaded box."
+        },
+        {
+          "revision": "integrated main @ f07a066",
+          "command": "manual mock-server start; seed submixStore via curl; two `npm test` runs against the SAME process; inspect post-run state",
+          "observed": "INDEPENDENT PROOF of the acceptance criterion. Seeded a junk track (ORCHESTRATOR-JUNK, gain 9.9) into submixStore for the fixed recording id, then ran the suite twice against the same still-running server (PID 46164 unchanged across both, verified with ps): 71 passed and 71 passed. Post-run state returned the real test-authored fixtures (voice/game tracks), NOT the injected junk — proving the globalSetup reset actually fires rather than the suite merely tolerating dirty state. Corroboration: the adversarial re-audit agent, working from a revision that PREDATES this fix and without being told about V10, independently rediscovered the same leak and reproduced it (fresh server 0->1->2 tracks; stale reused server 2->3->4).",
+          "reviewer": "orchestrator — soak run first-hand on an unloaded port after the concurrent agents released it; this supersedes the implementing agent's attributed figure",
+          "environment": "Linux, Chromium via Playwright; server started by hand on port 8199"
         }
       ],
       "evidence_paths": [
