@@ -29,7 +29,7 @@
   "counts": {
     "P0": 2,
     "P1": 13,
-    "P2": 13,
+    "P2": 14,
     "P3": 11
   },
   "closure_requirements": [
@@ -334,7 +334,7 @@
     {
       "id": "S09",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "docs",
       "assignee": null,
       "evidence_classes": [
@@ -345,11 +345,11 @@
       "dependencies": [],
       "closure_evidence": [
         {
-          "revision": "remediation/docs-edition (review only, no commit to README.md)",
-          "command": "diff of the committed README against the operator's uncommitted rewrite, each claim traced to source",
-          "observed": "Zero unsupported claims. The owner's README.md was never modified and both reference copies were deleted before committing (reviewer confirmed: no README.*.md remains, and README.md appears in no commit on the branch).",
-          "reviewer": "DECISION REQUIRED FROM OPERATOR — whether to commit the rewrite, and whether to restore the AUR section, remain the operator's calls.",
-          "environment": "Static review; no runtime check of documented behaviour was performed."
+          "revision": "integrated main @ c31794a",
+          "command": "strivo --help and per-subcommand --help against the compiled binary; grep of scripts/install.sh, .github/workflows/{docker,release}.yml; strivo config path / log path",
+          "observed": "The rewrite is committed after VERIFYING its falsifiable claims rather than only reading it. Every documented top-level command exists (daemon, enable, disable, status, config, log, search, pull, doctor, setup, serve, import, repair, merge, thumbnail, chapter, twitch-rewind, completions, man), as do the quoted subcommands (config path/list, log tail, setup cookies with --browser/--profile, repair containers) and flags (serve --bind default 127.0.0.1:8181, enable --daemon-only). scripts/install.sh really accepts --check/--edition/--prefix/--debug/--uninstall/--help. The Docker image really publishes to ghcr.io/<repo> with a -creator variant. The release workflow really builds x86_64 Linux/macOS/Windows and generates completions plus a man page. `strivo config path` and `log path` match the documented XDG locations. ONE FACTUAL ERROR FOUND AND FIXED: the README said recordings default to ~/Videos/strivo; src/config/mod.rs:697 joins 'Videos' and 'StriVo'. The unauthenticated-health-endpoint claim is corroborated by PUBLIC_ROUTES. The tree is now clean.",
+          "reviewer": "orchestrator — claims checked against the compiled CLI and workflow files, not read-and-approved",
+          "environment": "Linux, rustc 1.98.0, debug profile"
         }
       ],
       "evidence_paths": [
@@ -777,7 +777,7 @@
     {
       "id": "S11",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "docs",
       "assignee": null,
       "evidence_classes": [
@@ -789,11 +789,11 @@
       "dependencies": [],
       "closure_evidence": [
         {
-          "revision": "remediation/docs-edition 54b0848",
-          "command": "review of the ROADMAP.md diff",
-          "observed": "ROADMAP.md flags DESIGN.md's location without resolving the tracking question. Reviewer confirmed .gitignore is unchanged and no ignored file was added.",
-          "reviewer": "DECISION REQUIRED FROM OPERATOR — whether to track a deliberately-private file is not the audit's call. This item cannot close on the implemented half alone.",
-          "environment": "Documentation only."
+          "revision": "integrated main @ c31794a",
+          "command": "git grep -n 'DESIGN\\.md|CLAUDE\\.md' over tracked files, excluding historical records",
+          "observed": "OPERATOR CHOSE the second coherent position: keep the docs private, remove the normative citations. Seven live citations were replaced with their substance stated inline — ROADMAP's 'DESIGN.md compliance' section became a self-contained 'SPA theme' section naming crates/strivo-web/assets/spa.css's :root block as canonical; ROADMAP's AI-attribution rule now states itself instead of deferring to CLAUDE.md; spa.css declares itself canonical rather than deferring outward; strivo.css, spa.js and player-controller.spec.ts state the Bunny-Fonts privacy rationale directly; and ADR 0001 cites ROADMAP's SemVer policy rather than an out-of-tree global file. A fresh clone can now resolve every normative design reference. Historical records under docs/archive/ and research/analysis/ were deliberately LEFT ALONE — they record what was true when written, and rewriting them would falsify the audit trail. Verified: PVR build clean, PVR bundle check clean over 174 names, Playwright 71/71.",
+          "reviewer": "orchestrator — claims checked against the compiled CLI and workflow files, not read-and-approved",
+          "environment": "Linux, rustc 1.98.0, debug profile"
         }
       ],
       "evidence_paths": [
@@ -1280,6 +1280,24 @@
       "evidence_paths": [
         "crates/strivo-web/e2e/mock-server.mjs",
         "crates/strivo-web/e2e/playwright.config.ts"
+      ]
+    },
+    {
+      "id": "V11",
+      "priority": "P2",
+      "status": "open",
+      "owner_role": "cli",
+      "assignee": null,
+      "evidence_classes": [
+        "C"
+      ],
+      "finding": "Found while verifying S09's README claims: `strivo enable` is broken on macOS, and the CLI's own help text asserts otherwise. handle_enable (crates/strivo-bin/src/main.rs:1130) is gated `#[cfg(unix)]` and unconditionally renders a systemd unit, writes it to ~/.config/systemd/user/strivo.service, then shells out to `systemctl --user daemon-reload`. macOS is unix but ships no systemd, so the command writes a file into a directory that means nothing there and then fails at systemctl. The subcommand help nevertheless reads 'a systemd user service on Linux/macOS', and main.rs:1268 repeats 'unlike the systemd unit on Linux/macOS'. The README is the accurate source here — it says macOS users should run strivo directly or use their own supervisor — so this is a code/help defect, not a docs defect.",
+      "remediation_and_acceptance": "Decide whether macOS gets real service support (a launchd plist, which is the platform-native answer) or is explicitly unsupported. Then make the help text and the runtime agree: either implement launchd, or gate handle_enable to `#[cfg(target_os = \"linux\")]` and have macOS exit with a clear message pointing at the supervisor guidance. Acceptance: on macOS, `strivo enable` either installs a working launchd service or fails immediately with an actionable message, and no help string claims systemd support on macOS. NOTE for this operator: enable writes ~/.config/systemd/user/strivo.service directly, which will overwrite a hand-maintained unit — relevant to any envchain-wrapped deployment.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-bin/src/main.rs",
+        "crates/strivo-bin/src/cli.rs"
       ]
     }
   ]
