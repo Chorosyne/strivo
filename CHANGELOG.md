@@ -27,11 +27,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   browser session for YouTube/Patreon, but nothing previously noticed
   when that session went stale. yt-dlp's stderr is now checked for the
   phrases it uses when a session is no longer accepted (bot/age
-  challenge, members-only, expired cookies, sign-in/private/login
+  challenge, members-only, expired cookies, sign-in/login
   required); a match surfaces a separate "cookie session rejected" issue
   with the `strivo setup cookies <platform> --browser <browser>` fix, and
   clears itself the next time a recording on that platform actually
-  starts.
+  writes data.
 
 ## [0.6.0] — 2026-08-18
 

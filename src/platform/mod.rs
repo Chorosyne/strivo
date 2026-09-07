@@ -106,7 +106,11 @@ pub fn classify_token_response(status: u16, body: &str) -> RefreshOutcome {
         let reason = serde_json::from_str::<ErrBody>(body)
             .ok()
             .and_then(|b| b.error_description.or(b.error).or(b.message))
-            .filter(|s| !s.trim().is_empty())
+            // Providers end `error_description` with a full stop; every
+            // caller composes the reason into its own sentence, so strip
+            // it here rather than render "revoked.." downstream.
+            .map(|s| s.trim().trim_end_matches('.').to_string())
+            .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "refresh token or app credentials were rejected".to_string());
         return RefreshOutcome::Rejected(reason);
     }
@@ -289,7 +293,7 @@ mod classify_tests {
         let body = r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
         match classify_token_response(400, body) {
             RefreshOutcome::Rejected(reason) => {
-                assert_eq!(reason, "Token has been expired or revoked.");
+                assert_eq!(reason, "Token has been expired or revoked");
             }
             other => panic!("expected Rejected, got {other:?}"),
         }

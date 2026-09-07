@@ -502,7 +502,6 @@ const COOKIE_REJECTION_PHRASES: &[&str] = &[
     "available to this channel's members",
     "cookies are no longer valid",
     "please sign in",
-    "this video is private",
     "login required",
 ];
 
@@ -725,9 +724,11 @@ mod cookie_rejection_tests {
     }
 
     #[test]
-    fn detects_private_video() {
+    fn private_video_is_not_a_cookie_failure() {
+        // A creator can simply have made the VOD private; that says nothing
+        // about our session, so it must not raise a cookies issue.
         let tail = "ERROR: This video is private.";
-        assert!(classify_recorder_auth_failure(tail).is_some());
+        assert!(classify_recorder_auth_failure(tail).is_none());
     }
 
     #[test]

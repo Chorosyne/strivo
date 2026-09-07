@@ -88,7 +88,7 @@ YouTube, Patreon), sourced from the daemon's live IPC snapshot:
 
 ```
 Twitch: authenticated
-YouTube: NEEDS ATTENTION — Token has been expired or revoked. (since 2026-09-07 09:12)
+YouTube: NEEDS ATTENTION — Token has been expired or revoked (since 2026-09-07 09:12)
   next step: re-authenticate from Settings → Platforms (or `strivo setup`).
 Patreon: not yet authenticated (daemon retries automatically)
 ```

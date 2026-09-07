@@ -116,11 +116,6 @@ impl DaemonState {
                 self.patreon_posts = posts.clone();
             }
             DaemonEvent::RecordingStarted { job } => {
-                // A recording actually starting on this platform is
-                // evidence the cookie jar (if any) works again.
-                self.auth_issues.retain(|i| {
-                    !(i.kind == job.platform && i.source == crate::platform::AuthSource::Cookies)
-                });
                 self.recordings.insert(job.id, job.clone());
             }
             DaemonEvent::RecordingProgress {
@@ -133,6 +128,18 @@ impl DaemonState {
                     job.bytes_written = *bytes_written;
                     job.duration_secs = *duration_secs;
                     job.state = crate::recording::job::RecordingState::Recording;
+                    // Bytes on disk are the evidence that this platform's
+                    // cookie jar (if any) works again. `RecordingStarted` is
+                    // too early: it fires at process spawn, so a failing
+                    // retry would clear the issue and re-raise it on every
+                    // attempt, resetting `since` each time.
+                    if *bytes_written > 0 {
+                        let platform = job.platform;
+                        self.auth_issues.retain(|i| {
+                            !(i.kind == platform
+                                && i.source == crate::platform::AuthSource::Cookies)
+                        });
+                    }
                 }
             }
             DaemonEvent::RecordingFinished {
@@ -2084,6 +2091,48 @@ mod tests {
             patreon_posts: Vec::new(),
             auth_issues: Vec::new(),
         }
+    }
+
+    #[test]
+    fn cookie_issue_survives_a_retry_spawn_and_clears_once_bytes_flow() {
+        let mut state = empty_state();
+        let mut j = job(RecordingState::Recording, 0);
+        j.platform = PlatformKind::YouTube;
+        let progress = |bytes: u64| DaemonEvent::RecordingProgress {
+            job_id: j.id,
+            bytes_written: bytes,
+            duration_secs: 0.0,
+            download_pct: None,
+            download_eta_secs: None,
+            download_rate_bps: None,
+        };
+
+        state.apply(&DaemonEvent::CookieSessionRejected {
+            kind: PlatformKind::YouTube,
+            reason: "cookies are no longer valid".into(),
+        });
+        let since = state.auth_issues[0].since;
+
+        // A retry spawning is not evidence the jar works.
+        state.apply(&DaemonEvent::RecordingStarted { job: j.clone() });
+        assert_eq!(state.auth_issues.len(), 1, "spawn must not clear the issue");
+
+        // The retry failing again updates the reason but keeps the age.
+        state.apply(&DaemonEvent::CookieSessionRejected {
+            kind: PlatformKind::YouTube,
+            reason: "sign in to confirm you're not a bot".into(),
+        });
+        assert_eq!(state.auth_issues.len(), 1);
+        assert_eq!(state.auth_issues[0].since, since, "since must survive an upsert");
+        assert_eq!(state.auth_issues[0].reason, "sign in to confirm you're not a bot");
+
+        // Zero bytes is still not evidence.
+        state.apply(&progress(0));
+        assert_eq!(state.auth_issues.len(), 1);
+
+        // Data on disk is.
+        state.apply(&progress(4096));
+        assert!(state.auth_issues.is_empty(), "bytes written must clear the cookies issue");
     }
 
     fn job(state: RecordingState, age_secs: i64) -> RecordingJob {

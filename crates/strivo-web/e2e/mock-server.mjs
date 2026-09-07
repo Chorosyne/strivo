@@ -396,7 +396,7 @@ const server = createServer(async (req, res) => {
               domain: "Platform Auth",
               name: "YouTube",
               severity: "error",
-              message: "YouTube: credentials rejected — Token has been expired or revoked..",
+              message: "YouTube: credentials rejected — Token has been expired or revoked.",
               fix: "Re-authenticate from Settings → Platforms (the daemon will show a device-code prompt).",
             },
             {
