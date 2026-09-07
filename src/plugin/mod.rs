@@ -356,6 +356,7 @@ pub enum DaemonEventKind {
     DeviceCodeRequired,
     PlatformAuthenticated,
     PlatformAuthenticationRequired,
+    CookieSessionRejected,
     PatreonPostFound,
     PatreonState,
     BulkProgress,
@@ -385,6 +386,7 @@ impl DaemonEventKind {
             DaemonEvent::PlatformAuthenticationRequired { .. } => {
                 Self::PlatformAuthenticationRequired
             }
+            DaemonEvent::CookieSessionRejected { .. } => Self::CookieSessionRejected,
             DaemonEvent::PatreonPostFound { .. } => Self::PatreonPostFound,
             DaemonEvent::PatreonState { .. } => Self::PatreonState,
             DaemonEvent::BulkProgress { .. } => Self::BulkProgress,

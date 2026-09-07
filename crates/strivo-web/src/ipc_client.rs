@@ -75,25 +75,9 @@ impl IpcClient {
 
     /// — fast enough that we don't bother caching at the web layer.
     pub async fn snapshot(&self) -> Result<ServerMessage> {
-        let stream = IpcStream::connect(&self.endpoint)
+        ipc::fetch_snapshot(&self.endpoint)
             .await
-            .context("connect to daemon socket")?;
-        let (reader, mut writer) = tokio::io::split(stream);
-        let payload = ipc::encode_message(&ClientMessage::Hello {
-            version: ipc::IPC_PROTOCOL_VERSION,
-        })?;
-        writer.write_all(payload.as_bytes()).await?;
-        writer.flush().await?;
-
-        let mut reader = BufReader::new(reader);
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            return Err(anyhow!("daemon closed socket before snapshot"));
-        }
-        let msg: ServerMessage =
-            serde_json::from_str(line.trim()).context("decode daemon response")?;
-        Ok(msg)
+            .context("fetch daemon snapshot")
     }
 
     /// Persistent event stream. Yields one [`DaemonEvent`] per

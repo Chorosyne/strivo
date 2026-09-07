@@ -38,6 +38,9 @@ struct DaemonState {
     // sees Patreon immediately (not after up to a full poll interval).
     patreon_creators: Vec<ChannelEntry>,
     patreon_posts: Vec<crate::platform::patreon::PatreonPost>,
+    /// Platforms whose credentials currently need human attention (Tier 1
+    /// auth signal). Additive to the IPC snapshot — no protocol bump.
+    auth_issues: Vec<crate::platform::AuthIssue>,
 }
 
 impl DaemonState {
@@ -52,6 +55,7 @@ impl DaemonState {
             pending_auth: self.pending_auth.clone(),
             patreon_creators: self.patreon_creators.clone(),
             patreon_posts: self.patreon_posts.clone(),
+            auth_issues: self.auth_issues.clone(),
         }
     }
 
@@ -76,6 +80,32 @@ impl DaemonState {
         }
     }
 
+    /// Insert or update an [`crate::platform::AuthIssue`] for `(kind,
+    /// source)`, keeping the original `since` timestamp if one already
+    /// exists for that pair — the issue's age is "how long has this been
+    /// broken," not "when did the most recent poll notice it."
+    fn upsert_auth_issue(
+        &mut self,
+        kind: PlatformKind,
+        source: crate::platform::AuthSource,
+        reason: String,
+    ) {
+        if let Some(existing) = self
+            .auth_issues
+            .iter_mut()
+            .find(|i| i.kind == kind && i.source == source)
+        {
+            existing.reason = reason;
+        } else {
+            self.auth_issues.push(crate::platform::AuthIssue {
+                kind,
+                source,
+                reason,
+                since: chrono::Utc::now(),
+            });
+        }
+    }
+
     fn apply(&mut self, event: &DaemonEvent) {
         match event {
             DaemonEvent::ChannelsUpdated(channels) => {
@@ -86,6 +116,11 @@ impl DaemonState {
                 self.patreon_posts = posts.clone();
             }
             DaemonEvent::RecordingStarted { job } => {
+                // A recording actually starting on this platform is
+                // evidence the cookie jar (if any) works again.
+                self.auth_issues.retain(|i| {
+                    !(i.kind == job.platform && i.source == crate::platform::AuthSource::Cookies)
+                });
                 self.recordings.insert(job.id, job.clone());
             }
             DaemonEvent::RecordingProgress {
@@ -151,12 +186,24 @@ impl DaemonState {
                     self.pending_auth = self.auth_queue.pop_front();
                 }
                 self.auth_queue.retain(|(p, _, _)| p != kind);
+                // Successful auth clears any outstanding OAuth issue for
+                // this platform (a stale Cookies issue, if any, is a
+                // separate credential and is left alone).
+                self.auth_issues.retain(|i| {
+                    !(i.kind == *kind && i.source == crate::platform::AuthSource::OAuth)
+                });
             }
-            DaemonEvent::PlatformAuthenticationRequired { kind, .. } => match kind {
-                PlatformKind::Twitch => self.twitch_connected = false,
-                PlatformKind::YouTube => self.youtube_connected = false,
-                PlatformKind::Patreon => self.patreon_connected = false,
-            },
+            DaemonEvent::PlatformAuthenticationRequired { kind, reason } => {
+                match kind {
+                    PlatformKind::Twitch => self.twitch_connected = false,
+                    PlatformKind::YouTube => self.youtube_connected = false,
+                    PlatformKind::Patreon => self.patreon_connected = false,
+                }
+                self.upsert_auth_issue(*kind, crate::platform::AuthSource::OAuth, reason.clone());
+            }
+            DaemonEvent::CookieSessionRejected { kind, reason } => {
+                self.upsert_auth_issue(*kind, crate::platform::AuthSource::Cookies, reason.clone());
+            }
             _ => {}
         }
     }
@@ -884,6 +931,7 @@ pub async fn run_with_plugins_at(
         auth_queue: std::collections::VecDeque::new(),
         patreon_creators: Vec::new(),
         patreon_posts: Vec::new(),
+        auth_issues: Vec::new(),
     };
     // Replay recordings from the journal FIRST so the disk scan can be
     // deduped against it. Journal entries carry the original Uuid, channel
@@ -2034,6 +2082,7 @@ mod tests {
             auth_queue: std::collections::VecDeque::new(),
             patreon_creators: Vec::new(),
             patreon_posts: Vec::new(),
+            auth_issues: Vec::new(),
         }
     }
 

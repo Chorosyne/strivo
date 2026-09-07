@@ -74,6 +74,15 @@ pub enum DaemonEvent {
         kind: PlatformKind,
         reason: String,
     },
+    /// yt-dlp's stderr indicated the imported cookie jar is no longer
+    /// accepted by the platform (session expired, browser sign-out, age/bot
+    /// challenge). Distinct from `PlatformAuthenticationRequired`, which is
+    /// about OAuth token refresh — cookies are a separate credential the
+    /// daemon can't refresh itself; only re-importing the jar fixes it.
+    CookieSessionRejected {
+        kind: PlatformKind,
+        reason: String,
+    },
     PatreonPostFound {
         creator_name: String,
         post_title: String,

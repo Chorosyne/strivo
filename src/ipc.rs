@@ -191,6 +191,10 @@ pub enum ServerMessage {
         patreon_creators: Vec<ChannelEntry>,
         #[serde(default)]
         patreon_posts: Vec<crate::platform::patreon::PatreonPost>,
+        /// Platforms whose credentials currently need human attention.
+        /// Additive — defaults empty for older peers, no protocol bump.
+        #[serde(default)]
+        auth_issues: Vec<crate::platform::AuthIssue>,
     },
     /// Incremental update event
     Event(DaemonEvent),
@@ -233,6 +237,32 @@ pub fn encode_message<T: Serialize>(msg: &T) -> Result<String, serde_json::Error
     let mut s = serde_json::to_string(msg)?;
     s.push('\n');
     Ok(s)
+}
+
+/// Connect to the daemon at `endpoint`, send `Hello`, and return the first
+/// [`ServerMessage`] it answers with (the `StateSnapshot`). One
+/// implementation shared by every caller that just wants a one-shot
+/// snapshot — `strivo status` and the web crate's `IpcClient::snapshot`
+/// both delegate here instead of re-implementing the handshake.
+pub async fn fetch_snapshot(endpoint: &Endpoint) -> anyhow::Result<ServerMessage> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let stream = Stream::connect(endpoint).await?;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let payload = encode_message(&ClientMessage::Hello {
+        version: IPC_PROTOCOL_VERSION,
+    })?;
+    writer.write_all(payload.as_bytes()).await?;
+    writer.flush().await?;
+
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).await?;
+    if n == 0 {
+        anyhow::bail!("daemon closed socket before snapshot");
+    }
+    let msg: ServerMessage = serde_json::from_str(line.trim())?;
+    Ok(msg)
 }
 
 /// Where the daemon's IPC transport lives: a Unix domain socket path, or a
@@ -629,5 +659,20 @@ mod tests {
             matches!(msg, ServerMessage::StateSnapshot { version: 0, .. }),
             "expected version 0, got: {msg:?}"
         );
+    }
+
+    #[test]
+    fn state_snapshot_missing_auth_issues_defaults_empty() {
+        // A pre-Tier-1 daemon/client has never heard of `auth_issues`; the
+        // field must default to empty rather than fail decode (additive,
+        // no protocol bump).
+        let json = r#"{"StateSnapshot":{"version":2,"channels":[],"recordings":{},"twitch_connected":false,"youtube_connected":false,"patreon_connected":false,"pending_auth":null}}"#;
+        let msg: ServerMessage = serde_json::from_str(json).expect("deserialize old-shaped snapshot");
+        match msg {
+            ServerMessage::StateSnapshot { auth_issues, .. } => {
+                assert!(auth_issues.is_empty(), "expected empty auth_issues, got: {auth_issues:?}");
+            }
+            other => panic!("expected StateSnapshot, got: {other:?}"),
+        }
     }
 }

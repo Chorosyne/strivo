@@ -28,6 +28,7 @@ fn snapshot_stub() -> ServerMessage {
         pending_auth: None,
         patreon_creators: Vec::new(),
         patreon_posts: Vec::new(),
+        auth_issues: Vec::new(),
     }
 }
 
