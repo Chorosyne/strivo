@@ -988,7 +988,7 @@
     {
       "id": "V01",
       "priority": "P3",
-      "status": "open",
+      "status": "closed",
       "owner_role": "creator",
       "assignee": null,
       "evidence_classes": [
@@ -998,7 +998,16 @@
       "finding": "Residual surfaced while verifying R06's closure, not present in the original register. The regression test failed_render_leaves_no_scratch_directory (crates/editor/src/lib.rs:519-556) uses a single-cut EDL, so ffmpeg fails on the FIRST sub-clip, before any sub-clip file is written. It proves the guard fires on an early bail against an empty scratch dir; it does NOT exercise the scenario R06 was written to catch — a multi-cut render where earlier sub-clips succeed and a later cut fails, leaving real files to clean up. The Drop guard's scope structurally covers that case (orchestrator-confirmed by reading lib.rs:270-280), but no executed test demonstrates it.",
       "remediation_and_acceptance": "Add a multi-cut EDL test where cut 1 succeeds and cut 2 fails (e.g. a valid source for the first cut and an unreadable one for the second), asserting the scratch directory and its sub-clip files are all gone. Closure: that test exists, passes, and turns red when the Drop guard is disabled.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 8681b49",
+          "command": "cargo test -p strivo-editor; MUTATION: empty the TempDirGuard Drop body",
+          "observed": "failed_render_after_partial_success_leaves_no_scratch_directory (crates/editor/src/lib.rs:566) builds a two-cut EDL: cut 0 against a real ffmpeg-synthesised testsrc fixture, cut 1 against a nonexistent source. Ordering is PROVEN, not assumed: the test first runs the exact sub-clip command cut 0 will issue and asserts it succeeds and writes a non-empty file, and the render loop is a single-threaded `for` over blocking Command::status() calls, so cut 1 cannot start until cut 0's child has exited. Orchestrator's own mutation turned BOTH cleanup tests red, including the new one ('scratch dir ... should have been cleaned up'); restored, 24 passed.",
+          "reviewer": "orchestrator, on integrated main — mutation re-run first-hand; not the implementing agent",
+          "regression": "failed_render_after_partial_success_leaves_no_scratch_directory",
+          "environment": "Linux, rustc 1.98.0, debug profile"
+        }
+      ],
       "evidence_paths": [
         "crates/editor/src/lib.rs"
       ]
@@ -1032,7 +1041,7 @@
     {
       "id": "V03",
       "priority": "P3",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-api",
       "assignee": null,
       "evidence_classes": [
@@ -1041,7 +1050,15 @@
       "finding": "`IpcClient::disconnected()` in crates/strivo-web/src/ipc_client.rs was widened from `#[cfg(test)] pub(crate)` to unconditionally `pub` so the external integration-test crate tests/routes.rs could construct it. This is a permanent public API-surface widening of the strivo-web library made for a test-only need; any downstream consumer can now build a disconnected IpcClient. Not a security defect — it does not bypass auth.",
       "remediation_and_acceptance": "Either accept deliberately and document it as public API, or expose it behind a `#[doc(hidden)]` / `testing` feature so the test can reach it without committing to it as public surface. Acceptance: an operator decision recorded; no behaviour change required.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 8681b49",
+          "command": "cargo test -p strivo-web --features creator",
+          "observed": "THE ITEM'S OWN PREMISE WAS WRONG, and the fix is better for it. The brief assumed tests/routes.rs needed `disconnected()` public and suggested #[doc(hidden)]. Tracing the caller graph showed the integration test never calls it directly — it goes through AppState::test_state, which is fully pub, lives inside this crate, and can therefore see pub(crate) items. So the constructor was narrowed back to `pub(crate)` (ipc_client.rs:64), REMOVING it from the public API rather than merely hiding it from docs. 63 + 4 + 19 tests pass.",
+          "reviewer": "orchestrator, on integrated main — the pub(crate) narrowing and the passing suite were confirmed first-hand",
+          "environment": "Linux, rustc 1.98.0, debug profile"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web"
       ]
@@ -1185,7 +1202,7 @@
     {
       "id": "V09",
       "priority": "P3",
-      "status": "open",
+      "status": "ready_for_verification",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1195,7 +1212,15 @@
       "finding": "A further pre-existing Playwright flake, distinct from the two S12 named and from V05. `player-controller.spec.ts:94` ('each tile carries its own level, and muted means zero') was observed failing in 1 of 4 full-suite runs by the implementing agent, which then REPRODUCED it on the unfixed baseline (2 of 3 baseline full-suite runs) — so it predates all remediation in this manifest and is not a regression from it. The orchestrator ran the full suite twice on integrated main and saw 71/71 both times, so it is intermittent rather than reliably reproducible. Suspected cause is the suite's fullyParallel setting under CPU contention, the same class S12 recorded.",
       "remediation_and_acceptance": "Diagnose the race in the tile-level assertion rather than serialising the whole spec by default. Acceptance: the spec passes 20 consecutive full-suite runs under concurrent CPU load. Do not close this by adding a retry — a retry hides the flake rather than fixing it.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 8681b49",
+          "command": "10x full `npm test` (implementing agent); orchestrator's independent soak DEFERRED",
+          "observed": "ROOT CAUSE WAS A REAL HARNESS RACE, reproduced before being fixed. reconcileControllers() caches a player controller against whichever factory is installed the moment a content key is first seen; installFakePlayers() only STARTED a 10ms poll waiting for the SPA to expose setPlayerControllerFactory and never waited for it to land. Under CPU contention the SPA's script evaluation loses that race, real controllers get cached, and .fake-player count stays 0. Reproduced pre-fix at 1/6 under `taskset -c 0,1` and 3/10 in plain runs. Fix adds waitForFakePlayers(), an explicit page.waitForFunction on a readiness flag, at all 9 call sites, and removes the installer's competing 5s give-up timer so Playwright's per-test timeout is the single authority. No retry, no skip, no bare sleep, no weakened assertion. Agent reports 10/10 full-suite runs, 71/71 each. STATUS IS ready_for_verification, NOT closed: the 10/10 figure is the implementing agent's attributed claim. The orchestrator did NOT re-run it, deliberately — the Playwright harness hardcodes port 8199 with reuseExistingServer and a concurrent V10 agent was running the suite in another worktree, so a simultaneous soak would have corrupted both results. Independent soak owed before this closes.",
+          "reviewer": "PENDING — implementing agent only; orchestrator soak deferred to avoid port contention with an in-flight agent",
+          "environment": "Linux, rustc 1.98.0, debug profile"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/e2e/tests/player-controller.spec.ts"
       ]
