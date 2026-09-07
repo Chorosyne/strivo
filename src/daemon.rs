@@ -255,13 +255,19 @@ pub async fn run_with_plugins_at(
 
     tracing::info!("StriVo daemon starting");
 
-    // Strivo Pro: kick off the 72h licence-refresh loop. No-op when
-    // STRIVO_LICENCE_URL is unset; survives offline (failures are
-    // info-logged, the cache stays valid until the server explicitly
-    // revokes). Handle is intentionally leaked — the task lives for
-    // the daemon's lifetime.
+    // Strivo Pro: kick off the 72h licence-refresh loop — but only when
+    // STRIVO_LICENCE_URL is actually configured. The licence backend is on
+    // an explicit release hold (README's "Release boundary"; ADR 0002 /
+    // CE06), and every edition shares this entrypoint, so a default PVR (or
+    // Creator) install with the env var unset spawns no task and makes no
+    // network call at all, rather than an idle-but-live one. Handle is
+    // intentionally leaked when it does spawn — the task lives for the
+    // daemon's lifetime.
     let _licence_refresh =
         crate::licence::spawn_refresh_loop(crate::licence::DEFAULT_REFRESH_INTERVAL);
+    if _licence_refresh.is_some() {
+        tracing::info!("licence backend configured; refresh loop started");
+    }
 
     // Write PID file
     let pid_path = ipc::pid_path();

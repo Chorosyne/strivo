@@ -99,15 +99,24 @@ pub async fn refresh_now() -> Result<Licence> {
     Ok(lic)
 }
 
-/// Spawn the periodic refresh task. Runs forever:
+/// Spawn the periodic refresh task, but only when a backend URL is actually
+/// configured. Runs forever once spawned:
 ///   - wait `interval`
-///   - if there's a cache AND a backend URL, try a refresh
+///   - if there's a cache, try a refresh
 ///   - swallow errors (the "no internet kill" rule keeps the cache
 ///     valid until the server explicitly revokes)
 ///
-/// Returns the JoinHandle so the daemon can shut it down on exit.
-pub fn spawn_refresh_loop(interval: std::time::Duration) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+/// `None` when `STRIVO_LICENCE_URL` is unset — every edition (PVR included)
+/// shares this same daemon entrypoint, and the licence backend is on an
+/// explicit release hold (README's "Release boundary"; ADR 0002 / CE06), so
+/// checking the gate *before* spawning rather than on every tick means a
+/// default install with the env var unset starts zero background task and
+/// makes zero network call, instead of a live-but-idle task that only
+/// happens to no-op today. Returns the JoinHandle so the daemon can shut it
+/// down on exit when it does run.
+pub fn spawn_refresh_loop(interval: std::time::Duration) -> Option<tokio::task::JoinHandle<()>> {
+    backend_url()?;
+    Some(tokio::spawn(async move {
         // First tick after one interval — at startup we want to come
         // up immediately even if the network is down, then catch up
         // on the first scheduled fire.
@@ -115,7 +124,7 @@ pub fn spawn_refresh_loop(interval: std::time::Duration) -> tokio::task::JoinHan
         loop {
             next.tick().await;
             if backend_url().is_none() {
-                continue; // nothing configured, nothing to do
+                continue; // config changed under us; nothing to do
             }
             match refresh_now().await {
                 Ok(lic) => tracing::info!(
@@ -130,7 +139,7 @@ pub fn spawn_refresh_loop(interval: std::time::Duration) -> tokio::task::JoinHan
                 }
             }
         }
-    })
+    }))
 }
 
 /// Default refresh cadence: 72 hours. The CF Worker's
