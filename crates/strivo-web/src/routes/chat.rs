@@ -8,8 +8,9 @@
 //! PRIVMSG (browsers can't open raw TCP sockets, so sending goes through the
 //! daemon's process instead).
 //!
-//! Neither route is Creator/Pro-gated — `"chat"` isn't in
-//! `strivo_core::licence::gate::PRO_PLUGINS` — and the SPA already treats
+//! Neither route is Creator/Pro-gated — `"chat"` isn't in the Pro plugin
+//! set registered with `strivo_core::licence::gate::set_pro_plugins` —
+//! and the SPA already treats
 //! `chat`/`viewer` as free routes: they're deliberately absent from
 //! `CREATOR_ROUTES` in spa.js, and their `API.chatRooms`/`API.chatSend`
 //! methods sit outside any `@creator-start` block, so both survive PVR
@@ -50,8 +51,8 @@ async fn chat_rooms(headers: HeaderMap, State(state): State<AppState>) -> impl I
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    // "chat" isn't in `licence::gate::PRO_PLUGINS`, so this always passes
-    // today; kept so a future addition of "chat" to that list (unlikely —
+    // "chat" isn't in the registered Pro plugin set, so this always passes
+    // today; kept so a future addition of "chat" to that set (unlikely —
     // see the module doc) would apply here too instead of silently not.
     if !strivo_core::licence::gate::is_entitled("chat") {
         return Problem::payment_required(

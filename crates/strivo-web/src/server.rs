@@ -195,7 +195,14 @@ pub fn build_router(state: AppState) -> Router {
         // see routes::chat's module doc (S17).
         .merge(routes::chat::router());
     // Creator Edition mounts the rest of the plugin/tooling routes; the PVR
-    // build omits them.
+    // build omits them. Core's entitlement gate has no built-in notion of
+    // which plugins are Pro (see `licence::gate`'s module doc / ADR 0001
+    // CE06) — Creator registers its own paid-plugin set here, once, before
+    // any `gate_pro(..)` call in `routes::plugins` can run. A pure-PVR
+    // build never calls this, so its registry stays empty and nothing is
+    // Pro-gated.
+    #[cfg(feature = "creator")]
+    strivo_core::licence::gate::set_pro_plugins(["crunchr", "archiver", "viewguard", "insights"]);
     #[cfg(feature = "creator")]
     let guarded = guarded.merge(routes::plugins::router());
     let guarded = guarded
