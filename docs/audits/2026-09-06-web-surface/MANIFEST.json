@@ -30,7 +30,7 @@
     "P0": 2,
     "P1": 13,
     "P2": 13,
-    "P3": 10
+    "P3": 11
   },
   "closure_requirements": [
     "An implementation reference (diff or commit), or an explicitly named supported-scope limitation.",
@@ -960,7 +960,7 @@
     {
       "id": "S17",
       "priority": "P2",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-api",
       "assignee": null,
       "evidence_classes": [
@@ -969,7 +969,16 @@
       "finding": "PVR-reachable UI depends on Creator-only backend routes. `GET /api/v1/plugins` and `GET /api/v1/plugins/chat/rooms` are registered in crates/strivo-web/src/routes/plugins.rs (:4383, :4505), and that whole router is merged only under #[cfg(feature = \"creator\")] (server.rs:122-123). But the SPA calls them from edition-agnostic code: API.chatRooms() at spa.js:5209, :6074 and :7368 (chat page, viewer, watch-page chat rail) and API.plugins() at :9084 and :10754. Surfaced while fixing S10 — the implementer had to move both definitions OUT of the creator strip blocks precisely because PVR code needs them. Reviewer traced the error handling: the chat page (:5207-5212) catches and renders a '⚠' error banner, the chat rail (:7368) catches and proceeds, and the info modal (:10754) catches and substitutes an empty list, so nothing crashes. The consequence is a PVR build whose chat feature always shows an error where the backend route simply does not exist.",
       "remediation_and_acceptance": "Decide whether chat and the plugin index are PVR features or Creator features, then make both sides agree. If PVR: move those two routes out of the creator-gated plugins router into an always-mounted router. If Creator: gate the calling UI so a PVR build does not present chat at all. Acceptance: in a real PVR build (the S04 real-server lane can drive this), opening the chat page produces a defined state with no failed request — not a caught-and-displayed error.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ c5c66af",
+          "command": "cargo build (PVR) + cargo test -p strivo-web --test routes; MUTATION: drop the `.merge(routes::chat::router())` at server.rs:196",
+          "observed": "S17 AS FILED WAS PARTLY WRONG, and the correction is part of the record. Its claim that `GET /api/v1/plugins` is broken does NOT hold: that call is wrapped in `.catch(() => ({plugins: []}))` and the only UI rendering from it is itself gated by CREATOR_ENABLED. The real defect was a different pair — `GET /api/v1/plugins/chat/rooms` and `POST /api/v1/chat/send`. All 69 routes in the Creator-gated plugins router were audited against the ACTUAL built PVR bundle (target/debug/build/strivo-web-*/out/assets/spa.js), where both chat calls demonstrably survive stripping while their handlers did not exist in a PVR build. Effect on real PVR users: renderChat/renderViewer showed a raw error box and chat compose always failed with 'Send failed'. Root cause: spa.js already treated Twitch chat as free, every-edition functionality and deliberately kept those API methods outside the @creator-start markers; only the backend registration was never carved out. Fix: a new always-compiled crates/strivo-web/src/routes/chat.rs merged unconditionally in build_router. Orchestrator's own mutation on integrated main: 'GET /api/v1/plugins/chat/rooms -> 404 Not Found (expected 401)' and the same for chat/send, 'FAILED. 14 passed; 1 failed'; restored, 15 passed.",
+          "reviewer": "orchestrator, on integrated main — the mutation was re-run first-hand (my first two attempts targeted a stale line number and proved nothing; the third, at the correct line, produced the failure quoted)",
+          "regression": "the two routes moved from CREATOR_ROUTES to ALWAYS_ROUTES in the S08 sweep, which treats any non-401 including 404 as a violation — so the auth invariant now also guards route existence in PVR builds. PVR routes.rs went 13 -> 15 tests.",
+          "environment": "Linux, rustc 1.98.0, debug profile; PVR and Creator builds both clean, clippy and fmt clean"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
@@ -1189,6 +1198,24 @@
       "closure_evidence": [],
       "evidence_paths": [
         "crates/strivo-web/e2e/tests/player-controller.spec.ts"
+      ]
+    },
+    {
+      "id": "V10",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "web-test",
+      "assignee": null,
+      "evidence_classes": [
+        "B"
+      ],
+      "finding": "Test-isolation footgun in the Playwright harness, observed while verifying S17. playwright.config.ts sets `reuseExistingServer`, and mock-server.mjs holds module-level Map state (e.g. submixStore). A mock-server process left running from an earlier invocation is therefore reused by a later `npm test` against the same port, carrying its in-memory state across runs — which produced two unrelated failures in ab-submix.spec.ts and player-controller.spec.ts that vanished against a freshly started server. This is a plausible contributor to the flake class recorded as S12/V09, and it means a green suite run is not necessarily a clean-state run.",
+      "remediation_and_acceptance": "Reset the mock's module-level stores per test run (or per worker), or stop reusing an existing server for the full-suite lane. Acceptance: two consecutive `npm test` invocations against an already-running mock produce identical results, demonstrated by seeding state in the first run.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web/e2e/mock-server.mjs",
+        "crates/strivo-web/e2e/playwright.config.ts"
       ]
     }
   ]
