@@ -606,7 +606,7 @@
     {
       "id": "CE01",
       "priority": "P1",
-      "status": "deferred_with_scope_limit",
+      "status": "closed",
       "owner_role": "core-api",
       "assignee": null,
       "evidence_classes": [
@@ -623,14 +623,21 @@
           "reviewer": "orchestrator, on integrated main — grep counts, both edition builds, the config round-trip suite and the CE05 manifest check were re-run first-hand",
           "regression": "tests/config_extensions_roundtrip.rs (6 tests)",
           "environment": "Linux, rustc 1.98.0, debug profile"
+        },
+        {
+          "revision": "integrated main @ 92ac4d1",
+          "command": "grep -rin 'crunchr|archiver' src/ ; cargo build ; cargo build -p strivo-bin --features creator ; cargo test --test config_extensions_roundtrip",
+          "observed": "BOTH acceptance criteria now met, superseding the revision-10 deferral. (1) `grep -rin \"crunchr\\|archiver\" src/` returns **0**, down from 33 at the start and 7 at the deferral. (2) strivo-core carries no `creator` feature and both editions build. The last 7 hits were closed with a real seam, not a rename: `AppConfig::post_pull_markers(&self, suppress: bool, registrations: &[(&str, &str)])` is now purely data-driven — it filters supplied (section, marker) pairs by each section's `enabled` flag and names nothing — mirroring the existing `is_entitled(plugin, pro_plugins)` precedent. The concrete pair lives in `strivo_plugins::crunchr::POST_PULL_MARKER` and is threaded through the DaemonPluginHost seam that already existed for the plugin registry. The plugin's own marker READER uses the same constant, so writer and reader cannot drift. Behaviour preserved and guarded by 8/8 round-trip tests, including `archiver_enabled_produces_no_marker_even_though_it_also_has_an_enabled_flag` — the exact silent regression a naive generalisation would have caused — plus a case registering ('archiver', '.archiver-auto') explicitly to prove the function is genuinely data-driven rather than special-casing one plugin. Full verification on main: cargo test all suites 0 failed (1 ignored, the research benchmark); Creator lane 63+4+19 passed; clippy 0 warnings on both configurations; fmt clean.",
+          "reviewer": "orchestrator, on integrated main — the grep, the signature, the POST_PULL_MARKER single-source-of-truth and the archiver guard were each checked first-hand",
+          "regression": "tests/config_extensions_roundtrip.rs, 8 tests",
+          "environment": "Linux, rustc 1.98.0, debug profile"
         }
       ],
       "evidence_paths": [
         "src/recording/catalog.rs",
         "src/config/mod.rs",
         "src/recording/bulk.rs"
-      ],
-      "scope_limitation": "strivo-core still contains ONE Creator-specific behaviour: AppConfig::post_pull_markers (src/config/mod.rs:766-792) reads extensions[\"crunchr\"][\"enabled\"] and returns the literal \".crunchr-auto\" marker. Core therefore still knows one plugin by name, and the Creator repository split cannot be declared complete until this is generalised. The product supports everything it did before — this is residual coupling, not a lost capability — but any claim that 'strivo-core carries no Creator concepts' remains FALSE while these 7 grep hits stand."
+      ]
     },
     {
       "id": "CE02",
