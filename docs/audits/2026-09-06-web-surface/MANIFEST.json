@@ -5,7 +5,7 @@
   "head": "bd17f6107c83e348162974fade941eb42f423ebc",
   "tree_dirty_paths": 1,
   "canonical_manifest": "MANIFEST.md",
-  "canonical_sha256": "ae7d77ac1992368690f5ca46b04c70253af0d29222714754fefaf6992bcecf47",
+  "canonical_sha256": "8d0354d88643124e348701256c9e4c406238d18a2a44c4809046c4f0d9e9d42b",
   "evidence_index": "EVIDENCE.json",
   "supersedes": [
     "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
@@ -29,8 +29,8 @@
   "counts": {
     "P0": 2,
     "P1": 12,
-    "P2": 10,
-    "P3": 5
+    "P2": 11,
+    "P3": 9
   },
   "closure_requirements": [
     "An implementation reference (diff or commit), or an explicitly named supported-scope limitation.",
@@ -49,7 +49,7 @@
     {
       "id": "S01",
       "priority": "P0",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -66,6 +66,14 @@
           "reviewer": "Reviewer verified the diffs and re-ran the suites independently of the implementing agent. Operator has NOT reviewed.",
           "regression": "Agent reports failing-before/passing-after per finding (S01 bogus-key DELETE 200 -> 401; download 404 -> 401; play 307 -> 401; capabilities/dag 200 -> 401). Reviewer independently confirmed the passing-after state via the S08 sweep, which exercises exactly these routes with a bogus X-Api-Key; the reviewer did not re-run the before state.",
           "environment": "Real axum router built in-process via build_router + test_state, no live daemon. This is NOT the real-server E2E lane of S04, which remains open."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "Auth is now enforced by `require_auth`, a route_layer default-deny middleware over the whole guarded router with a 5-entry `is_public_route` allowlist (server.rs:229,245-257) — structurally stronger than the per-handler gating the register asked for. Orchestrator re-ran the mutation on integrated main: s08_always_routes_require_auth and s08_creator_routes_require_auth both FAILED; reverted, server.rs diff empty. Notably s01_/s02_ tests still passed under that mutation because those handlers keep their own check — the two layers gate independently, confirming real defense in depth rather than one guard doing all the work. pipelines_chains_delete now takes HeaderMap/State and calls check_key (routes/api.rs:2918-2933).",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "s01_pipelines_chains_delete_rejects_bogus_key asserts literal StatusCode::UNAUTHORIZED, not a bare non-200"
         }
       ],
       "evidence_paths": [
@@ -77,7 +85,7 @@
     {
       "id": "S02",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -94,6 +102,14 @@
           "reviewer": "Reviewer verified the diffs and re-ran the suites independently of the implementing agent. Operator has NOT reviewed.",
           "regression": "Agent reports failing-before/passing-after per finding (S01 bogus-key DELETE 200 -> 401; download 404 -> 401; play 307 -> 401; capabilities/dag 200 -> 401). Reviewer independently confirmed the passing-after state via the S08 sweep, which exercises exactly these routes with a bogus X-Api-Key; the reviewer did not re-run the before state.",
           "environment": "Real axum router built in-process via build_router + test_state, no live daemon. This is NOT the real-server E2E lane of S04, which remains open."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "download and play both gate via check_dual (routes/recordings.rs:212-218,323-327), so the session cookie still authenticates <video src> playback — the browser-playback constraint the register flagged is preserved.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "s02_recording_download_rejects_bogus_key / s02_recording_play_rejects_bogus_key assert literal 401"
         }
       ],
       "evidence_paths": [
@@ -103,7 +119,7 @@
     {
       "id": "S03",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -120,6 +136,13 @@
           "reviewer": "Reviewer verified the diffs and re-ran the suites independently of the implementing agent. Operator has NOT reviewed.",
           "regression": "Agent reports failing-before/passing-after per finding (S01 bogus-key DELETE 200 -> 401; download 404 -> 401; play 307 -> 401; capabilities/dag 200 -> 401). Reviewer independently confirmed the passing-after state via the S08 sweep, which exercises exactly these routes with a bogus X-Api-Key; the reviewer did not re-run the before state.",
           "environment": "Real axum router built in-process via build_router + test_state, no live daemon. This is NOT the real-server E2E lane of S04, which remains open."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator (routes: 17 passed)",
+          "observed": "tests/routes.rs `fn app()` now calls build_router(AppState::test_state(..)) — the real router — replacing `axum::Router::new()`. The empty-router stub is gone; 17 route tests run against real wiring.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -129,7 +152,7 @@
     {
       "id": "S04",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -146,6 +169,14 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "STRIVO_BIN=/home/revelri/Dev/revoy/strivo/target/debug/strivo npm run test:real",
+          "observed": "EXECUTED, not merely wired: `STRIVO_BIN=target/debug/strivo npm run test:real` ran the real compiled binary (real-server.sh boots `$STRIVO_BIN daemon` under a sandboxed XDG root so it cannot attach to the operator's live daemon). 3/3 passed: unauthenticated request rejected, health reachable with no credential, and a login -> cookie -> recordings round trip through the real daemon. This is the first time in this audit that anything drove the real server.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "real-server.spec.ts asserts res.status() === 401 for a bogus key (exact match)"
         }
       ],
       "evidence_paths": [
@@ -157,7 +188,7 @@
     {
       "id": "S05",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -174,6 +205,14 @@
           "reviewer": "PENDING — implemented by a delegated agent; reviewed by diff inspection only",
           "environment": "Reviewer initially could not re-run the tests (build artifacts deleted to recover a 100%-full filesystem) but DID re-run them after space was recovered: both suites pass. The agent self-reported passing tests and a failing-before check for R06; that is an attributed claim, not independently reproduced.",
           "regression": "Reviewer confirmed the passing-after state independently. The failing-before check for R06 (no-oping the Drop impl) remains the agent's attributed claim and was not repeated."
+        },
+        {
+          "revision": "3864273 (cherry-picked from remediation/hardening c65ec2d onto main)",
+          "command": "cargo test -p strivo-web; mutation: replace `mac.verify_slice(&actual_sig).ok()?` with `let _ = mac.verify_slice(&actual_sig);`",
+          "observed": "decode_verify now calls hmac's constant-time Mac::verify_slice (crates/strivo-web/src/auth.rs:59), verifying the signature BEFORE parsing the payload. 56 strivo-web lib tests pass on main. Mutation that ignores the verify result turned 3 tests red: session_bad_signature_rejected, session_tampered_payload_rejected, session_wrong_secret_rejected. Tree restored clean after mutation.",
+          "reviewer": "independent verifier agent (mutation experiments) + orchestrator cross-read of auth.rs:48-66 at the merged revision; not the branch author",
+          "regression": "session_tampered_payload_rejected added by the fix; failing-before/passing-after demonstrated by mutation rather than by checking out the pre-fix revision",
+          "environment": "Linux, rustc 1.98.0, debug profile, main @ 3d3216d"
         }
       ],
       "evidence_paths": [
@@ -183,7 +222,7 @@
     {
       "id": "S06",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -200,6 +239,14 @@
           "reviewer": "Reviewer verified the diffs and re-ran the suites independently of the implementing agent. Operator has NOT reviewed.",
           "regression": "Agent reports failing-before/passing-after per finding (S01 bogus-key DELETE 200 -> 401; download 404 -> 401; play 307 -> 401; capabilities/dag 200 -> 401). Reviewer independently confirmed the passing-after state via the S08 sweep, which exercises exactly these routes with a bogus X-Api-Key; the reviewer did not re-run the before state.",
           "environment": "Real axum router built in-process via build_router + test_state, no live daemon. This is NOT the real-server E2E lane of S04, which remains open."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "trial gates via check_dual (routes/licence.rs:133-134).",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "s06_licence_trial_rejects_bogus_key asserts literal 401"
         }
       ],
       "evidence_paths": [
@@ -209,7 +256,7 @@
     {
       "id": "S07",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -226,6 +273,14 @@
           "reviewer": "Reviewer verified the diffs and re-ran the suites independently of the implementing agent. Operator has NOT reviewed.",
           "regression": "Agent reports failing-before/passing-after per finding (S01 bogus-key DELETE 200 -> 401; download 404 -> 401; play 307 -> 401; capabilities/dag 200 -> 401). Reviewer independently confirmed the passing-after state via the S08 sweep, which exercises exactly these routes with a bogus X-Api-Key; the reviewer did not re-run the before state.",
           "environment": "Real axum router built in-process via build_router + test_state, no live daemon. This is NOT the real-server E2E lane of S04, which remains open."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "plugin_capabilities and pipelines_dag both gate via check_key (routes/api.rs:2549-2556,2993-2996).",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "s07_* tests assert literal 401"
         }
       ],
       "evidence_paths": [
@@ -235,7 +290,7 @@
     {
       "id": "S08",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -254,12 +309,20 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "Auth is now enforced by `require_auth`, a route_layer default-deny middleware over the whole guarded router with a 5-entry `is_public_route` allowlist (server.rs:229,245-257) — structurally stronger than the per-handler gating the register asked for. Orchestrator re-ran the mutation on integrated main: s08_always_routes_require_auth and s08_creator_routes_require_auth both FAILED; reverted, server.rs diff empty. Notably s01_/s02_ tests still passed under that mutation because those handlers keep their own check — the two layers gate independently, confirming real defense in depth rather than one guard doing all the work. The invariant is therefore load-bearing and demonstrably fails when the gate is disabled. BOUNDED: the sweep's ALWAYS_ROUTES/CREATOR_ROUTES tables are hand-maintained (tests/routes.rs:184-189 states axum 0.8 exposes no runtime route-listing API), so route DISCOVERY is not automatic. Runtime posture is default-deny, so an undiscovered new route is still gated; the residual is test-coverage drift, tracked as V02.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
         "crates/strivo-web/src/routes",
         "crates/strivo-web/tests/routes.rs"
-      ]
+      ],
+      "bounded": true
     },
     {
       "id": "S09",
@@ -289,7 +352,7 @@
     {
       "id": "R01",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-ui",
       "assignee": null,
       "evidence_classes": [
@@ -307,6 +370,14 @@
           "reviewer": "Reviewer ran the suite independently of the implementing agent; the operator has NOT reviewed. R02 in particular embeds a product decision needing operator sign-off.",
           "regression": "The implementing agent reports stashing its spa.js/spa.css changes and confirming each of the four new tests fails first (timeout / null attribute / missing element). The reviewer did NOT repeat that stash-and-fail procedure; the failing-before evidence is the agent's attributed claim. The reviewer independently confirmed the passing-after state.",
           "environment": "Chromium via Playwright against e2e/mock-server.mjs — a Node stub, NOT the real axum server (see S04). A first reviewer run under concurrent build load showed 60 passed / 2 failed in pre-existing player-controller tests; those pass 18/18 in isolation and the full suite passed on re-run, so they are load-flaky, not a regression (filed as S12)."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "npm test (Playwright, Chromium) in crates/strivo-web/e2e on integrated main: 70 passed, 1 failed (R03 flake)",
+          "observed": "A #rec-load-more control renders when recNextCursor != null (spa.js:3049) and its handler passes the cursor (spa.js:3129-3155). The mock implements genuine cursor pagination mirroring the backend's page_bounds, so the test exercises real request-building: verifier mutation dropping the cursor made the SPA refetch page 1 (count went to '1000 total', never 502) and the test failed.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "spa-ux-remediation.spec.ts:14 drives a real click and asserts 500 -> 502 total"
         }
       ],
       "evidence_paths": [
@@ -317,7 +388,7 @@
     {
       "id": "R02",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-ui",
       "assignee": null,
       "evidence_classes": [
@@ -335,6 +406,14 @@
           "reviewer": "Reviewer ran the suite independently of the implementing agent; the operator has NOT reviewed. R02 in particular embeds a product decision needing operator sign-off.",
           "regression": "The implementing agent reports stashing its spa.js/spa.css changes and confirming each of the four new tests fails first (timeout / null attribute / missing element). The reviewer did NOT repeat that stash-and-fail procedure; the failing-before evidence is the agent's attributed claim. The reviewer independently confirmed the passing-after state.",
           "environment": "Chromium via Playwright against e2e/mock-server.mjs — a Node stub, NOT the real axum server (see S04). A first reviewer run under concurrent build load showed 60 passed / 2 failed in pre-existing player-controller tests; those pass 18/18 in isolation and the full suite passed on re-run, so they are load-flaky, not a regression (filed as S12)."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "npm test (Playwright, Chromium) in crates/strivo-web/e2e on integrated main: 70 passed, 1 failed (R03 flake)",
+          "observed": "B-roll wired into the Creator-gated action block of openRecordingInfo (spa.js:10809,11013) with API.brollSuggest (spa.js:259) against the existing gate_pro('broll') route. No longer catalogued-but-unreachable.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "spa-ux-remediation.spec.ts:84 opens the modal, POSTs a real library, asserts rendered results and localStorage round-trip"
         }
       ],
       "evidence_paths": [
@@ -345,7 +424,7 @@
     {
       "id": "R03",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "a11y",
       "assignee": null,
       "evidence_classes": [
@@ -363,17 +442,26 @@
           "reviewer": "Reviewer ran the suite independently of the implementing agent; the operator has NOT reviewed. R02 in particular embeds a product decision needing operator sign-off.",
           "regression": "The implementing agent reports stashing its spa.js/spa.css changes and confirming each of the four new tests fails first (timeout / null attribute / missing element). The reviewer did NOT repeat that stash-and-fail procedure; the failing-before evidence is the agent's attributed claim. The reviewer independently confirmed the passing-after state.",
           "environment": "Chromium via Playwright against e2e/mock-server.mjs — a Node stub, NOT the real axum server (see S04). A first reviewer run under concurrent build load showed 60 passed / 2 failed in pre-existing player-controller tests; those pass 18/18 in isolation and the full suite passed on re-run, so they are load-flaky, not a regression (filed as S12)."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "npm test (Playwright, Chromium) in crates/strivo-web/e2e on integrated main: 70 passed, 1 failed (R03 flake)",
+          "observed": "Skip link is the first element in chrome() (spa.js:1219) targeting #content, which gained tabindex=-1 (:1242); CSS hides it until :focus-visible (spa.css:283-298). The test drives a REAL keyboard (Tab -> toBeFocused, Enter -> #content focused), meeting the register's explicit bar that a grep is not acceptable closure evidence. BOUNDED: this spec is flaky under load (1 failure in 3 runs on main) — see V05.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "spa-ux-remediation.spec.ts:68 presses Tab then Enter and asserts focus moves"
         }
       ],
       "evidence_paths": [
         "crates/strivo-web/assets/spa.js",
         "crates/strivo-web/assets/spa.css"
-      ]
+      ],
+      "bounded": true
     },
     {
       "id": "R04",
       "priority": "P2",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "a11y",
       "assignee": null,
       "evidence_classes": [
@@ -391,6 +479,14 @@
           "reviewer": "Reviewer ran the suite independently of the implementing agent; the operator has NOT reviewed. R02 in particular embeds a product decision needing operator sign-off.",
           "regression": "The implementing agent reports stashing its spa.js/spa.css changes and confirming each of the four new tests fails first (timeout / null attribute / missing element). The reviewer did NOT repeat that stash-and-fail procedure; the failing-before evidence is the agent's attributed claim. The reviewer independently confirmed the passing-after state.",
           "environment": "Chromium via Playwright against e2e/mock-server.mjs — a Node stub, NOT the real axum server (see S04). A first reviewer run under concurrent build load showed 60 passed / 2 failed in pre-existing player-controller tests; those pass 18/18 in isolation and the full suite passed on re-run, so they are load-flaky, not a regression (filed as S12)."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "npm test (Playwright, Chromium) in crates/strivo-web/e2e on integrated main: 70 passed, 1 failed (R03 flake)",
+          "observed": "recHeader() emits tabindex=0, role=button, aria-sort (spa.js:3242) and a keydown handler invokes the same sort closure on Enter/Space (spa.js:3120-3128). Verifier mutation removing the attributes turned the test red.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean.",
+          "regression": "spa-ux-remediation.spec.ts:35 focuses the header, presses Enter and Space, and asserts the row order actually changes"
         }
       ],
       "evidence_paths": [
@@ -428,7 +524,7 @@
     {
       "id": "R06",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "creator",
       "assignee": null,
       "evidence_classes": [
@@ -446,16 +542,25 @@
           "reviewer": "PENDING — implemented by a delegated agent; reviewed by diff inspection only",
           "environment": "Reviewer initially could not re-run the tests (build artifacts deleted to recover a 100%-full filesystem) but DID re-run them after space was recovered: both suites pass. The agent self-reported passing tests and a failing-before check for R06; that is an attributed claim, not independently reproduced.",
           "regression": "Reviewer confirmed the passing-after state independently. The failing-before check for R06 (no-oping the Drop impl) remains the agent's attributed claim and was not repeated."
+        },
+        {
+          "revision": "3d3216d (cherry-picked from remediation/hardening 1fbadd8 onto main)",
+          "command": "cargo test -p strivo-editor; mutation: empty the TempDirGuard Drop body",
+          "observed": "TempDirGuard(PathBuf) with an unconditional Drop calling remove_dir_all (crates/editor/src/lib.rs:36-54) is bound at the point the scratch dir is created (:276), so it covers every `?`/bail! in the per-cut loop and the concat step, and fires during unwind (no panic=abort in either Cargo.toml). Removed path is always <output_dir>/.edl-temp, code-controlled, never caller input. 23 strivo-editor tests pass. Mutation emptying the Drop body turned failed_render_leaves_no_scratch_directory red. Tree restored clean.",
+          "reviewer": "independent verifier agent + orchestrator cross-read of lib.rs:36-54,270-280; not the branch author",
+          "regression": "failed_render_leaves_no_scratch_directory, exercising real ffmpeg (/usr/bin/ffmpeg present locally)",
+          "environment": "Linux, rustc 1.98.0, debug profile, main @ 3d3216d. NOTE: bare `cargo test` excludes strivo-editor via workspace default-members; the test runs only under --workspace, as CI does."
         }
       ],
       "evidence_paths": [
         "crates/editor/src/lib.rs"
-      ]
+      ],
+      "bounded": true
     },
     {
       "id": "S10",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "edition-boundary",
       "assignee": null,
       "evidence_classes": [
@@ -473,6 +578,13 @@
           "reviewer": "Reviewer rebuilt both bundles from scratch, measured them, and mutation-tested the new guard. Operator has NOT reviewed.",
           "regression": "Reviewer mutation test of the new guard: appending a call to a stripped definition in shared code makes e2e/check-pvr-bundle.mjs report `pluginRpc — called at out/assets/spa.js:10794` and EXIT 1; restored, it reports `OK — ... (checked 174 names removed by /* @creator-start */ blocks)` and exits 0. It is wired as the e2e package's `pretest`, so `npm test` cannot run without it passing.",
           "environment": "The guard builds the REAL PVR bundle in an isolated CARGO_TARGET_DIR and reads the emitted artifact, which is the only way this class of defect is detectable. TWO STATED LIMITS, both the implementer's own disclosure and both confirmed: (1) the build.rs #[cfg(test)] copy of the check is NOT executed by `cargo test` — Cargo does not run tests inside a build script — so the npm pretest is the sole enforced copy; (2) the new Playwright spec exercises the SOURCE SPA with a mocked creator_enabled:false, NOT the stripped bundle, so it verifies the runtime route gate rather than the stripping."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "node crates/strivo-web/e2e/check-pvr-bundle.mjs",
+          "observed": "build.rs strips @creator-start/@creator-end blocks and check-pvr-bundle.mjs verifies the ACTUAL emitted PVR artifact. Run on integrated main: 'OK - PVR bundle has zero surviving call sites to stripped definitions (checked 174 names)'. Wired as the e2e pretest script and invoked in CI.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -672,7 +784,7 @@
     {
       "id": "S12",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -689,17 +801,25 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "npm test",
+          "observed": "player-controller.spec.ts serialised (commit 8c63490). BOUNDED: flakiness is not eliminated as a class — the R03 skip-link spec was observed failing 1 of 3 runs on integrated main under load. Tracked as V05.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
         "crates/strivo-web/e2e/tests/player-controller.spec.ts",
         "crates/strivo-web/e2e/playwright.config.ts"
-      ]
+      ],
+      "bounded": true
     },
     {
       "id": "S13",
       "priority": "P0",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -717,6 +837,13 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "pipelines_chains_list and pipelines_chains_save both take HeaderMap/State and gate with check_key (routes/api.rs:2921-2925,2944-2949); save no longer writes caller JSON to disk unauthenticated.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -726,7 +853,7 @@
     {
       "id": "S14",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -744,6 +871,13 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "All four licence routes gate with check_dual: status (:48-49), activate (:106), trial (:133), refresh (:156).",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -753,7 +887,7 @@
     {
       "id": "S15",
       "priority": "P3",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -771,6 +905,13 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "Both routes now sit in ALWAYS_ROUTES (tests/routes.rs:276,303) rather than KNOWN_PUBLIC, so the passing sweep requires each to answer a bogus key with 401.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -781,7 +922,7 @@
     {
       "id": "S16",
       "priority": "P1",
-      "status": "ready_for_verification",
+      "status": "closed",
       "owner_role": "web-auth",
       "assignee": null,
       "evidence_classes": [
@@ -798,6 +939,13 @@
           "reviewer": "Reviewer verified the middleware and allowlist by reading them, re-ran every suite, and MUTATION-TESTED the invariant: neutering require_auth makes both sweeps FAIL with the exact S16 signature (49 routes back to 422-inconclusive), so the guard is non-vacuous. Operator has NOT reviewed.",
           "environment": "debug profile. The real-server lane boots the actual compiled strivo daemon+serve binaries under a throwaway HOME and all XDG_* roots on port 8281; reviewer confirmed the production daemon on this box (PID 1405, port 8181) was untouched before and after. NOT yet run inside GitHub Actions.",
           "regression": "Reviewer mutation test: with require_auth neutered, s08_always_routes_require_auth and s08_creator_routes_require_auth both FAIL and the 49 body-shape-inconclusive results reappear; restored, both pass. Failing-before figures for the individual handler gates are the agent's attributed claim."
+        },
+        {
+          "revision": "integrated main @ 5b528a9 (auth-sweep + docs-edition + hardening cherry-picked)",
+          "command": "cargo test -p strivo-web --features creator; MUTATION on main: `if is_public_route(..)` -> `if true || is_public_route(..)` in server.rs:250",
+          "observed": "Auth moved into a route_layer that runs BEFORE axum resolves a route's Json/Query extractors (server.rs:176-181), so the 400/422-before-auth class is closed at the layer rather than per handler. The sweep asserts inconclusive.is_empty() with zero tolerance, so a regression reopening body-shape rejection fails loudly instead of being absorbed as 'inconclusive'.",
+          "reviewer": "orchestrator, on integrated main — independent of the branch author and of the verifier agents (the decisive require_auth mutation was re-run first-hand, not accepted on report)",
+          "environment": "Linux, rustc 1.98.0, debug profile. cargo test -p strivo-web --features creator: 63/4/17/0 passed, 0 failed. cargo build (PVR) and cargo build -p strivo-bin --features creator both succeed. fmt + clippy -D warnings clean."
         }
       ],
       "evidence_paths": [
@@ -822,6 +970,92 @@
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
         "crates/strivo-web/assets/spa.js"
+      ]
+    },
+    {
+      "id": "V01",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "creator",
+      "assignee": null,
+      "evidence_classes": [
+        "C",
+        "G"
+      ],
+      "finding": "Residual surfaced while verifying R06's closure, not present in the original register. The regression test failed_render_leaves_no_scratch_directory (crates/editor/src/lib.rs:519-556) uses a single-cut EDL, so ffmpeg fails on the FIRST sub-clip, before any sub-clip file is written. It proves the guard fires on an early bail against an empty scratch dir; it does NOT exercise the scenario R06 was written to catch — a multi-cut render where earlier sub-clips succeed and a later cut fails, leaving real files to clean up. The Drop guard's scope structurally covers that case (orchestrator-confirmed by reading lib.rs:270-280), but no executed test demonstrates it.",
+      "remediation_and_acceptance": "Add a multi-cut EDL test where cut 1 succeeds and cut 2 fails (e.g. a valid source for the first cut and an unreadable one for the second), asserting the scratch directory and its sub-clip files are all gone. Closure: that test exists, passes, and turns red when the Drop guard is disabled.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/editor/src/lib.rs"
+      ]
+    },
+    {
+      "id": "V02",
+      "priority": "P2",
+      "status": "open",
+      "owner_role": "web-test",
+      "assignee": null,
+      "evidence_classes": [
+        "C"
+      ],
+      "finding": "Residual from S08's bounded closure. `is_public_route` (crates/strivo-web/src/server.rs:229, enforced at runtime) and `KNOWN_PUBLIC` (crates/strivo-web/tests/routes.rs:210, enforced in the sweep) are two independently hand-maintained lists of intentionally public routes with no shared source of truth, and the sweep's route tables are likewise hand-grepped from .route(..) call sites. A future route that is added to is_public_route, carries no handler-level check, and is never added to ALWAYS_ROUTES/CREATOR_ROUTES would be both unauthenticated in production and invisible to the sweep. The verifier probed this and could not demonstrate it exploitably today only because every current handler still carries a redundant check — the structural gap is real but presently masked.",
+      "remediation_and_acceptance": "Derive both lists from one constant (e.g. a single PUBLIC_ROUTES table in src/ that tests import), so production and test cannot drift. Acceptance: adding a route to the public list in one place is visible to both, demonstrated by a test that fails when only one side is edited.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web"
+      ]
+    },
+    {
+      "id": "V03",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "web-api",
+      "assignee": null,
+      "evidence_classes": [
+        "C"
+      ],
+      "finding": "`IpcClient::disconnected()` in crates/strivo-web/src/ipc_client.rs was widened from `#[cfg(test)] pub(crate)` to unconditionally `pub` so the external integration-test crate tests/routes.rs could construct it. This is a permanent public API-surface widening of the strivo-web library made for a test-only need; any downstream consumer can now build a disconnected IpcClient. Not a security defect — it does not bypass auth.",
+      "remediation_and_acceptance": "Either accept deliberately and document it as public API, or expose it behind a `#[doc(hidden)]` / `testing` feature so the test can reach it without committing to it as public surface. Acceptance: an operator decision recorded; no behaviour change required.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web"
+      ]
+    },
+    {
+      "id": "V04",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "web-test",
+      "assignee": null,
+      "evidence_classes": [
+        "C"
+      ],
+      "finding": "build.rs's own `#[cfg(test)] mod tests` (added by b6b53c9, including pvr_bundle_has_no_dangling_calls_to_stripped_definitions) NEVER runs under `cargo test` — Cargo does not execute a build script's test module as part of the test graph, and no CI step invokes it. The verifier compiled build.rs standalone with `rustc --test` and it passed, so the logic is sound but inert in the suite. This is the vacuous-verification class: a test that exists, appears to guard, and never executes.",
+      "remediation_and_acceptance": "Delete the inert module, or move its logic into a real test target that Cargo runs. Materially mitigated already: check-pvr-bundle.mjs reimplements the same check against the actual emitted artifact and IS wired as the e2e pretest in CI, so the protection that matters is live. Acceptance: no test module remains that never executes.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web"
+      ]
+    },
+    {
+      "id": "V05",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "web-test",
+      "assignee": null,
+      "evidence_classes": [
+        "B"
+      ],
+      "finding": "The R03 skip-link spec (spa-ux-remediation.spec.ts:68) is timing-flaky on integrated main: observed 1 failure in 3 consecutive runs, failing at `expect(#content).toBeFocused()` after Enter, and failing once in a full-suite run (70 passed, 1 failed) that the same branch passed 71/71 in isolation. This extends the flaky class S12 recorded rather than being a distinct root cause. A flaky accessibility regression is an open acceptance gap, not a pass.",
+      "remediation_and_acceptance": "Await the hash-navigation/focus transition explicitly rather than relying on timing. Acceptance: the spec passes 20 consecutive runs under concurrent CPU load.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web"
       ]
     }
   ]
