@@ -282,6 +282,16 @@ const ALWAYS_ROUTES: &[(&str, &str)] = &[
     ("get", "/api/v1/multistream/tiles"),
     ("get", "/api/v1/recordings/{id}/download"),
     ("get", "/api/v1/recordings/{id}/play"),
+    // S17: Twitch chat's two backend routes are core, every-edition
+    // functionality (chat itself is browser-native IRC; these just list
+    // followed rooms and relay an outbound send) — they used to live only
+    // in the Creator-gated `routes::plugins` router, which 404'd them in a
+    // PVR build the moment a user opened Chat or the multi-viewer. Now
+    // mounted unconditionally by `routes::chat::router()`. Kept here (not
+    // in CREATOR_ROUTES) so this table catches a regression that moves
+    // them back behind `#[cfg(feature = "creator")]` in EITHER edition.
+    ("get", "/api/v1/plugins/chat/rooms"),
+    ("post", "/api/v1/chat/send"),
 ];
 
 /// Creator Edition only (`--features creator`): api.rs's pipeline/
@@ -363,9 +373,7 @@ const CREATOR_ROUTES: &[(&str, &str)] = &[
     ("post", "/api/v1/plugins/deadair/{id}"),
     ("get", "/api/v1/plugins/branding/{id}"),
     ("post", "/api/v1/plugins/branding/{id}"),
-    ("get", "/api/v1/plugins/chat/rooms"),
     ("post", "/api/v1/plugins/chat/parse"),
-    ("post", "/api/v1/chat/send"),
     ("post", "/api/v1/dataviz/run"),
     ("get", "/api/v1/research/projects"),
     ("post", "/api/v1/research/projects"),

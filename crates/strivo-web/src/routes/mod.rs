@@ -1,5 +1,9 @@
 pub mod api;
 pub mod assets;
+// Twitch IRC chat's two server-side routes (list rooms, relay an outbound
+// send) — core, every-edition functionality, not a Creator/Pro plugin. See
+// the module doc for why it isn't folded into `plugins`.
+pub mod chat;
 pub mod events;
 pub mod licence;
 pub mod login;

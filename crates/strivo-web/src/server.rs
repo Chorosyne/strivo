@@ -189,8 +189,13 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::recordings::router())
         .merge(routes::login::router())
         .merge(routes::multistream::router())
-        .merge(routes::assets::router());
-    // Creator Edition mounts the plugin/tooling routes; the PVR build omits them.
+        .merge(routes::assets::router())
+        // Twitch IRC chat's two server-side routes (list rooms, relay a
+        // send) are core, every-edition functionality, not Creator-tier —
+        // see routes::chat's module doc (S17).
+        .merge(routes::chat::router());
+    // Creator Edition mounts the rest of the plugin/tooling routes; the PVR
+    // build omits them.
     #[cfg(feature = "creator")]
     let guarded = guarded.merge(routes::plugins::router());
     let guarded = guarded

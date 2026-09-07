@@ -2068,54 +2068,6 @@ async fn deadair_detect(
     }
 }
 
-/// `GET /api/v1/plugins/chat/rooms` — list followed Twitch channels (live
-/// first) the SPA can join over IRC. YouTube live chat needs an OAuth
-/// flow we haven't built yet, so we surface those rooms tagged
-/// `connectable=false`. Pro-gated.
-async fn chat_rooms(headers: HeaderMap, State(state): State<AppState>) -> impl IntoResponse {
-    if authed(&headers, &state).is_err() {
-        return Problem::unauthorized().into_response();
-    }
-    if let Err(r) = gate_pro("chat") {
-        return r;
-    }
-    let channels = match state.ipc.snapshot().await {
-        Ok(strivo_core::ipc::ServerMessage::StateSnapshot { channels, .. }) => channels,
-        Ok(_) => vec![],
-        Err(e) => return Problem::internal(format!("snapshot: {e}")).into_response(),
-    };
-    let rooms: Vec<serde_json::Value> = channels
-        .into_iter()
-        .filter_map(|c| {
-            let (platform, connectable) = match c.platform {
-                strivo_core::platform::PlatformKind::Twitch => ("twitch", true),
-                strivo_core::platform::PlatformKind::YouTube => ("youtube", false),
-                strivo_core::platform::PlatformKind::Patreon => return None,
-            };
-            // Twitch user ID surfaces so the SPA can hit the
-            // legacy badges + per-channel BTTV/FFZ/7TV emote
-            // endpoints without re-resolving the login server-side.
-            // ChannelEntry.id is the platform's stable numeric id
-            // for Twitch.
-            let user_id = if matches!(c.platform, strivo_core::platform::PlatformKind::Twitch) {
-                Some(c.id.clone())
-            } else {
-                None
-            };
-            Some(serde_json::json!({
-                "room": c.name,
-                "display_name": if c.display_name.is_empty() { c.name.clone() } else { c.display_name },
-                "platform": platform,
-                "is_live": c.is_live,
-                "viewer_count": c.viewer_count,
-                "connectable": connectable,
-                "user_id": user_id,
-            }))
-        })
-        .collect();
-    Json(json!({ "rooms": rooms })).into_response()
-}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct ChatParseQuery {
     /// Single IRC line; the SPA also batches via `lines` (newline-delimited).
@@ -4378,6 +4330,10 @@ async fn recording_captions(
         .into_response()
 }
 
+/// Creator Edition only — the plugin/tooling surface. S17: Twitch chat's
+/// `chat/rooms` + `chat/send` routes used to live here too, but the SPA
+/// treats Chat as a free (every-edition) route — they now live in
+/// `routes::chat`, mounted unconditionally by `server::build_router`.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/plugins", get(index))
@@ -4502,12 +4458,10 @@ pub fn router() -> Router<AppState> {
             "/api/v1/plugins/branding/{id}",
             get(branding_load).post(branding_save),
         )
-        .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
         .route(
             "/api/v1/plugins/chat/parse",
             axum::routing::post(chat_parse),
         )
-        .route("/api/v1/chat/send", axum::routing::post(chat_send_message))
         .route("/api/v1/dataviz/run", axum::routing::post(dataviz_run))
         .route(
             "/api/v1/research/projects",
@@ -5619,70 +5573,6 @@ async fn dataviz_run(
     }
     let series = strivo_dataviz::run(&body.corpus, &body.experiment);
     Json(json!({ "series": series })).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ChatSendBody {
-    pub room: String,
-    pub text: String,
-}
-
-/// `POST /api/v1/chat/send` — outbound message to a Twitch IRC room.
-/// Requires a `STRIVO_TWITCH_CHAT_OAUTH` env var (`oauth:<token>`
-/// scoped `chat:edit`) and `STRIVO_TWITCH_CHAT_LOGIN`. When unset,
-/// returns a 503 Problem describing the missing config so the SPA
-/// can surface a useful hint without guessing.
-async fn chat_send_message(
-    headers: HeaderMap,
-    State(state): State<AppState>,
-    Json(body): Json<ChatSendBody>,
-) -> impl IntoResponse {
-    if authed(&headers, &state).is_err() {
-        return Problem::unauthorized().into_response();
-    }
-    let token = std::env::var("STRIVO_TWITCH_CHAT_OAUTH").unwrap_or_default();
-    let login = std::env::var("STRIVO_TWITCH_CHAT_LOGIN").unwrap_or_default();
-    if token.is_empty() || login.is_empty() {
-        return Problem::unavailable(
-            "chat compose needs STRIVO_TWITCH_CHAT_OAUTH (oauth:<token> with chat:edit scope) and STRIVO_TWITCH_CHAT_LOGIN set on the daemon environment",
-        )
-        .into_response();
-    }
-    let room = body.room.trim_start_matches('#').to_ascii_lowercase();
-    if room.is_empty() {
-        return Problem::bad_request("room required").into_response();
-    }
-    let text = body.text.replace(['\r', '\n'], " ");
-    // Open a short-lived IRC connection — keeps the implementation
-    // simple (one connect per message). The per-session join + listen
-    // happens entirely client-side over WS today; outbound messages
-    // are infrequent enough that connection overhead is fine.
-    let irc = match tokio::net::TcpStream::connect("irc.chat.twitch.tv:6667").await {
-        Ok(s) => s,
-        Err(e) => return Problem::internal(format!("irc connect: {e}")).into_response(),
-    };
-    use tokio::io::AsyncWriteExt;
-    let (rx, mut tx) = tokio::io::split(irc);
-    drop(rx); // read half unused — we don't ack
-              // PASS / NICK auth then PRIVMSG.
-    let pass = if token.starts_with("oauth:") {
-        token.clone()
-    } else {
-        format!("oauth:{token}")
-    };
-    let lines = [
-        format!("PASS {pass}\r\n"),
-        format!("NICK {}\r\n", login.to_ascii_lowercase()),
-        format!("PRIVMSG #{room} :{text}\r\n"),
-        "QUIT :strivo\r\n".to_string(),
-    ];
-    for line in lines {
-        if let Err(e) = tx.write_all(line.as_bytes()).await {
-            return Problem::internal(format!("irc write: {e}")).into_response();
-        }
-    }
-    let _ = tx.shutdown().await;
-    Json(json!({ "ok": true, "room": room })).into_response()
 }
 
 fn plugin_storage_dir(name: &str) -> Option<std::path::PathBuf> {
