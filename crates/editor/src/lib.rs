@@ -579,7 +579,12 @@ mod tests {
         let source = dir.join("source.mp4");
         let gen_status = Command::new("ffmpeg")
             .args(["-y", "-hide_banner", "-loglevel", "error"])
-            .args(["-f", "lavfi", "-i", "testsrc=duration=2:size=128x72:rate=10"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=128x72:rate=10",
+            ])
             .args(["-pix_fmt", "yuv420p"])
             .arg(&source)
             .status()
