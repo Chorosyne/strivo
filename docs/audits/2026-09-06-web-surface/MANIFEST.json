@@ -496,7 +496,7 @@
     {
       "id": "R05",
       "priority": "P1",
-      "status": "blocked",
+      "status": "closed",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -512,12 +512,12 @@
       ],
       "closure_evidence": [
         {
-          "revision": "remediation/web-perf 559b726",
-          "command": "cargo test -p strivo-web --all-targets; cargo clippy -p strivo-web --all-targets -- -D warnings; cargo fmt --all -- --check",
-          "observed": "56 passed, 0 failed (55 before + the new sharing test); clippy clean; fmt clean. All six per-request opens converted (history/blocklist x4, remux, health) and the open_jobs_db helper removed.",
-          "reviewer": "PENDING — implemented by the audit operator; no independent reviewer yet",
-          "regression": "server::tests::jobs_db_handle_is_shared_across_calls asserts std::ptr::eq across two accessor calls. A write/read round-trip alone was rejected as insufficient: two separate connections to the same SQLite file also observe each other's rows, so that assertion would pass against the very behaviour being removed.",
-          "environment": "debug profile, rustc 1.98.0, Linux. NO latency measurement was taken — the performance rationale is unmeasured and closure still requires it. health now reports on the shared handle instead of opening a second connection: a deliberate semantic change meaning health no longer detects a database that became unopenable after first use."
+          "revision": "integrated main @ 064c0f8",
+          "command": "see V06/V07/V08 closure evidence",
+          "observed": "Closed only after all three blockers were satisfied. The earlier remediation/web-perf branch was REFUSED for this item and never merged: it converted only routes/api.rs, carried no measurement, and left the suite green when a handler was reverted. The merged implementation covers the whole web process, is supported by a release-profile before/after on two separate workloads, and is protected by a mutation-proven wiring test.",
+          "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
+          "regression": "shared_jobs_db_handle_is_initialised_by_a_real_route",
+          "environment": "Linux, rustc 1.98.0. Tests debug profile; the V07 benchmark used release binaries."
         }
       ],
       "evidence_paths": [
@@ -1091,7 +1091,7 @@
     {
       "id": "V06",
       "priority": "P1",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -1100,7 +1100,15 @@
       "finding": "Scope gap in the unmerged `remediation/web-perf` fix for R05, confirmed on main. That branch converts only routes/api.rs's six open_jobs_db() sites. crates/strivo-web/src/routes/plugins.rs still opens jobs.db fresh at four PersistDb::open sites (cuepoints_generate :133; resolve_recording_path :193; resolve_recording_meta :1256; resolve_recording_meta_full :1466) plus a Connection::open_with_flags at :3667, each re-running the PRAGMA + CREATE TABLE IF NOT EXISTS batch. resolve_recording_path alone has 16 call sites in that file. The branch touched plugins.rs only to add two fields to a test AppState literal — no production change. The Creator plugin surface is the busier one in practice, so the commit message's claim of sharing a handle 'across the web process' overstates what it does.",
       "remediation_and_acceptance": "Extend the shared handle to plugins.rs's four open sites and the three resolve_* helpers before R05 can close. Acceptance: `grep -rn \"PersistDb::open\\|open_jobs_db\" crates/strivo-web/src/` returns only the single shared initialiser.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 064c0f8",
+          "command": "grep -rn 'open_jobs_db\\|PersistDb::open' crates/strivo-web/src/",
+          "observed": "Returns exactly one line — server.rs:70, the shared initialiser. All ten sites converted: api.rs health/remux/history/blocklist_get/_add/_remove, and plugins.rs cuepoints_generate/resolve_recording_path/resolve_recording_meta/resolve_recording_meta_full, with resolve_recording_path's 15 callers updated for its new &AppState parameter. The Connection::open_with_flags at plugins.rs:3665 was correctly LEFT ALONE: it is open_ro() against crunchr_db()/archiver_db(), a different database, never jobs.db.",
+          "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
+          "environment": "Linux, rustc 1.98.0. Tests debug profile; the V07 benchmark used release binaries."
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
@@ -1110,7 +1118,7 @@
     {
       "id": "V07",
       "priority": "P2",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -1120,17 +1128,27 @@
       "finding": "The R05 fix replaces per-request connections with ONE process-wide tokio::sync::Mutex<Connection> (strivo-core src/recording/persist.rs:76). The lock is never held across an await (verified) and the PRAGMAs are correct and now applied once, but synchronous rusqlite calls still run on the Tokio worker thread inside the lock — pre-existing, though now concentrated. Consequence: requests that previously ran their SQLite work in parallel on independent connections (WAL permits concurrent readers) now serialise on one mutex. This is a plausible THROUGHPUT REGRESSION traded for reduced per-request setup, and no measurement exists in either direction — the branch carries no benchmark, no timing harness, and no numbers in its commit message.",
       "remediation_and_acceptance": "Measure before/after on a stated workload with stated concurrency — e.g. N concurrent GETs of the history page against the real server, using the real-server e2e harness (e2e/real-server.sh) that now exists, on a release build. Report raw numbers per workload; do not average across differing workloads. If serialisation costs more than the setup it saves, prefer a connection pool or spawn_blocking over a single shared mutex. Acceptance: a measured result that justifies the chosen design.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 064c0f8",
+          "command": "release binaries built from pre- and post-change trees, driven through e2e/real-server.sh; curl loops against GET /api/v1/history, sequential and at concurrency 8/16",
+          "observed": "MEASURED, release profile, workloads kept separate and never averaged. Sequential N=200: 4.858ms -> 4.632ms avg. Sequential N=500: 5.049 -> 4.996. Concurrent c=16 N=500: 0.507 -> 0.422. Concurrent c=8 N=500: 2.598 -> 1.879 (~28% faster). The feared serialisation penalty did not appear: the removed per-request cost (Connection::open + PRAGMA + CREATE TABLE IF NOT EXISTS) dominates query time, so the mutex guards only the cheap part. DECISION: keep the shared mutex — a pool would add machinery for no measured gain. BOUNDED, and this limits the result: the benchmark ran against an EMPTY jobs table, which minimises mutex hold time by construction. Contention with a large populated jobs table is NOT measured, and is the case where a single mutex would most plausibly lose. Machine was a shared dev box; the direction is well outside observed noise, the exact percentages are not lab-grade.",
+          "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
+          "regression": "n/a — a measurement, not a regression test",
+          "environment": "release profile via real-server.sh sandboxed XDG root; shared dev workstation"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
         "src/recording/persist.rs"
-      ]
+      ],
+      "bounded": true
     },
     {
       "id": "V08",
       "priority": "P2",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-perf",
       "assignee": null,
       "evidence_classes": [
@@ -1139,7 +1157,16 @@
       "finding": "The R05 branch's only test, server::tests::jobs_db_handle_is_shared_across_calls, exercises the AppState::jobs_db() accessor in isolation against its own temp_state and never drives a route. The verifier reverted the `history` handler to open a fresh PersistDb per request — exactly the pre-fix pattern — and the entire suite still passed with identical counts (63 + 4 + 8). No test confirms any HTTP handler actually uses the shared handle; the suite verifies the accessor exists, not that anything is wired to it.",
       "remediation_and_acceptance": "Add a test driving the real router (the build_router harness added for S03 now makes this possible) that asserts the shared handle is the one a handler actually uses — e.g. by observing that a second request does not re-run schema setup, or by asserting handle identity through an instrumented accessor. Acceptance: reverting any handler to a per-request open turns that test red.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 064c0f8",
+          "command": "cargo test -p strivo-web --features creator --test routes, with history reverted to a per-request PersistDb::open",
+          "observed": "shared_jobs_db_handle_is_initialised_by_a_real_route (tests/routes.rs:710) drives the REAL router via build_router/AppState::test_state, points jobs_db_path at a tempdir, retains a clone of the OnceCell before the state moves into the router, and asserts the cell is populated after a real GET /api/v1/history. Orchestrator's own mutation: 'test result: FAILED. 18 passed; 1 failed' with the message 'AppState.jobs_db must be initialised after a real request reaches a jobs.db-backed handler'. Restored: 19 passed, 0 failed. This is exactly the coverage the rejected branch lacked, where the same revert left the suite fully green.",
+          "reviewer": "orchestrator, on integrated main — the V08 mutation was re-run first-hand (my first attempt did not compile; a corrected mutation produced the failure quoted below)",
+          "regression": "failing-before / passing-after demonstrated by mutation on integrated main",
+          "environment": "Linux, rustc 1.98.0. Tests debug profile; the V07 benchmark used release binaries."
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
