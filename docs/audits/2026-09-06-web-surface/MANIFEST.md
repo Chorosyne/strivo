@@ -61,6 +61,22 @@ serialisation penalty did not appear, because the removed per-request cost domin
 mutex guards. Recorded **bounded**: the benchmark ran against an EMPTY jobs table, which minimises
 lock hold time by construction, so contention with a populated table remains unmeasured.
 
+**V07's bounded caveat did not survive a populated table, and it is now closed on a shape change,
+not a re-measurement of the same design.** A controlled 50,000-row A/B (revision 13) discharged the
+caveat above and found the serialisation effect real, if smaller than a first, uncontrolled
+delegated measurement had claimed (~1.0–1.35x at c=8/c=16, reversing sequentially) — reopened
+pending a pool. The fix replaces the single `tokio::sync::Mutex<Connection>` with a hand-rolled pool
+of 4 persistent connections behind a `Semaphore` (`src/recording/persist.rs`; `r2d2`/`r2d2_sqlite`
+were ruled out — they pin a newer `rusqlite` than the 0.33 shared with the Creator-edition
+`strivo-plugins` crate). A three-arm A/B/C on the same 50,000-row corpus, one tree, minimal diff
+between arms, driven through the real HTTP surface via the new `scripts/bench_jobs_db.sh`: the pool
+matches the old shared-mutex design sequentially (~1.6ms/request either way) and wins clearly under
+concurrency (~0.68ms/request vs ~1.47ms for the mutex, ~0.75–0.88ms for per-request open, at both
+c=8 and c=16). A first cut used `spawn_blocking` per the manifest's own suggestion; measured, its
+dispatch cost exceeded the sub-millisecond query time it was meant to protect against and regressed
+the sequential number below the mutex baseline, so the final design runs each borrow inline against
+the pool instead — a deviation from the suggested tool that the numbers, not a preference, decided.
+
 **Two defects were found by chasing flaky tests rather than dismissing them.** R03's skip link was
 not a slow test but a real SPA bug — its own `hashchange` fell through `currentRoute()`'s fallback
 and repainted the chrome, destroying the `<main id="content">` the browser had just focused. V09
