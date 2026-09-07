@@ -5,7 +5,7 @@
   "head": "bd17f6107c83e348162974fade941eb42f423ebc",
   "tree_dirty_paths": 1,
   "canonical_manifest": "MANIFEST.md",
-  "canonical_sha256": "8d0354d88643124e348701256c9e4c406238d18a2a44c4809046c4f0d9e9d42b",
+  "canonical_sha256": "5d4f1647931208f965fb82bafa580b2cd53c6b7834bcf7bfc6a23c2f2f8aa307",
   "evidence_index": "EVIDENCE.json",
   "supersedes": [
     "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
@@ -30,7 +30,7 @@
     "P0": 2,
     "P1": 13,
     "P2": 13,
-    "P3": 9
+    "P3": 10
   },
   "closure_requirements": [
     "An implementation reference (diff or commit), or an explicitly named supported-scope limitation.",
@@ -997,7 +997,7 @@
     {
       "id": "V02",
       "priority": "P2",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1006,7 +1006,16 @@
       "finding": "Residual from S08's bounded closure. `is_public_route` (crates/strivo-web/src/server.rs:229, enforced at runtime) and `KNOWN_PUBLIC` (crates/strivo-web/tests/routes.rs:210, enforced in the sweep) are two independently hand-maintained lists of intentionally public routes with no shared source of truth, and the sweep's route tables are likewise hand-grepped from .route(..) call sites. A future route that is added to is_public_route, carries no handler-level check, and is never added to ALWAYS_ROUTES/CREATOR_ROUTES would be both unauthenticated in production and invisible to the sweep. The verifier probed this and could not demonstrate it exploitably today only because every current handler still carries a redundant check — the structural gap is real but presently masked.",
       "remediation_and_acceptance": "Derive both lists from one constant (e.g. a single PUBLIC_ROUTES table in src/ that tests import), so production and test cannot drift. Acceptance: adding a route to the public list in one place is visible to both, demonstrated by a test that fails when only one side is edited.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 4363cca",
+          "command": "cargo test -p strivo-web --features creator",
+          "observed": "is_public_route now interprets a single `pub const PUBLIC_ROUTES` (server.rs:238,249), and the test's KNOWN_PUBLIC is a direct alias of it (tests/routes.rs:19,212) rather than a copy — divergence is structurally impossible, not merely asserted. A known_public_matches_library_public_routes guard is added on top. routes.rs went 17 -> 18 tests, all passing. Runtime behaviour preserved byte-for-byte, including the method-agnostic prefix match for the assets catch-all.",
+          "reviewer": "orchestrator, on integrated main — independent of the implementing agent; the R03 soak and full suite were re-run first-hand",
+          "regression": "known_public_matches_library_public_routes",
+          "environment": "Linux, rustc 1.98.0, debug profile, Chromium via Playwright"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web"
       ]
@@ -1031,7 +1040,7 @@
     {
       "id": "V04",
       "priority": "P3",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1040,7 +1049,15 @@
       "finding": "build.rs's own `#[cfg(test)] mod tests` (added by b6b53c9, including pvr_bundle_has_no_dangling_calls_to_stripped_definitions) NEVER runs under `cargo test` — Cargo does not execute a build script's test module as part of the test graph, and no CI step invokes it. The verifier compiled build.rs standalone with `rustc --test` and it passed, so the logic is sound but inert in the suite. This is the vacuous-verification class: a test that exists, appears to guard, and never executes.",
       "remediation_and_acceptance": "Delete the inert module, or move its logic into a real test target that Cargo runs. Materially mitigated already: check-pvr-bundle.mjs reimplements the same check against the actual emitted artifact and IS wired as the e2e pretest in CI, so the protection that matters is live. Acceptance: no test module remains that never executes.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 4363cca",
+          "command": "grep -c 'cfg(test)' crates/strivo-web/build.rs; node crates/strivo-web/e2e/check-pvr-bundle.mjs",
+          "observed": "The inert module was deleted (build.rs now contains zero cfg(test) blocks). Redundancy was VERIFIED before deleting rather than assumed: check-pvr-bundle.mjs was run against a real build and passed, 'checked 174 names removed by @creator-start blocks', and it is wired as the e2e pretest and invoked in CI. The protection that matters runs against the actual emitted bundle; the Rust copy never executed.",
+          "reviewer": "orchestrator, on integrated main — independent of the implementing agent; the R03 soak and full suite were re-run first-hand",
+          "environment": "Linux, rustc 1.98.0, debug profile, Chromium via Playwright"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web"
       ]
@@ -1048,7 +1065,7 @@
     {
       "id": "V05",
       "priority": "P3",
-      "status": "open",
+      "status": "closed",
       "owner_role": "web-test",
       "assignee": null,
       "evidence_classes": [
@@ -1057,7 +1074,16 @@
       "finding": "The R03 skip-link spec (spa-ux-remediation.spec.ts:68) is timing-flaky on integrated main: observed 1 failure in 3 consecutive runs, failing at `expect(#content).toBeFocused()` after Enter, and failing once in a full-suite run (70 passed, 1 failed) that the same branch passed 71/71 in isolation. This extends the flaky class S12 recorded rather than being a distinct root cause. A flaky accessibility regression is an open acceptance gap, not a pass.",
       "remediation_and_acceptance": "Await the hash-navigation/focus transition explicitly rather than relying on timing. Acceptance: the spec passes 20 consecutive runs under concurrent CPU load.",
       "dependencies": [],
-      "closure_evidence": [],
+      "closure_evidence": [
+        {
+          "revision": "integrated main @ 4363cca",
+          "command": "20x `npx playwright test -g R03`; 2x full `npm test`",
+          "observed": "ROOT CAUSE WAS A REAL SPA BUG, not test timing. The skip link's href=\"#content\" fired hashchange; currentRoute() did not recognise 'content', fell through to the 'library' fallback, and renderHome() repainted the chrome — replacing the just-focused <main id=\"content\"> with a fresh node and racing the browser's own fragment-focus step. Fix (spa.js:884) ignores any hash not shaped '#/...'; every real route goes through route() which sets '#/'+name, and all 14 location.hash assignments were checked to confirm that shape. The test assertion was NOT weakened. Orchestrator soak on integrated main: PASS=20 FAIL=0, plus 71/71 full suite twice.",
+          "reviewer": "orchestrator, on integrated main — independent of the implementing agent; the R03 soak and full suite were re-run first-hand",
+          "regression": "spa-ux-remediation.spec.ts:68 reproduced failing 2-in-8 pre-fix; 20/20 post-fix",
+          "environment": "Linux, rustc 1.98.0, debug profile, Chromium via Playwright"
+        }
+      ],
       "evidence_paths": [
         "crates/strivo-web"
       ]
@@ -1118,6 +1144,24 @@
         "crates/strivo-web/src/routes/plugins.rs",
         "crates/strivo-web/src/server.rs",
         "src/recording/persist.rs"
+      ]
+    },
+    {
+      "id": "V09",
+      "priority": "P3",
+      "status": "open",
+      "owner_role": "web-test",
+      "assignee": null,
+      "evidence_classes": [
+        "B",
+        "R"
+      ],
+      "finding": "A further pre-existing Playwright flake, distinct from the two S12 named and from V05. `player-controller.spec.ts:94` ('each tile carries its own level, and muted means zero') was observed failing in 1 of 4 full-suite runs by the implementing agent, which then REPRODUCED it on the unfixed baseline (2 of 3 baseline full-suite runs) — so it predates all remediation in this manifest and is not a regression from it. The orchestrator ran the full suite twice on integrated main and saw 71/71 both times, so it is intermittent rather than reliably reproducible. Suspected cause is the suite's fullyParallel setting under CPU contention, the same class S12 recorded.",
+      "remediation_and_acceptance": "Diagnose the race in the tile-level assertion rather than serialising the whole spec by default. Acceptance: the spec passes 20 consecutive full-suite runs under concurrent CPU load. Do not close this by adding a retry — a retry hides the flake rather than fixing it.",
+      "dependencies": [],
+      "closure_evidence": [],
+      "evidence_paths": [
+        "crates/strivo-web/e2e/tests/player-controller.spec.ts"
       ]
     }
   ]

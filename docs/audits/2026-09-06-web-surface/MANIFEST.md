@@ -24,50 +24,66 @@ history and its `F-nn` IDs. The baseline is **the existing dirty working tree on
 uncommitted 185-insertion / 337-deletion rewrite at audit entry. Existing implementation work was
 preserved; nothing in the project source was modified.
 
-**Backlog: 34 items — 2 P0, 12 P1, 11 P2, 9 P3.** As of revision 9: **19 `closed`, 7
-`ready_for_verification`, 6 open, 2 blocked.** Both P0s (S01, S13) are now closed with executed
-evidence. Revision 9 is the integration pass: the remediation work that had been sitting on
-unmerged branches was independently verified, then cherry-picked onto `main`
-(`3864273`..`5b528a9`), and re-verified *after* integration rather than only in isolation.
+**Backlog: 38 items — 2 P0, 13 P1, 14 P2, 9 P3.** As of revision 10: **22 `closed`, 11 open,
+3 blocked, 2 `ready_for_verification`.** Both P0s are closed with executed evidence.
 
-**What actually closed the auth findings was better than what this register asked for.** The
-register specified per-handler gates. `server.rs:245-257` instead adds `require_auth` as a
-`route_layer` **default-deny** middleware over the whole guarded router, with a five-entry
-`is_public_route` allowlist — so a newly added route is gated by default rather than by being
-remembered. It also runs ahead of axum's `Json`/`Query` extractor resolution, which is what closes
-S16's 400/422-before-auth class at the layer instead of per handler.
+Revisions 9 and 10 were the integration pass. Remediation work that had been sitting on five
+unmerged branches was independently verified, cherry-picked onto `main`, and **re-verified after
+integration** rather than only in isolation. Four branches were merged; one was refused.
 
-That claim was not taken on report. The decisive mutation was re-run first-hand on integrated
-`main`: neutering `is_public_route` turned `s08_always_routes_require_auth` and
-`s08_creator_routes_require_auth` red, and the tree was restored clean. Under that same mutation
-the `s01_`/`s02_` tests still **passed**, because those handlers retain their own checks — the two
-layers gate independently, which is genuine defense in depth rather than one guard carrying
-everything.
+**The auth fix is better than this register asked for.** It specified per-handler gates.
+`server.rs` instead adds `require_auth` as a **default-deny `route_layer`**, so a new route is
+gated by omission rather than by memory, and it runs ahead of axum's `Json`/`Query` extractor
+resolution — which is what closes S16's 400/422-before-auth class at the layer instead of per
+handler. That claim was not taken on report: neutering `is_public_route` on integrated `main`
+turned both S08 sweep tests red. Under the same mutation the `s01_`/`s02_` tests still **passed**,
+because those handlers keep their own checks — the two layers gate independently, which is genuine
+defense in depth rather than one guard carrying everything.
 
 **S04 was closed by execution, not by wiring.** `STRIVO_BIN=target/debug/strivo npm run test:real`
-booted the real compiled binary (`real-server.sh` sandboxes XDG so it cannot attach to the
-operator's live daemon) and passed 3/3, including a login → cookie → recordings round trip through
-a real daemon. This is the first time in this audit that anything drove the real server. Every
-prior "e2e" result in this manifest was a Node stub.
+booted the real compiled binary and passed 3/3, including a login → cookie → recordings round trip
+through a real daemon. This is the first time in this audit that anything drove the real server;
+every prior "e2e" result was a Node stub.
 
-Integration surfaced what isolated verification could not: the R03 skip-link spec passed 71/71 on
-its own branch and then failed on merged `main` (70 passed, 1 failed), reproducing 1-in-3 on
-re-run. It is a flake, not a regression — recorded as **V05**, because a flaky accessibility test
-is an open acceptance gap, not a pass.
+**One branch was refused.** `remediation/web-perf` (R05) fixes only `routes/api.rs`, leaving four
+per-request `PersistDb::open` sites in `plugins.rs` — one of them, `resolve_recording_path`, has 16
+call sites. It replaces per-request connections with a single process-wide mutex, serialising work
+that previously ran in parallel, and carries **no measurement in either direction**. Reverting the
+`history` handler to a per-request open left the whole suite green, so nothing tests the wiring.
+R05 is `blocked` on V06/V07/V08 and stays out of `main`: merging an unmeasured change with a
+plausible throughput regression into a P1 *performance* slot is the exact anti-pattern this
+manifest exists to prevent. When it is rebased, note that the textual conflict in `server.rs` is
+trivial but `AppState::test_state()` will then fail to compile until it gains the two new fields —
+nothing in the diff signals this.
 
-Four residuals were opened rather than waved through: **V02** (production `is_public_route` and
-test `KNOWN_PUBLIC` are two hand-maintained lists with no shared source of truth, so they can
-drift), **V03** (`IpcClient::disconnected()` widened from `#[cfg(test)] pub(crate)` to `pub` for a
-test-only need), **V04** (`build.rs`'s own `#[cfg(test)] mod tests` never executes under `cargo
-test` — a test that exists, appears to guard, and never runs; mitigated because
-`check-pvr-bundle.mjs` checks the real artifact and *is* wired into CI), and **V01** from
-revision 8.
+**Integration surfaced what isolated verification could not.** The R03 skip-link spec passed 71/71
+on its own branch and then failed on merged `main`. Chasing it found a **real SPA bug**, not a slow
+test: the skip link's `href="#content"` fired `hashchange`, `currentRoute()` did not recognise
+`content`, fell through to the `library` fallback, and repainted the chrome — replacing the
+just-focused `<main id="content">` and racing the browser's own fragment-focus step. Fixed in the
+SPA with the assertion left untouched; 20/20 soak plus 71/71 twice, re-run by the orchestrator.
+
+**CE01 is measured rather than asserted.** `crunchr_auto` is genuinely replaced by a generic
+`post_pull_markers` hook — decoupling, not a rename — but the acceptance grep returns **33**, not
+0. Deleting the `creator` feature outright leaves the PVR build *succeeding* and fails with exactly
+**5 errors, all in `strivo-plugins`**. That number is the real distance-to-done. CE02/CE03/CE04/CE06
+returned to `open`: ADR 0001 records a decision, and a plan is not an implementation. The renamed
+task kinds carry **no migration risk** — `TaskKind` derives no `Serialize`/`Deserialize` and is
+never persisted, verified independently.
+
+Residuals are opened rather than waved through: **V01** (R06's regression uses a single-cut EDL, so
+it never exercises the multi-cut leak it was written to catch), **V03**, **V06–V08** (R05's three
+blockers), and **V09** (a further pre-existing `player-controller` flake, reproduced on the unfixed
+baseline, so not a regression from this work). **V04** is the sharpest thing this pass found and is
+now closed: `build.rs` carried a `#[cfg(test)] mod tests` that Cargo never executes — a test that
+existed, looked like a guard, and had never run. Redundancy with `check-pvr-bundle.mjs` was
+verified before deleting it, not assumed.
 
 S08 and S12 are closed **bounded**: the runtime posture is default-deny and verified, but route
-*discovery* in the sweep is still hand-maintained (`tests/routes.rs:184-189` — axum 0.8 exposes no
-runtime route-listing API), and flakiness was serialised for two specs rather than eliminated as a
-class. Prior closure evidence on S05/R06 is **retained**, with this pass's independent
-re-verification appended after it — the earlier reviewer's "PENDING / not independently
+*discovery* in the sweep remains hand-maintained (axum 0.8 exposes no runtime route-listing API),
+and flakiness was serialised for two specs rather than eliminated as a class — V09 is the evidence
+that the class is still open. Prior closure evidence on S05/R06 is **retained**, with this pass's
+independent re-verification appended after it; the earlier reviewer's "PENDING / not independently
 reproduced" caveat is part of the record and was not overwritten. Earlier revisions read (implemented this session, awaiting operator review — see Status
 changes). The backlog **grew** as remediation proceeded: building the route-auth invariant the
 P0 demanded turned S08's unproven boundary into four concrete findings (S13–S16). That is the
