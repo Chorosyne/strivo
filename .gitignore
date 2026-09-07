@@ -44,7 +44,6 @@ venv/
 
 # Internal docs (kept local only)
 CLAUDE.md
-DESIGN.md
 TODOS.md
 REVIEW.md
 YAZI-AUDIT.md
