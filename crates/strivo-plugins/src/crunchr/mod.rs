@@ -31,6 +31,18 @@ pub mod transcribe;
 pub mod types;
 pub mod voice_samples;
 
+/// `(extensions section name, marker filename)` for the tandem-
+/// transcription auto-trigger: when a bulk catalog pull lands an episode
+/// while `[crunchr]` is enabled, the marker gets touched in that episode's
+/// directory, and `on_event` below treats its presence the same as a
+/// tandem channel/playlist match. Core (`strivo_core::config::AppConfig`,
+/// `strivo_core::recording::bulk`) knows neither the section name nor the
+/// marker filename — this plugin registers the pair with
+/// `strivo_core::daemon::DaemonPluginHost` at daemon startup (see
+/// `strivo-bin`'s `register_first_party_plugins`) and reuses it here so
+/// the writer and reader can never drift apart.
+pub const POST_PULL_MARKER: (&str, &str) = ("crunchr", ".crunchr-auto");
+
 pub struct CrunchrPlugin {
     /// Captured from `AppConfig.crunchr` at init. `None` until then, which
     /// is fine because verbs/events only fire after the registry inits.
@@ -127,7 +139,7 @@ impl Plugin for CrunchrPlugin {
                 let crunchr_auto_marker = rec
                     .output_path
                     .parent()
-                    .map(|p| p.join(".crunchr-auto"))
+                    .map(|p| p.join(POST_PULL_MARKER.1))
                     .map(|m| m.exists())
                     .unwrap_or(false);
 

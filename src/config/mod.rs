@@ -762,36 +762,41 @@ impl AppConfig {
     /// don't need to know what optional (e.g. Creator Edition) config, if
     /// any, is compiled in. `suppress` lets a caller opt this pull out (a
     /// CLI flag, say) without needing to know what the markers mean either.
-    /// Empty in the pure-PVR build (`extensions` is always present, but
-    /// nothing populates a `[crunchr]` section there without the plugin).
     ///
-    /// NOTE (ADR 0001, CE01): this reads `extensions["crunchr"]` — a real
-    /// Creator plugin name — directly. That's a known, deliberate
-    /// exception, not an oversight: the daemon's bulk-download path
-    /// (`src/recording/bulk.rs`) calls this synchronously from inside
-    /// core, with no plugin loaded yet to ask "what markers do you want
-    /// written on tandem auto-trigger". Fully removing the name would mean
-    /// either (a) writing the same marker for *any* enabled extension
-    /// section — a real behaviour change, since `[archiver]` also has an
-    /// `enabled` flag but has never produced a marker file — or (b)
-    /// plumbing a marker registration callback through daemon startup and
-    /// the bulk-download command channel, which is a larger structural
-    /// change than this pass's scope. Left as the one remaining named
-    /// exception.
-    pub fn post_pull_markers(&self, suppress: bool) -> Vec<String> {
+    /// `registrations` is the caller-supplied `(extension section name,
+    /// marker filename)` list: for each entry whose `extensions[section]`
+    /// table has `enabled = true`, that marker is included. Core names no
+    /// section and no marker itself — it only knows "an enabled extension
+    /// section can ask for a marker file", so an unrelated extension
+    /// section with its own `enabled = true` flag produces nothing unless
+    /// something actually registers that section here (today, nothing
+    /// does for any section besides the one Creator Edition's tandem
+    /// transcription plugin registers). Empty in the pure-PVR build, which
+    /// always passes an empty `registrations` slice.
+    ///
+    /// (ADR 0001, CE01): the daemon's bulk-download path
+    /// (`src/recording/bulk.rs`) calls this synchronously from inside core,
+    /// before any plugin instance exists to ask "what markers do you want
+    /// written on tandem auto-trigger" — so the registration list has to
+    /// reach it as data, supplied by whoever composes plugins into the
+    /// running app (`DaemonPluginHost`, populated at daemon startup) rather
+    /// than a value core can compute on its own. See
+    /// [`crate::daemon::DaemonPluginHost`].
+    pub fn post_pull_markers(&self, suppress: bool, registrations: &[(&str, &str)]) -> Vec<String> {
         if suppress {
             return Vec::new();
         }
-        let crunchr_enabled = self
-            .extensions
-            .get("crunchr")
-            .and_then(|v| v.get("enabled"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if crunchr_enabled {
-            return vec![".crunchr-auto".to_string()];
-        }
-        Vec::new()
+        registrations
+            .iter()
+            .filter(|(section, _marker)| {
+                self.extensions
+                    .get(*section)
+                    .and_then(|v| v.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|(_section, marker)| marker.to_string())
+            .collect()
     }
 
     /// Lint the config for pathological capture-profile / auto-record setups

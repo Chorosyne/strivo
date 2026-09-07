@@ -7,9 +7,6 @@
 mod cli;
 
 use strivo_core::{config, daemon, ipc, recording};
-// `plugin` is only referenced by the Creator Edition plugin registration.
-#[cfg(feature = "creator")]
-use strivo_core::plugin;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
@@ -46,7 +43,7 @@ async fn run_default_webui(args: cli::Args) -> Result<()> {
             #[allow(unused_mut)]
             let mut host = strivo_core::daemon::DaemonPluginHost::new();
             #[cfg(feature = "creator")]
-            register_first_party_plugins(&mut host.registry);
+            register_first_party_plugins(&mut host);
             if let Err(e) = daemon::run_with_plugins_at(host, daemon_config_path.as_deref()).await {
                 tracing::error!("daemon exited: {e}");
             }
@@ -75,7 +72,7 @@ async fn handle_command(cmd: &Command, config_path: Option<&std::path::Path>) ->
             #[allow(unused_mut)]
             let mut host = strivo_core::daemon::DaemonPluginHost::new();
             #[cfg(feature = "creator")]
-            register_first_party_plugins(&mut host.registry);
+            register_first_party_plugins(&mut host);
             daemon::run_with_plugins_at(host, config_path).await
         }
         Command::Enable {
@@ -448,17 +445,24 @@ async fn handle_pull(
     }
     println!("Discovered {} VOD(s).", vods.len());
 
+    // The marker registration this CLI pull tells core's generic
+    // `post_pull_markers` about — Crunchr's tandem auto-trigger marker in
+    // Creator Edition, nothing in the pure-PVR build. `--no-transcribe`
+    // only gates whichever optional post-pull hook is compiled in; in the
+    // pure-PVR build it's accepted but inert since the list is empty here
+    // regardless.
+    #[cfg(feature = "creator")]
+    let marker_registrations: [(&str, &str); 1] = [strivo_plugins::crunchr::POST_PULL_MARKER];
+    #[cfg(not(feature = "creator"))]
+    let marker_registrations: [(&str, &str); 0] = [];
+
     let opts = CatalogPullOptions {
         root: config.recording_dir.clone(),
         channel_name: channel_id.to_string(),
         format: resolved,
         cookies_path,
         force,
-        // `--no-transcribe` only gates whichever optional post-pull hook is
-        // compiled in (Creator Edition's tandem transcription today); in the
-        // pure-PVR build it's accepted but inert since the marker list is
-        // always empty there regardless.
-        post_pull_markers: config.post_pull_markers(no_transcribe),
+        post_pull_markers: config.post_pull_markers(no_transcribe, &marker_registrations),
     };
 
     let report = catalog::run_pull(&db, vods, &opts, None, None).await?;
@@ -1805,13 +1809,24 @@ fn truncate_str(s: &str, max: usize) -> String {
 /// Edition only — the pure-PVR build ships no plugins, so the daemon runs
 /// with an empty registry and the plugin RPC/event paths are no-ops.
 #[cfg(feature = "creator")]
-fn register_first_party_plugins(registry: &mut plugin::registry::PluginRegistry) {
-    registry.register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
-    registry.register(Box::new(strivo_plugins::artifacts::ArtifactPlugin::new()));
-    registry.register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
-    registry.register(Box::new(strivo_plugins::insights::InsightsPlugin::new()));
-    registry.register(Box::new(strivo_plugins::editor::EditorPlugin::new()));
-    registry.register(Box::new(strivo_plugins::viewguard::ViewguardPlugin::new()));
+fn register_first_party_plugins(host: &mut daemon::DaemonPluginHost) {
+    host.registry
+        .register(Box::new(strivo_plugins::crunchr::CrunchrPlugin::new()));
+    host.registry
+        .register(Box::new(strivo_plugins::artifacts::ArtifactPlugin::new()));
+    host.registry
+        .register(Box::new(strivo_plugins::archiver::ArchiverPlugin::new()));
+    host.registry
+        .register(Box::new(strivo_plugins::insights::InsightsPlugin::new()));
+    host.registry
+        .register(Box::new(strivo_plugins::editor::EditorPlugin::new()));
+    host.registry
+        .register(Box::new(strivo_plugins::viewguard::ViewguardPlugin::new()));
+    // Tell core's generic `post_pull_markers` what Crunchr's tandem
+    // auto-trigger marker looks like, without core naming the plugin.
+    let (section, marker) = strivo_plugins::crunchr::POST_PULL_MARKER;
+    host.post_pull_markers
+        .push((section.to_string(), marker.to_string()));
 }
 
 #[cfg(all(test, unix))]

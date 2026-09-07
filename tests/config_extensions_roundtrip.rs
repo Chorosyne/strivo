@@ -105,15 +105,58 @@ fn legacy_section_name_is_reachable_via_plugin_section_aliased() {
     assert!(crunchr.enabled);
 }
 
+/// Stands in for `strivo_plugins::crunchr::POST_PULL_MARKER` — this crate
+/// can't depend on that constant (it lives downstream), which is the
+/// point of the test: core's `post_pull_markers` must work from a plain
+/// `(section, marker)` registration, not from baked-in plugin knowledge.
+const CRUNCHR_MARKER_REGISTRATION: (&str, &str) = ("crunchr", ".crunchr-auto");
+
 #[test]
-fn post_pull_markers_still_honours_crunchr_enabled() {
+fn post_pull_markers_still_honours_crunchr_enabled_through_the_new_seam() {
     let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
     assert_eq!(
-        cfg.post_pull_markers(false),
+        cfg.post_pull_markers(false, &[CRUNCHR_MARKER_REGISTRATION]),
         vec![".crunchr-auto".to_string()]
     );
-    assert_eq!(cfg.post_pull_markers(true), Vec::<String>::new());
+    assert_eq!(
+        cfg.post_pull_markers(true, &[CRUNCHR_MARKER_REGISTRATION]),
+        Vec::<String>::new()
+    );
 
     let disabled: AppConfig = toml::from_str(r#"recording_dir = "/tmp""#).unwrap();
-    assert!(disabled.post_pull_markers(false).is_empty());
+    assert!(disabled
+        .post_pull_markers(false, &[CRUNCHR_MARKER_REGISTRATION])
+        .is_empty());
+}
+
+#[test]
+fn post_pull_markers_is_empty_with_no_registrations() {
+    // The pure-PVR build always calls with an empty registration list —
+    // core itself names no plugin, so even an enabled `[crunchr]` section
+    // produces nothing unless something registers it.
+    let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
+    assert!(cfg.post_pull_markers(false, &[]).is_empty());
+}
+
+#[test]
+fn archiver_enabled_produces_no_marker_even_though_it_also_has_an_enabled_flag() {
+    // Regression guard for the exact behaviour-preservation risk called
+    // out in ADR 0001 (CE01): `[archiver]` has always had its own
+    // `enabled` flag but has never produced a marker file. Registering
+    // only Crunchr's marker (as the real app does) must leave an enabled
+    // `[archiver]` section producing nothing, even though both sections
+    // are `enabled = true` in this fixture.
+    let cfg: AppConfig = toml::from_str(EXISTING_CONFIG_TOML).unwrap();
+    assert!(cfg.extensions["archiver"]["enabled"].as_bool().unwrap());
+    assert_eq!(
+        cfg.post_pull_markers(false, &[CRUNCHR_MARKER_REGISTRATION]),
+        vec![".crunchr-auto".to_string()],
+        "archiver's own enabled flag must not add a marker"
+    );
+
+    // Even if a caller *did* register archiver's section, only sections
+    // actually registered can ever produce a marker — proving the
+    // generic function is data-driven, not hardcoded around Crunchr.
+    let archiver_only = cfg.post_pull_markers(false, &[("archiver", ".archiver-auto")]);
+    assert_eq!(archiver_only, vec![".archiver-auto".to_string()]);
 }

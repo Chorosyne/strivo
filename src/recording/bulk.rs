@@ -52,9 +52,16 @@ pub enum BulkCommand {
 
 /// Spawn the bulk-download manager. Returns the command sender; the daemon
 /// keeps it and forwards `ClientMessage::BulkDownload` onto it.
+///
+/// `post_pull_markers` is the caller-registered `(extensions section,
+/// marker filename)` list (see [`crate::daemon::DaemonPluginHost`]) passed
+/// through to [`crate::config::AppConfig::post_pull_markers`] for each
+/// pull — core has no plugin loaded at this point to ask directly, so the
+/// registration has to arrive as data from daemon startup.
 pub fn spawn(
     config: AppConfig,
     event_tx: mpsc::UnboundedSender<DaemonEvent>,
+    post_pull_markers: Vec<(String, String)>,
 ) -> mpsc::UnboundedSender<BulkCommand> {
     let (tx, mut rx) = mpsc::unbounded_channel::<BulkCommand>();
     // Internal clone so spawned pulls can self-deregister (Stop) without
@@ -80,6 +87,7 @@ pub fn spawn(
                     let cfg = config.clone();
                     let etx = event_tx.clone();
                     let done_tx = internal_tx.clone();
+                    let markers = post_pull_markers.clone();
                     tokio::spawn(async move {
                         run_channel_pull(
                             &cfg,
@@ -89,6 +97,7 @@ pub fn spawn(
                             playlist_id.as_deref(),
                             cancel,
                             &etx,
+                            &markers,
                         )
                         .await;
                         // Self-deregister so a later Start can re-run.
@@ -241,6 +250,7 @@ async fn run_channel_pull(
     playlist_id: Option<&str>,
     cancel: CancellationToken,
     event_tx: &mpsc::UnboundedSender<DaemonEvent>,
+    post_pull_markers: &[(String, String)],
 ) {
     let emit = |done: usize, total: usize, active: bool| {
         let _ = event_tx.send(DaemonEvent::BulkProgress {
@@ -308,13 +318,17 @@ async fn run_channel_pull(
         .and_then(|c| c.format.clone());
     let resolved = RecordingFormat::resolved(chan_override.as_ref(), &config.recording.format);
 
+    let marker_registrations: Vec<(&str, &str)> = post_pull_markers
+        .iter()
+        .map(|(section, marker)| (section.as_str(), marker.as_str()))
+        .collect();
     let opts = CatalogPullOptions {
         root: config.recording_dir.clone(),
         channel_name: channel_name.to_string(),
         format: resolved,
         cookies_path,
         force: false,
-        post_pull_markers: config.post_pull_markers(false),
+        post_pull_markers: config.post_pull_markers(false, &marker_registrations),
     };
 
     let db_path = AppConfig::data_dir().join("jobs.db");

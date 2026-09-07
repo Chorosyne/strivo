@@ -178,12 +178,21 @@ impl DaemonState {
 /// dispatcher body changes.
 pub struct DaemonPluginHost {
     pub registry: crate::plugin::registry::PluginRegistry,
+    /// `(extensions section name, marker filename)` pairs a plugin wants
+    /// [`crate::config::AppConfig::post_pull_markers`] to touch in each
+    /// landed episode directory when that section's `enabled = true`. Core
+    /// names neither the section nor the marker itself — whoever composes
+    /// plugins into the running app (`register_first_party_plugins` in the
+    /// Creator Edition binary, today) populates this before starting the
+    /// daemon. Empty in the pure-PVR build, since nothing registers into it.
+    pub post_pull_markers: Vec<(String, String)>,
 }
 
 impl DaemonPluginHost {
     pub fn new() -> Self {
         Self {
             registry: crate::plugin::registry::PluginRegistry::new(),
+            post_pull_markers: Vec::new(),
         }
     }
 }
@@ -290,6 +299,11 @@ pub async fn run_with_plugins_at(
             }
         }
     }
+    // Grab the caller-registered post-pull marker list before `host.registry`
+    // moves below; the bulk-download manager needs it (see
+    // `DaemonPluginHost::post_pull_markers`).
+    let post_pull_markers = host.post_pull_markers.clone();
+
     // W2-phase-3: share the registry with per-connection handlers so
     // PluginRpc over IPC can actually dispatch on_verb (it's idle after
     // init_all otherwise). tokio Mutex — dispatch is sync and brief.
@@ -660,7 +674,8 @@ pub async fn run_with_plugins_at(
     });
 
     // Spawn the per-channel bulk back-catalog download manager (task #71).
-    let bulk_tx = crate::recording::bulk::spawn(config.clone(), event_tx.clone());
+    let bulk_tx =
+        crate::recording::bulk::spawn(config.clone(), event_tx.clone(), post_pull_markers);
 
     // Spawn channel monitor
     let mut interval_ctl: Option<(
