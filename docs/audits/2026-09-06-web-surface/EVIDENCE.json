@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "review_date": "2026-09-06",
+  "window": "2026-07-30 through 2026-09-06. Later reports and current source take precedence over earlier claims within it; every retained prior finding recorded as still-open was re-read against current source rather than carried on the earlier report's authority. Revision 2 (same day) adds a built-artifact reproduction and the CE-series coupling survey.",
+  "method": "Static read of current source at HEAD bd17f61 with an uncommitted README.md, plus three commands actually run (recorded under fresh_tests). Route auth was assessed by a regex scan over .route(...) registrations cross-referenced against handler bodies, then by hand-reading the handlers the scan flagged. Membership in this index is NOT adjudication of every claim inside an indexed artifact: the 2026-07-30 audit is indexed and six of its findings were re-verified, but 21 of its findings were not re-examined. Source hashes fingerprint the tree so later drift is detectable — they are not evidence of line-by-line review. No HTTP request was made against a running strivo-web; every auth finding is a code-reading inference, not an executed request. Revision 2 additionally BUILT the PVR web assets (`cargo build -p strivo-web`) and inspected the emitted bundle directly — that artifact, not the stripper's source, is the evidence for S10. The source spa.js in the build worktree hashes identically to the baseline fingerprint (e46d9a08…), binding the artifact to unmodified source. The CE-series rests on reading Cargo manifests and counting cfg sites; no split was attempted, not even as a spike.",
+  "exclusions": [
+    "Credentials, API keys, session secrets and OAuth tokens — none read, none recorded, none quoted.",
+    "The user's real config.toml, keyring entries and recording library — not read; no live daemon was contacted.",
+    "target/ build artifacts and node_modules — not indexed.",
+    "The 21 findings of the 2026-07-30 audit not re-verified this pass — indexed as an artifact, not adjudicated."
+  ],
+  "artifact_count": 4,
+  "artifacts": [
+    {
+      "path": "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md",
+      "bytes": 34320,
+      "sha256": "63eb42fa24cd9d3808e61aa9bc60f1c6a02b8f1d14d9848330828aec522f2e18",
+      "shape": [
+        "executive summary",
+        "findings register (33 rows, F-01..F-39)",
+        "per-journey narratives"
+      ]
+    },
+    {
+      "path": "docs/audits/2026-09-06-web-surface/MANIFEST.md",
+      "bytes": 21060,
+      "sha256": "11ace2ad3c598072fb23967bc20507052ed920ce6b6ab28e7da19a7954086c23",
+      "shape": [
+        "assessment",
+        "evidence boundary",
+        "pipeline walked",
+        "register",
+        "supersession map",
+        "dispatch order",
+        "fresh verification and limitations"
+      ]
+    },
+    {
+      "path": "target/debug/build/strivo-web-*/out/assets/spa.js (emitted PVR bundle; gitignored build output)",
+      "bytes": 701174,
+      "sha256": "666ec4b15c71e7a72d87fa8062551ef063b82d543f10440784c543b819f7be0b",
+      "shape": [
+        "15111 lines (vs 15448 in source)",
+        "Creator UI symbols present",
+        "5 stripped-API call sites, 0 definitions"
+      ]
+    },
+    {
+      "path": "docs/adr/0001-creator-edition-repository-split.md (branch remediation/creator-split)",
+      "bytes": 18407,
+      "sha256": "e03b92cf966ff1efa59dd2b789a821f1910a4f46a0cd346d805c2d241e812d3f",
+      "shape": [
+        "Context",
+        "Decision (CE01-CE06)",
+        "Consequences",
+        "Roads not taken (6 rejected alternatives)"
+      ]
+    }
+  ],
+  "source_fingerprints": [
+    {
+      "path": "crates/strivo-web/src/auth.rs",
+      "sha256": "27a46a42cc97151ba5b416b48a19935b34db6543de294eb2aeb031c2e8c33b76"
+    },
+    {
+      "path": "crates/strivo-web/src/csrf.rs",
+      "sha256": "cd4c7935460c4a02288ea34f6328d69ea01acbdaef975f9e84e946b2144166a5"
+    },
+    {
+      "path": "crates/strivo-web/src/server.rs",
+      "sha256": "edfb95344586a67ab966964d449484902fc3db0ed746ffd2087d3cb7ec9c2c02"
+    },
+    {
+      "path": "crates/strivo-web/src/routes/api.rs",
+      "sha256": "c72387aaa0ab5650dac1df876d70be2da74433af2312fda4420892e59eccac4c"
+    },
+    {
+      "path": "crates/strivo-web/src/routes/login.rs",
+      "sha256": "189c1b933eb3dc5d11b345e91e7c9fc8e4526d3de424747efb76de6b85b77610"
+    },
+    {
+      "path": "crates/strivo-web/src/routes/plugins.rs",
+      "sha256": "3edcf21a0d699d422e97046036b3e84f85ee8e9aa1a48dd2176208ea1b7f8bfd"
+    },
+    {
+      "path": "crates/strivo-web/src/routes/recordings.rs",
+      "sha256": "fc947c3dada8689bcb9d1a37e15907b89c12ccf4176a277e4dd60d0ab03d1cb5"
+    },
+    {
+      "path": "crates/strivo-web/src/routes/licence.rs",
+      "sha256": "0b4756ea25ec25197c0484237175a2860e320751674e18f4674e514d5794ee9a"
+    },
+    {
+      "path": "crates/strivo-web/tests/routes.rs",
+      "sha256": "ee906486d47324bee2f73bbe9940d63fef76057a671e7a4b8e2825baf66c0ed9"
+    },
+    {
+      "path": "crates/strivo-web/e2e/playwright.config.ts",
+      "sha256": "fbab75b083dfebd12453b6855541fb5c46cc8c5894454c7f32356547b05e4ac4"
+    },
+    {
+      "path": "crates/strivo-web/e2e/mock-server.mjs",
+      "sha256": "cf7539322da5915dab5f676a2c9fab6631e075883c379d7d7fabe2cfbe89913f"
+    },
+    {
+      "path": "crates/strivo-web/assets/spa.js",
+      "sha256": "e46d9a0888b0419eb71d0b9d188f428244551a8b25e2c47b8f15ab5afdaa0381"
+    },
+    {
+      "path": "crates/strivo-web/assets/spa.css",
+      "sha256": "91090ceb8ffd5737f55ba10cb77f1ac325c3a533fa030231d7feb480a5879ffa"
+    },
+    {
+      "path": "crates/editor/src/lib.rs",
+      "sha256": "fae9fae7f2093da6624b2d52c01c976f2fa7e2698ba9bea9048bde4007bde764"
+    },
+    {
+      "path": "src/pipeline/executor.rs",
+      "sha256": "894a86b3ff6fa64ab71a035ca706fdecc447913c992ba62d7d6c7ad631ab8ee3"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "61f5b25948c37327a7a28dc3a318b5e137b12d0ffc6700d23076f8dd5c4ae82e"
+    },
+    {
+      "path": "crates/strivo-web/build.rs",
+      "sha256": "da915df98135896ab130d6c0311f18fd2f4dbdfc4a7b120a4e6b4fe20d9b1b21"
+    },
+    {
+      "path": "src/recording/catalog.rs",
+      "sha256": "47b21299913494f7ebf9e7ba7ccc6a2eee9e3bb9d2cac6b5aabf90864b09f911"
+    },
+    {
+      "path": "src/config/mod.rs",
+      "sha256": "e3c3f064841baf33a22a2ed8a9b79a75a96d0c721bcb212f75d62c47a6d492d4"
+    },
+    {
+      "path": "src/recording/bulk.rs",
+      "sha256": "91aef2f6535aedb342de2457b657683813ff0973767e73828c559551d926bdb7"
+    },
+    {
+      "path": "crates/strivo-web/Cargo.toml",
+      "sha256": "26009be081351ae2ac635a2b3e8700b08c7b810e4aed4d7c2728327236bbe652"
+    },
+    {
+      "path": "crates/strivo-plugins/Cargo.toml",
+      "sha256": "6971eaceb30003933e1757251c800ed756d9901fc11f35601f0c494148b5cb92"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "9586be09cc9d21f4f28285f359f8c1bd6b7adef00993ce8adbe4e7f88f4b7a24"
+    }
+  ],
+  "fresh_tests": {
+    "note": "Two suites below overlap in the strivo-web unit tests. Their totals MUST NOT be summed. The one ignored test is an open acceptance gap, not a pass.",
+    "runs": [
+      {
+        "command": "cargo test",
+        "scope": "workspace default-members (strivo-core, strivo-bin, strivo-web), debug profile",
+        "result": "63 passed, 0 failed, 1 ignored, across 5 test binaries",
+        "ignored_detail": "crates/research/src/lib.rs:1844 — release-scale storage benchmark, run explicitly. Open acceptance gap.",
+        "proves": "The PVR build's unit tests pass.",
+        "does_not_prove": "Nothing about HTTP route authentication — the router test file constructs an empty Router (see S03)."
+      },
+      {
+        "command": "cargo test -p strivo-web --features creator",
+        "scope": "strivo-web only, Creator Edition, debug profile",
+        "result": "74 passed, 0 failed, 0 ignored (62 + 4 + 8 across three binaries)",
+        "proves": "The Creator web crate's unit tests pass.",
+        "does_not_prove": "Route auth; overlaps the previous run and must not be added to it."
+      },
+      {
+        "command": "cargo check -p strivo-bin --features creator",
+        "result": "clean, finished in 14.21s",
+        "proves": "The Creator build compiles, so the S01 handler is really built rather than dead configuration.",
+        "does_not_prove": "Any runtime behaviour."
+      },
+      {
+        "command": "cargo build -p strivo-web  (then direct inspection of target/debug/build/strivo-web-*/out/assets/spa.js)",
+        "scope": "PVR edition asset bundle, debug profile",
+        "result": "15111 lines emitted from 15448 source lines (337 stripped, 2.2%). PRO_PANES, renderProApp, renderCrunchr, renderUpgradeCard and PLUGIN_ROUTE_REDIRECTS all PRESENT. `case \"studio\"` dispatchable at built line 709. API.pluginRpc (built lines 10156, 11734), API.setArchiverTandem (13700, 13735) and API.chatDensityCompute (9247) present as call sites with zero surviving definitions.",
+        "proves": "S10: the PVR bundle ships Creator UI whose API methods were stripped from under it.",
+        "does_not_prove": "That the resulting TypeError was observed at runtime — it is predicted from 5 call sites with 0 definitions, not witnessed in a browser. Debug profile only; the release build uses the same build.rs path but was not separately confirmed."
+      },
+      {
+        "command": "cargo test -p strivo-web --all-targets; cargo clippy -p strivo-web --all-targets -- -D warnings; cargo fmt --all -- --check",
+        "scope": "R05 implementation on branch remediation/web-perf, commit 559b726",
+        "result": "56 passed, 0 failed (55 before, plus server::tests::jobs_db_handle_is_shared_across_calls); clippy clean; fmt clean",
+        "proves": "The shared jobs.db handle is wired, compiles clean, and two accessor calls return one shared PersistDb (asserted by pointer identity).",
+        "does_not_prove": "Any latency or throughput improvement. R05's stated rationale is performance and NO measurement was taken; it remains ready_for_verification, not closed."
+      },
+      {
+        "command": "cd crates/strivo-web/e2e && npm test   (branch remediation/spa-ux, run independently by the reviewer)",
+        "scope": "Playwright/Chromium against e2e/mock-server.mjs",
+        "result": "Run 1 under concurrent cargo build load: 60 passed, 2 failed (player-controller.spec.ts:192 and :323). Isolated re-runs of that spec: 18 passed twice (serial and parallel). Full re-run: 62 passed, 0 failed.",
+        "proves": "The four spa-ux implementations and their new assertions pass; the two failures are load-induced flakiness in pre-existing tests, not a regression.",
+        "does_not_prove": "Anything about the real axum server — this suite drives a Node mock (S04). Also does not reproduce the agent's failing-before checks, which remain attributed to it."
+      },
+      {
+        "command": "cargo test -p strivo-web  /  cargo test -p strivo-web --features creator --test routes -- --nocapture   (branch remediation/web-auth, run independently by the reviewer)",
+        "scope": "Real axum router built in-process via the new build_router + test_state, no live daemon",
+        "result": "PVR: 55 unit passed; tests/routes 12 passed / 1 failed. Creator: tests/routes 15 passed / 2 failed. The failures are the two S08 sweeps, red BY DESIGN because they found real gaps. Sweep output named exactly: GET /api/v1/licence/status -> 200, POST /api/v1/licence/refresh -> 503, POST /api/v1/auth/logout -> 200, GET /api/v1/pipelines/chains -> 200, GET /api/v1/marketplace/catalog -> 200. Plus 49 registrations (13 always + 36 creator) reported 'inconclusive' at 422/400.",
+        "proves": "S01/S02/S06/S07 are gated on the real router; and S13/S14/S15/S16 exist.",
+        "does_not_prove": "Anything about a running server over a socket (S04 stands), and nothing about the 49 inconclusive routes in either direction."
+      },
+      {
+        "command": "cargo test -p strivo-web; cargo test -p strivo-editor   (branch remediation/hardening, reviewer, after disk recovery)",
+        "result": "56 passed / 0 failed and 23 passed / 0 failed (including tests::failed_render_leaves_no_scratch_directory)",
+        "proves": "S05 and R06 compile and their tests pass under independent execution.",
+        "does_not_prove": "The failing-before state for R06 — that remains the agent's attributed claim."
+      },
+      {
+        "command": "MUTATION TEST by the reviewer: neuter require_auth's public-route branch, rerun both S08 sweeps, restore",
+        "result": "Neutered: s08_always_routes_require_auth and s08_creator_routes_require_auth both FAILED, with the 49 body-shape 'inconclusive' results reappearing. Restored: both pass, working tree clean (0 files changed). Second mutation — wrongly allowlisting /api/v1/channels — did NOT fail the sweep, because that handler's own check_key still rejects the request.",
+        "proves": "The S08 invariant is non-vacuous: it genuinely guards the S16 middleware.",
+        "does_not_prove": "It does not guard KNOWN_PUBLIC itself for routes that also carry a handler check — defense in depth absorbs that error."
+      },
+      {
+        "command": "cargo build -p strivo-web and --features creator in isolated CARGO_TARGET_DIRs, then direct measurement of both emitted bundles; plus a mutation test of e2e/check-pvr-bundle.mjs  (branch remediation/docs-edition, reviewer)",
+        "result": "PVR bundle 10,791 lines from 15,600 source (30.8% stripped, was 2.2%); all named Creator symbols 0 occurrences; Creator bundle byte-identical to source (cmp -s) with research modules present and absent from PVR. Guard mutation: dangling call reported with file:line and exit 1; restored, 'checked 174 names' and exit 0. cargo test -p strivo-web 63 passed; e2e 71 passed.",
+        "proves": "S10 is fixed in the artifact a PVR user is actually served, and the guard against its recurrence is non-vacuous and enforced via npm pretest.",
+        "does_not_prove": "The build.rs copy of the check is never run by cargo test; the Playwright edition-gating spec drives source, not the stripped bundle."
+      }
+    ],
+    "route_auth_scan": {
+      "method": "Python regex over .route(\"path\", method(handler)) registrations in crates/strivo-web/src/routes/*.rs, cross-referenced against each handler body for a call to authed/check_key/check_dual.",
+      "coverage": "68 of 153 total .route(...) registrations repo-wide were matched; routes/api.rs yielded 26 of its 53. Roughly 85 registrations were checked by no method.",
+      "flagged": 11,
+      "hand_read": 6,
+      "confirmed_real_gaps": [
+        "S01",
+        "S02",
+        "S06",
+        "S07"
+      ],
+      "intentionally_public": [
+        "/api/v1/health",
+        "/ (SPA shell)",
+        "/assets/{*path}",
+        "the WebSub callback",
+        "/api/v1/auth/login"
+      ],
+      "limits": "Incomplete by construction. A negative result from this scan is not evidence a route is gated. Tracked as S08."
+    }
+  },
+  "retained_receipts": [
+    {
+      "source": "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md",
+      "claim": "33 findings, 0 P0, from a static read-only review with no build and no live measurement (the report's own stated method).",
+      "superseded_by": "Six findings confirmed implemented and six confirmed still open (R01-R06) by fresh source reads this session; the other 21 retain their original status unexamined."
+    },
+    {
+      "source": "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md",
+      "claim": "F-32 — synchronous ffmpeg/ffprobe shelled from async fn bodies in Creator render paths.",
+      "superseded_by": "Confirmed implemented: probe_duration_async (routes/plugins.rs:589-595), clipper_extract (:326-329), editor_render (:1833-1841) now use spawn_blocking."
+    },
+    {
+      "source": "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md",
+      "claim": "F-37 — ResourceRegistry::acquire has no timeout; a wedged stage holds its lock forever.",
+      "superseded_by": "Confirmed implemented: acquire_timeout field plus tokio::time::timeout at src/pipeline/executor.rs:811, with tests at :1169-1187."
+    },
+    {
+      "source": "delegated agent report, branch remediation/hardening",
+      "claim": "S05 and R06 implemented; agent reports its tests pass and reports having confirmed the R06 test fails when the Drop guard is no-oped.",
+      "superseded_by": "Reviewer verified both diffs by inspection and confirmed the mechanisms are correct and correctly scoped. The reviewer did NOT re-run the branch's tests (build artifacts deleted to recover a 100%-full filesystem), so the passing-test and failing-before claims remain attributed to the agent, not independently reproduced. Both items are ready_for_verification, not closed."
+    },
+    {
+      "source": "delegated agent report, branch remediation/spa-ux",
+      "claim": "All four findings fixed with matching Playwright coverage; each new test confirmed to fail before its fix by stashing the changes; 62 tests pass.",
+      "superseded_by": "Reviewer independently reproduced the 62-passing state and confirmed the agent stayed within its file lane. The stash-and-fail (failing-before) procedure was NOT repeated by the reviewer and remains the agent's attributed claim. The agent also reported DESIGN.md missing; the reviewer established the file exists but is untracked, so the worktree genuinely lacked it — filed as S11."
+    },
+    {
+      "source": "delegated agent report, branch remediation/web-auth",
+      "claim": "S01/S02/S06/S07/S03/S08 addressed; two sweep tests deliberately left failing as real findings; seven additional unauthenticated routes reported rather than fixed as out of brief scope.",
+      "superseded_by": "Reviewer independently reproduced both sweep failures and their exact output, and confirmed by source reading that pipelines_chains_save and licence activate are unauthenticated (the sweep could only mark them inconclusive). The agent's decision to leave red tests rather than weaken them was correct, but leaves the branch unmergeable against a CI that gates on green — resolved under S08, not by ignoring the tests."
+    }
+  ],
+  "unperformed": [
+    "No HTTP request of any kind was made against a running strivo-web. The S01 exploit path (a bogus X-Api-Key satisfying csrf_guard, reaching a handler that never validates it) is a code-reading inference and was NOT executed.",
+    "No production/release build; both cargo runs were debug profile, whereas CI runs --release.",
+    "No full `cargo test --workspace --release --all-targets` as CI performs; only default-members and the Creator strivo-web crate were run.",
+    "No clippy or fmt run this session.",
+    "No live daemon was started; no real recording, capture, finalize or playback was exercised.",
+    "No browser session, no Playwright run, no accessibility tooling — R03 and R04 rest on source reads, and their closure explicitly requires keyboard-driven browser assertions this audit did not perform.",
+    "No timing measurement for S05; the constant-time claim is argued from the primitive, not measured.",
+    "No performance measurement for R05; no before/after figures exist.",
+    "21 of the 33 findings in the 2026-07-30 audit were not re-verified and are neither confirmed nor refuted here.",
+    "The capture, storage-write, SSE-streaming, scheduling and packaging pipeline stages were not traced end to end; five stage-table rows carry no IDs for that reason, not because they were found clean.",
+    "No dependency/supply-chain audit (cargo audit, npm audit) despite HEAD being a dependency-security commit.",
+    "No platform coverage beyond Linux; the Windows cross-check in CI was not run locally.",
+    "No independent semantic adjudication of the README rewrite's claims (S09).",
+    "S10's predicted runtime TypeError was NOT observed in a browser — it is inferred from 5 surviving call sites with 0 definitions in the built bundle. Confident, but not witnessed.",
+    "No release-profile build of the PVR bundle; S10 rests on a debug build (same build.rs path, not separately confirmed).",
+    "No latency or throughput measurement for R05, whose entire rationale is performance.",
+    "No repo split was attempted for the CE series, not even a spike, so the implied sequencing and effort are unvalidated.",
+    "spa.css was checked only for @creator marker COUNT (zero); its actual Creator-specific rule content was not enumerated, so the scale of CE03's styling leak is unquantified.",
+    "The count of 35 Creator crates is taken from the creator feature list in crates/strivo-web/Cargo.toml; no per-crate audit of what each contains was performed.",
+    "The filesystem reached 100% full during this session and build artifacts were deleted to recover; no verification run after that point used a from-scratch build.",
+    "The failing-before (stash-and-rerun) checks for R01-R04 were not repeated by the reviewer; only the passing-after state was independently reproduced.",
+    "No visual or design-token review of the spa-ux changes against DESIGN.md beyond confirming the focus-ring colour matches DESIGN.md:92; the rest of the added CSS was not audited against the spec.",
+    "R02's product decision (a localStorage JSON textarea in place of an asset-library UI) was not evaluated against user needs — it is surfaced for the operator, not endorsed.",
+    "The 49 route registrations the S08 sweep marks 'inconclusive' (422/400 before the auth check) were NOT checked by any other method; they are proven neither gated nor ungated.",
+    "The reviewer did not re-run the before state for the web-auth fixes; failing-before figures are the agent's attributed claim.",
+    "No decision has been taken on the red-branch problem: two sweep tests fail by design and CI gates on `cargo test --workspace`, so remediation/web-auth cannot merge as-is.",
+    "The real-server e2e lane has NOT been run inside GitHub Actions — only locally against the compiled binary. CI-specific path, disk or permission problems cannot be ruled out until it runs there once.",
+    "CE01's remaining 33 crunchr/archiver hits were not attempted; the files that pin them were off-limits by this audit's own dispatch split.",
+    "ADR 0001 is Status: Proposed. No architectural decision in it has been accepted by the operator.",
+    "The docs-edition workstream (S09, S10, S11) was still running when this revision was written; none of its results are recorded here.",
+    "The build.rs #[cfg(test)] bundle check is not executed by `cargo test` (Cargo does not run build-script tests); only the npm pretest copy is enforced, so a contributor running cargo alone gets no protection.",
+    "The new Playwright edition-gating spec exercises the source SPA with a mocked creator_enabled flag, not the stripped PVR bundle.",
+    "S17's user-visible effect (a PVR chat page rendering an error) was traced through the source's catch handlers, not observed in a running PVR build.",
+    "The README rewrite's claims were checked against source only; no documented behaviour was executed to confirm it works as described."
+  ],
+  "local_artifact_notice": "The PVR bundle above is a gitignored build output produced in a temporary worktree at /home/revelri/Dev/revoy/strivo-wt/web-perf. A fresh clone will not have it; it is reproducible by running `cargo build -p strivo-web` at the recorded source revision, and the source spa.js it was built from is fingerprinted below (e46d9a08…). Identity is preserved here, not content. Durable archival would be required before calling this evidence independently reproducible without a rebuild."
+}
