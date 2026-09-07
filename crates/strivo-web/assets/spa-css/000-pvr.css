@@ -173,7 +173,8 @@ textarea:focus {
     "topbar topbar"
     "leftrail content";
   grid-template-rows: 56px 1fr;
-  grid-template-columns: 260px 1fr;
+  /* 260px rail + 2x16px horizontal inset for the floating card. */
+  grid-template-columns: 292px 1fr;
   height: 100vh;
 }
 
@@ -426,16 +427,18 @@ th[data-sort]:hover {
   align-self: center;
 }
 
-/* Left rail = channel list (TUI-style). Floats as a rounded card, inset
-   from the topbar and viewport bottom by `lg` (1.5rem / 24px) — roughly two
-   rows of the rail's own .ch-row vertical rhythm (0.4rem padding × 2) —
-   rather than welded flush top-to-bottom. Scroll clipping and the
-   border-radius live on the same box, so the channel list and its
+/* Left rail = channel list. Floats as a rounded card rather than a flush
+   full-height column: inset `lg` (24px) top and bottom — two rows of the
+   rail's own .ch-row rhythm — and `md` (16px) left and right so it reads as
+   a card sitting on the background instead of welded to the viewport edge.
+   Spacing is in px, not rem: `html, body` set font-size 14px, so 1.5rem
+   would be 21px and miss DESIGN.md's 8px-based scale. Scroll clipping and
+   the border-radius live on the same box, so the channel list and its
    scrollbar are clipped to the rounded corners instead of spilling square
    over them. */
 .leftrail {
   grid-area: leftrail;
-  margin: 1.5rem 0;
+  margin: 24px 16px;
   background: rgba(30, 40, 54, 0.55);
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
@@ -1171,7 +1174,7 @@ button.sm {
   }
   .leftrail {
     max-height: 35vh;
-    margin: 1rem;
+    margin: 16px;
   }
 }
 
