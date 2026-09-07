@@ -7,6 +7,11 @@ const PORT = 8199;
 
 export default defineConfig({
   testDir: "./tests",
+  // Clears the mock server's module-level stores (abRenderStore,
+  // submixStore) before each run, so a server left running from an
+  // earlier `npm test` (see webServer.reuseExistingServer below) can't
+  // leak state into this one. See global-setup.mjs.
+  globalSetup: "./global-setup.mjs",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

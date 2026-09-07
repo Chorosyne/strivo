@@ -303,6 +303,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Test-only control endpoint: clears every module-level mutable store.
+  // playwright.config.ts leaves the server running across `npm test`
+  // invocations (reuseExistingServer outside CI), so without this a
+  // recording's saved A/B render or sub-mix state from a previous run
+  // would leak into the next one via these process-lifetime Maps.
+  // global-setup.mjs calls this once before each test run.
+  if (path === "/__test__/reset" && req.method === "POST") {
+    abRenderStore.clear();
+    submixStore.clear();
+    return json(res, 200, { status: "ok" });
+  }
+
   // API surface.
   if (path.startsWith("/api/v1/")) {
     const p = path.slice("/api/v1".length);
