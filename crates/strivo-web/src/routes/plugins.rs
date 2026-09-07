@@ -3627,6 +3627,12 @@ fn count(conn: &Connection, sql: &str) -> i64 {
     conn.query_row(sql, [], |r| r.get(0)).unwrap_or(0)
 }
 
+/// Creator Edition's own Pro plugin slugs. Core's entitlement gate has no
+/// opinion on plugin identity (see `strivo_core::licence::gate`'s module
+/// doc / ADR 0001 CE06) — this is the one place in Creator that names
+/// which first-party plugins are paid.
+pub(crate) const PRO_PLUGINS: &[&str] = &["crunchr", "archiver", "viewguard", "insights"];
+
 /// Returns Err(402) when `name` is a Pro plugin and this machine is not
 /// entitled. Free plugins always Ok. The check is centralised here so
 /// every data route shares the same gate without forgetting one.
@@ -3635,7 +3641,7 @@ fn count(conn: &Connection, sql: &str) -> i64 {
 // add an indirection at every `gate_pro(name)?` call site.
 #[allow(clippy::result_large_err)]
 fn gate_pro(name: &str) -> Result<(), axum::response::Response> {
-    if strivo_core::licence::gate::is_entitled(name) {
+    if strivo_core::licence::gate::is_entitled(name, PRO_PLUGINS) {
         return Ok(());
     }
     Err(Problem::payment_required(format!(
@@ -3657,7 +3663,7 @@ async fn index(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
     // unlocks. We still include locked Pro plugins in the response so
     // the SPA can render them with a lock badge + upgrade CTA — hiding
     // them entirely would make the upgrade card feel disconnected.
-    let pro_entitled = |name: &str| strivo_core::licence::gate::is_entitled(name);
+    let pro_entitled = |name: &str| strivo_core::licence::gate::is_entitled(name, PRO_PLUGINS);
     let crunchr_ok = pro_entitled("crunchr");
     let archiver_ok = pro_entitled("archiver");
     let viewguard_ok = pro_entitled("viewguard");

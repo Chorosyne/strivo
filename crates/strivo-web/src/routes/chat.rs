@@ -8,9 +8,8 @@
 //! PRIVMSG (browsers can't open raw TCP sockets, so sending goes through the
 //! daemon's process instead).
 //!
-//! Neither route is Creator/Pro-gated — `"chat"` isn't in the Pro plugin
-//! set registered with `strivo_core::licence::gate::set_pro_plugins` —
-//! and the SPA already treats
+//! Neither route is Creator/Pro-gated — `"chat"` isn't in Creator's Pro
+//! plugin set (`routes::plugins::PRO_PLUGINS`) — and the SPA already treats
 //! `chat`/`viewer` as free routes: they're deliberately absent from
 //! `CREATOR_ROUTES` in spa.js, and their `API.chatRooms`/`API.chatSend`
 //! methods sit outside any `@creator-start` block, so both survive PVR
@@ -37,6 +36,14 @@ fn authed(headers: &HeaderMap, state: &AppState) -> Result<(), StatusCode> {
     crate::routes::login::check_dual(headers, &state.api_key, &state.session_secret)
 }
 
+// `routes::plugins` (the one place that names Creator's Pro plugin slugs)
+// is Creator-only; a PVR build has no Pro plugins at all, so its list is
+// empty rather than naming any of them here too.
+#[cfg(feature = "creator")]
+const CHAT_PRO_PLUGINS: &[&str] = crate::routes::plugins::PRO_PLUGINS;
+#[cfg(not(feature = "creator"))]
+const CHAT_PRO_PLUGINS: &[&str] = &[];
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/plugins/chat/rooms", get(chat_rooms))
@@ -51,10 +58,10 @@ async fn chat_rooms(headers: HeaderMap, State(state): State<AppState>) -> impl I
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    // "chat" isn't in the registered Pro plugin set, so this always passes
-    // today; kept so a future addition of "chat" to that set (unlikely —
-    // see the module doc) would apply here too instead of silently not.
-    if !strivo_core::licence::gate::is_entitled("chat") {
+    // "chat" isn't in the Pro plugin set, so this always passes today;
+    // kept so a future addition of "chat" to that set (unlikely — see the
+    // module doc) would apply here too instead of silently not.
+    if !strivo_core::licence::gate::is_entitled("chat", CHAT_PRO_PLUGINS) {
         return Problem::payment_required(
             "chat is a Strivo Pro plugin — activate or start a 3-day trial from the Plugins page.",
         )
