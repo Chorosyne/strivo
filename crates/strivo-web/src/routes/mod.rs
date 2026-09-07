@@ -5,6 +5,13 @@ pub mod assets;
 // the module doc for why it isn't folded into `plugins`.
 pub mod chat;
 pub mod events;
+// Strivo Pro licence routes (status/activate/trial/refresh) — entitlement is
+// a Creator Edition product concept (ADR 0002, closing CE06); the PVR
+// edition has no notion of "Pro" at all, so this module and its router are
+// Creator-only. Compiling it out of a PVR build (rather than leaving it
+// mounted-but-inert) keeps licence/tier vocabulary out of the PVR surface
+// entirely, matching the monorepo's invisibility bar.
+#[cfg(feature = "creator")]
 pub mod licence;
 pub mod login;
 // Multi-stream tile layout for the watch player. Core (single + multi view),

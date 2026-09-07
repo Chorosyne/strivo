@@ -185,7 +185,6 @@ pub fn build_router(state: AppState) -> Router {
     let guarded = Router::new()
         .merge(routes::events::router())
         .merge(routes::api::router())
-        .merge(routes::licence::router())
         .merge(routes::recordings::router())
         .merge(routes::login::router())
         .merge(routes::multistream::router())
@@ -194,10 +193,14 @@ pub fn build_router(state: AppState) -> Router {
         // send) are core, every-edition functionality, not Creator-tier —
         // see routes::chat's module doc (S17).
         .merge(routes::chat::router());
-    // Creator Edition mounts the rest of the plugin/tooling routes; the PVR
-    // build omits them.
+    // Creator Edition mounts the rest of the plugin/tooling routes, plus
+    // Pro licence status/activate/trial/refresh (ADR 0002 / CE06 — "Pro" is
+    // a Creator Edition concept the PVR build has no notion of at all); the
+    // PVR build omits both.
     #[cfg(feature = "creator")]
-    let guarded = guarded.merge(routes::plugins::router());
+    let guarded = guarded
+        .merge(routes::plugins::router())
+        .merge(routes::licence::router());
     let guarded = guarded
         // S16: authenticate ahead of body/query extraction. `route_layer`
         // (unlike `layer`) wraps only routes already registered on `guarded`

@@ -147,6 +147,10 @@ async fn s02_recording_play_rejects_bogus_key() {
     );
 }
 
+// Licence routes moved behind `creator` (ADR 0002 / CE06): entitlement is a
+// Creator Edition concept, so this route doesn't exist to test in a PVR
+// build.
+#[cfg(feature = "creator")]
 #[tokio::test]
 async fn s06_licence_trial_rejects_bogus_key() {
     let status = send_bogus_key(app(), "post", "/api/v1/licence/trial").await;
@@ -271,10 +275,6 @@ const ALWAYS_ROUTES: &[(&str, &str)] = &[
     ("post", "/api/v1/vods/download"),
     ("post", "/api/v1/channels/resolve"),
     ("get", "/events"),
-    ("get", "/api/v1/licence/status"),
-    ("post", "/api/v1/licence/activate"),
-    ("post", "/api/v1/licence/trial"),
-    ("post", "/api/v1/licence/refresh"),
     // S15: gated (not KNOWN_PUBLIC) even though it only clears the
     // caller's own cookies — no reason for an unauthenticated caller to
     // reach it, and require_auth's allowlist doesn't special-case it.
@@ -295,10 +295,16 @@ const ALWAYS_ROUTES: &[(&str, &str)] = &[
 ];
 
 /// Creator Edition only (`--features creator`): api.rs's pipeline/
-/// marketplace/archiver/capabilities block plus the whole of
-/// `routes::plugins`.
+/// marketplace/archiver/capabilities block, the whole of `routes::plugins`,
+/// and Pro licence status/activate/trial/refresh (ADR 0002 / CE06 — moved
+/// out of ALWAYS_ROUTES: entitlement is a Creator Edition concept, so a PVR
+/// build no longer compiles or mounts it at all).
 #[cfg(feature = "creator")]
 const CREATOR_ROUTES: &[(&str, &str)] = &[
+    ("get", "/api/v1/licence/status"),
+    ("post", "/api/v1/licence/activate"),
+    ("post", "/api/v1/licence/trial"),
+    ("post", "/api/v1/licence/refresh"),
     ("get", "/api/v1/pipelines/dag"),
     ("get", "/api/v1/pipelines/runs"),
     ("post", "/api/v1/pipelines/runs"),
