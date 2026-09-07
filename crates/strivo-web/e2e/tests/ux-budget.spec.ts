@@ -117,13 +117,19 @@ async function tinyText(page: Page): Promise<Offender[]> {
   }, MIN_FONT_PX);
 }
 
-async function visibleDialogs(page: Page): Promise<number> {
-  return page.evaluate(() =>
-    [...document.querySelectorAll("[role=dialog], .app-modal, .kbd-help, #cmd-palette, #cmdk")].filter((el) => {
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
-    }).length,
-  );
+// Outermost visible overlay containers only — a palette's inner
+// [role=dialog] must not count twice, but two stacked palettes must.
+async function visibleDialogs(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const sel = "[role=dialog], .app-modal.open, .kbd-help.open, #cmd-palette, #cmdk";
+    return [...document.querySelectorAll(sel)]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0 || getComputedStyle(el).visibility === "hidden") return false;
+        return !el.parentElement?.closest(sel);
+      })
+      .map((el) => `${el.tagName.toLowerCase()}#${el.id}.${[...el.classList].join(".")}`);
+  });
 }
 
 for (const route of ROUTES) {
@@ -141,13 +147,13 @@ for (const route of ROUTES) {
     test("Ctrl+K opens exactly one overlay and Escape closes it", async ({ page }) => {
       await open(page, route);
       await page.keyboard.press("Control+k");
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(500);
       const opened = await visibleDialogs(page);
       await page.keyboard.press("Escape");
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(500);
       const closed = await visibleDialogs(page);
-      report("overlays after Ctrl+K (want 1)", opened === 1 ? [] : [{ path: `${opened} overlays` }]);
-      report("overlays after Escape (want 0)", closed === 0 ? [] : [{ path: `${closed} overlays` }]);
+      report("overlays after Ctrl+K (want 1)", opened.length === 1 ? [] : opened.map((path) => ({ path })));
+      report("overlays after Escape (want 0)", closed.map((path) => ({ path })));
     });
   });
 }
