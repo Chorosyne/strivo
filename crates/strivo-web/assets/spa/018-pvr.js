@@ -1311,6 +1311,12 @@ function reconcilePlayerChatRail(streams) {
   }
 }
 
+// Stage size handed to /multistream/tiles. Fixed for now; the layout lane
+// replaces this with a measurement of the real stage.
+function stageGeometry() {
+  return { w: 800, h: 450 };
+}
+
 function getNodeAt(layout, path) {
   let n = layout;
   for (const step of pathParts(path)) n = n[step];
@@ -1467,7 +1473,7 @@ async function renderWatch() {
   try {
     // Backend still drives 'which live streams are present + embed URLs';
     // we ignore its tile geometry and lay things out via the layout tree.
-    resp = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
+    resp = await API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host);
   } catch (e) {
     watchContent.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
@@ -1498,7 +1504,7 @@ async function renderWatch() {
   playerState.refreshTimer = setInterval(async () => {
     if (document.hidden) return;
     try {
-      const r = await API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host);
+      const r = await API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host);
       const byId = new Map((r.streams || []).map((s) => [s.stream_id, s]));
       const have = new Set(streams.map((s) => s.stream_id));
       const got = new Set([...byId.keys()]);
@@ -1616,7 +1622,7 @@ function wireTileHandlers(tile, stage, watch, streams) {
       // this the dropped tile renders the "Stream offline" pill even
       // though the channel is fine — the bug the user kept hitting.
       if (!streams.find((x) => x.stream_id === parsed.id)) {
-        API.multistreamTiles(800, 450, { mode: "auto" }, window.location.host)
+        API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host)
           .then((resp) => {
             const fresh = resp.streams || [];
             playerState.chatRailLastStreams = fresh;
@@ -1662,70 +1668,7 @@ function wireTileHandlers(tile, stage, watch, streams) {
     });
   }
 
-  // Solo / unsolo / fs / remove buttons.
-  tile.querySelector(".ms-solo")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    soloTileAt(tile.dataset.path || "");
-    paintPlayerStage(watch, streams);
-  });
-  tile.querySelector(".ms-unsolo")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    muteAllTiles();
-    paintPlayerStage(watch, streams);
-  });
-  // Per-tile level. Applied straight to the controller so dragging the
-  // slider is audible immediately rather than after a repaint.
-  const vol = tile.querySelector(".ms-vol");
-  if (vol) {
-    vol.addEventListener("click", (e) => e.stopPropagation());
-    vol.addEventListener("input", () => {
-      const path = tile.dataset.path || "";
-      const v = Number(vol.value) / 100;
-      setTileVolumeAt(path, v);
-      const key = contentKeyOf(getNodeAt(playerState.layout, path));
-      const ctl = key && playerState.controllers.get(key);
-      if (ctl) {
-        try {
-          ctl.setVolume(v);
-          ctl.setMuted(v === 0);
-        } catch (_) {
-          /* advisory */
-        }
-      }
-      // Raising a tile focuses it, so chat and focus-aware quality follow
-      // what you are actually listening to.
-      if (v > 0) playerState.soloPath = path;
-    });
-  }
-  tile.querySelector(".ms-fs")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    try {
-      if (document.fullscreenElement) document.exitFullscreen?.();
-      else tile.requestFullscreen?.();
-    } catch (err) {
-      Toast.error(`Fullscreen denied: ${err && err.message || err}`);
-    }
-  });
-  // Press-to-play on a paused tile. Starting one tile does not start the
-  // wall — that is the whole point of opening paused.
-  tile.querySelector(".ms-play")?.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const path = e.currentTarget.dataset.path || "";
-    setTilePlaying(getNodeAt(playerState.layout, path), true);
-    // Playing state is not part of the layout tree, so the shape-diffing
-    // patch path cannot see this change — force the full paint. That is
-    // cheap now: the repaint re-parents existing players instead of
-    // rebuilding them, so starting one tile does not disturb the others.
-    playerState.lastPaintedLayout = null;
-    paintPlayerStage(watch, streams);
-  });
-  tile.querySelector(".ms-remove")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    playerState.layout = setNodeAt(playerState.layout, tile.dataset.path || "", _slot());
-    savePlayerLayout();
-    paintPlayerStage(watch, streams);
-  });
+  wireTileChrome(tile, { stage, watch, streams });
 }
 
 // Try to apply a slot-content diff between `prev` and `curr` without
@@ -2361,77 +2304,9 @@ function tilePosterUrl(s) {
 }
 
 function renderSlot(slot, path, streams) {
-  const muted = computeMuted(path);
-  const playing = tilePlaying(slot);
-  // ─ Recording playback path ─
-  if (slot.recordingId) {
-    const rec = recCache.find((r) => r.id === slot.recordingId);
-    const title = rec ? (niceTitle(rec.stream_title) || rec.channel_name || rec.id.slice(0, 8)) : slot.recordingId.slice(0, 8);
-    const channel = rec ? rec.channel_name || "" : "";
-    const soloBtn = muted
-      ? `<button class="watch-tile-btn ms-solo" title="Unmute this clip" data-path="${htmlEscape(path)}">🔇</button>`
-      : `<button class="watch-tile-btn ms-unsolo" title="Mute" data-path="${htmlEscape(path)}">🔊</button>`;
-    return `
-      <div class="ms-leaf ms-leaf-rec" data-path="${htmlEscape(path)}" data-recording-id="${htmlEscape(slot.recordingId)}">
-        <div class="watch-tile-head">
-          <span class="watch-tile-name">${htmlEscape(title)}</span>
-          <span class="watch-tile-meta">
-            <span class="watch-tile-plat pg-cap-hint">${htmlEscape(channel)} · recording</span>
-            ${soloBtn}
-            <button class="watch-tile-btn ms-fs" title="Fullscreen this tile">⛶</button>
-            <button class="watch-tile-btn ms-remove" title="Remove from layout" data-path="${htmlEscape(path)}">✕</button>
-          </span>
-        </div>
-        <div class="ms-mount" data-content-key="r:${htmlEscape(slot.recordingId)}"
-             data-kind="recording" data-path="${htmlEscape(path)}"
-             data-playing="${playing ? "1" : "0"}"
-             data-src="/api/v1/recordings/${encodeURIComponent(slot.recordingId)}/download"></div>
-      </div>`;
-  }
-  // ─ Live stream path ─
-  if (slot.streamId) {
-    const s = streams.find((x) => x.stream_id === slot.streamId);
-    if (!s) {
-      return `
-        <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}">
-          <div class="ms-empty-pill">Stream offline · drag a live channel here</div>
-        </div>`;
-    }
-    const soloBtn = muted
-      ? `<button class="watch-tile-btn ms-solo" title="Solo — raise this tile, silence the rest" data-path="${htmlEscape(path)}">🔇</button>`
-      : `<button class="watch-tile-btn ms-unsolo" title="Silence every tile" data-path="${htmlEscape(path)}">🔊</button>`;
-    // Per-tile level, so two streams can run at different volumes rather
-    // than only one-audible or all-silent.
-    const volPct = Math.round(tileVolumeAt(path) * 100);
-    const volCtl = `<input class="ms-vol" type="range" min="0" max="100" step="1"
-             value="${volPct}" data-path="${htmlEscape(path)}"
-             aria-label="Volume for ${htmlEscape(s.channel_name)}"
-             title="Volume — ${volPct}%">`;
-    return `
-      <div class="ms-leaf" data-path="${htmlEscape(path)}" data-stream-id="${htmlEscape(s.stream_id)}">
-        <div class="watch-tile-head">
-          <span class="watch-tile-name">${htmlEscape(s.channel_name)}</span>
-          <span class="watch-tile-meta">
-            <span class="watch-tile-plat pg-cap-hint" data-watch-meta="plat">${htmlEscape(s.platform)}${s.viewer_count != null ? ` · <span data-watch-meta="viewers">${formatCount(s.viewer_count)}</span>` : ""}</span>
-            ${volCtl}
-            ${soloBtn}
-            <button class="watch-tile-btn ms-fs" title="Fullscreen this tile">⛶</button>
-            <button class="watch-tile-btn ms-remove" title="Remove from layout" data-path="${htmlEscape(path)}">✕</button>
-          </span>
-        </div>
-        ${playing
-          ? `<div class="ms-mount" data-content-key="s:${htmlEscape(s.stream_id)}"
-                  data-kind="${isYouTubePlatform(s.platform) ? "youtube" : "twitch"}"
-                  data-path="${htmlEscape(path)}" data-playing="1"
-                  ${s.video_id ? `data-video-id="${htmlEscape(s.video_id)}"` : ""}
-                  data-embed-base="${htmlEscape(s.embed_url)}"></div>`
-          : `<div class="ms-poster" data-embed-base="${htmlEscape(s.embed_url)}">
-               ${tilePosterUrl(s) ? `<img class="ms-poster-img" loading="lazy" alt="" src="${htmlEscape(tilePosterUrl(s))}" onerror="this.remove()">` : ""}
-               <button class="ms-play" data-path="${htmlEscape(path)}" title="Play ${htmlEscape(s.channel_name)}"
-                       aria-label="Play ${htmlEscape(s.channel_name)}">▶</button>
-             </div>`}
-      </div>`;
-  }
+  // Populated tiles (recording or live stream) render in 019a-pvr.js so the
+  // player chrome can evolve without touching the layout code here.
+  if (slot.recordingId || slot.streamId) return renderPopulatedSlotHtml(slot, path, streams);
   // ─ Empty slot — pickable from live channels + recent recordings ─
   const liveOpts = (streams || []).map((s) =>
     `<option value="live:${htmlEscape(s.stream_id)}">▶ LIVE · ${htmlEscape(s.channel_name)} · ${htmlEscape(s.platform)}</option>`

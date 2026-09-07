@@ -414,7 +414,7 @@ function paintChannelList() {
   rail.querySelectorAll(".ch-row").forEach((el) => {
     el.addEventListener("click", (e) => {
       e.preventDefault();
-      selectChannel(el.dataset.channelKey);
+      selectChannel(el.dataset.channelKey, e);
     });
   });
   const sortSel = rail.querySelector("[data-rail-sort]");
@@ -460,7 +460,18 @@ async function seedPatreon() {
   }
 }
 
-function selectChannel(key) {
+// Per-route rail-click overrides. A route registers `RAIL_CLICK_HANDLERS.<route>
+// = (channelKey, event) => handled` to claim rail clicks while it is active
+// (e.g. the player loads the channel into a tile instead of leaving the page).
+// Returning false falls through to the default: open channel detail.
+const RAIL_CLICK_HANDLERS = {};
+// Extra e2e hooks contributed by later modules; spread into
+// window.__strivoTestHooks when the page opts in (see 036-pvr.js).
+const TEST_HOOK_EXTENSIONS = {};
+
+function selectChannel(key, ev) {
+  const override = RAIL_CLICK_HANDLERS[currentRoute()];
+  if (override && override(key, ev)) return;
   selectedChannelKey = key;
   if (currentRoute() !== "library") {
     route("library"); // hashchange triggers render()

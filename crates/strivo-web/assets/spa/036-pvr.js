@@ -1386,6 +1386,7 @@ if (typeof window !== "undefined") {
       new URLSearchParams(location.search).get("e2e") === "1";
     if (optedIn) {
       window.__strivoTestHooks = {
+        ...TEST_HOOK_EXTENSIONS,
         embedParentHost,
         buildEmbedUrl,
         computeMuted,
