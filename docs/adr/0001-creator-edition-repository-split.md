@@ -1,6 +1,6 @@
 # 0001. Creator Edition repository split
 
-Status: Proposed
+Status: Superseded by [0002](0002-monorepo-boundary.md) — see the [ADR index](README.md)
 Date: 2026-09-06
 
 ## Context
