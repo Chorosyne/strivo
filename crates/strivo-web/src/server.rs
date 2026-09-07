@@ -43,11 +43,34 @@ pub struct AppState {
     /// FFprobe is disk and process intensive. Bound concurrent probes so a
     /// gallery of Info modals cannot starve active recordings.
     pub probe_slots: Arc<tokio::sync::Semaphore>,
+    /// One shared `jobs.db` handle for the whole web process, mirroring the
+    /// daemon's single `Arc<Mutex<Connection>>`. Opening per request re-ran
+    /// the full PRAGMA + `CREATE TABLE IF NOT EXISTS` batch
+    /// (`src/recording/persist.rs`) on every history, blocklist, remux and
+    /// plugin call. Lazily initialised so an unavailable database still
+    /// surfaces as a per-request error rather than failing server startup.
+    pub jobs_db: Arc<tokio::sync::OnceCell<strivo_core::recording::persist::PersistDb>>,
+    /// Location of `jobs.db`. Defaults to the user data dir; tests point it
+    /// at a temporary directory so the shared-handle accessor can be driven
+    /// without touching real user data.
+    pub jobs_db_path: Arc<PathBuf>,
 }
 
 impl AppState {
     pub fn config_path(&self) -> Option<&std::path::Path> {
         self.config_path.as_deref().map(|path| path.as_path())
+    }
+
+    /// The shared `jobs.db` handle, opened on first use. `PersistDb` is
+    /// `Clone` over an inner `Arc<Mutex<Connection>>`, so every caller shares
+    /// one connection and one schema initialisation.
+    pub async fn jobs_db(&self) -> Result<&strivo_core::recording::persist::PersistDb, String> {
+        self.jobs_db
+            .get_or_try_init(|| async {
+                strivo_core::recording::persist::PersistDb::open(&self.jobs_db_path)
+                    .map_err(|e| e.to_string())
+            })
+            .await
     }
 
     /// Build an `AppState` for route-shape tests: real auth/routing logic,
@@ -69,6 +92,8 @@ impl AppState {
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            jobs_db: Arc::new(tokio::sync::OnceCell::new()),
+            jobs_db_path: Arc::new(strivo_core::config::AppConfig::data_dir().join("jobs.db")),
         }
     }
 }
@@ -125,6 +150,8 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         login_limiter: crate::ratelimit::LoginLimiter::new(),
         probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+        jobs_db: Arc::new(tokio::sync::OnceCell::new()),
+        jobs_db_path: Arc::new(strivo_core::config::AppConfig::data_dir().join("jobs.db")),
     };
 
     let app = build_router(state);

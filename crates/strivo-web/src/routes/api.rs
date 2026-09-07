@@ -543,9 +543,11 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     // alive and answering on the IPC socket.
     let daemon_ok = state.ipc.snapshot().await.is_ok();
 
-    // Jobs DB openable.
-    let db_path = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let db_ok = strivo_core::recording::persist::PersistDb::open(&db_path).is_ok();
+    // Jobs DB usable. This reports on the process's shared handle rather than
+    // opening a second connection: re-opening ran the full schema batch on
+    // every health poll, and the shared handle is also the more accurate
+    // signal, since it is the one every other route actually uses.
+    let db_ok = state.jobs_db().await.is_ok();
 
     // Free disk on the recording filesystem.
     let (disk, disk_ok) = match strivo_core::config::AppConfig::load(state.config_path()) {
@@ -1148,8 +1150,7 @@ async fn remux_recording(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let jobs_path = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let path = match strivo_core::recording::persist::PersistDb::open(&jobs_path) {
+    let path = match state.jobs_db().await {
         Ok(db) => match db.load_recording_jobs().await {
             Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
             Err(_) => None,
@@ -1877,7 +1878,7 @@ async fn history(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let db = match open_jobs_db() {
+    let db = match state.jobs_db().await {
         Ok(d) => d,
         Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
@@ -1926,11 +1927,6 @@ fn parse_platform(s: &str) -> Option<PlatformKind> {
     }
 }
 
-fn open_jobs_db() -> Result<strivo_core::recording::persist::PersistDb, String> {
-    let db_path = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    strivo_core::recording::persist::PersistDb::open(&db_path).map_err(|e| e.to_string())
-}
-
 #[derive(Debug, Deserialize)]
 struct BlockPayload {
     platform: String,
@@ -1945,7 +1941,7 @@ async fn blocklist_get(headers: HeaderMap, State(state): State<AppState>) -> imp
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let db = match open_jobs_db() {
+    let db = match state.jobs_db().await {
         Ok(d) => d,
         Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
@@ -1966,7 +1962,7 @@ async fn blocklist_add(
     let Some(platform) = parse_platform(&body.platform) else {
         return crate::problem::Problem::bad_request("unknown platform").into_response();
     };
-    let db = match open_jobs_db() {
+    let db = match state.jobs_db().await {
         Ok(d) => d,
         Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
@@ -1995,7 +1991,7 @@ async fn blocklist_remove(
     let Some(platform) = parse_platform(&body.platform) else {
         return crate::problem::Problem::bad_request("unknown platform").into_response();
     };
-    let db = match open_jobs_db() {
+    let db = match state.jobs_db().await {
         Ok(d) => d,
         Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };

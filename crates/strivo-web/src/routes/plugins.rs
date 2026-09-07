@@ -129,8 +129,7 @@ async fn cuepoints_generate(
     };
     // Resolve the file path via persist DB — same shape as the remux
     // endpoint. No daemon round-trip needed; we only read the row.
-    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let input_path = match strivo_core::recording::persist::PersistDb::open(&jobs_db) {
+    let input_path = match state.jobs_db().await {
         Ok(db) => match db.load_recording_jobs().await {
             Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
             Err(_) => None,
@@ -187,10 +186,12 @@ async fn cuepoints_generate(
 
 /// Resolve the on-disk output path for a recording job from persist.
 /// Shared by the cuepoints/clipper handlers — both need it.
-async fn resolve_recording_path(recording_id: &str) -> Result<std::path::PathBuf, String> {
+async fn resolve_recording_path(
+    state: &AppState,
+    recording_id: &str,
+) -> Result<std::path::PathBuf, String> {
     let id = uuid::Uuid::parse_str(recording_id).map_err(|_| "id must be uuid".to_string())?;
-    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let path = match strivo_core::recording::persist::PersistDb::open(&jobs_db) {
+    let path = match state.jobs_db().await {
         Ok(db) => match db.load_recording_jobs().await {
             Ok(rows) => rows.into_iter().find(|j| j.id == id).map(|j| j.output_path),
             Err(_) => None,
@@ -225,7 +226,7 @@ async fn clipper_analyze(
     }
     // We need cuepoints to score. If they're not cached we extract
     // them now — same path the standalone Cuepoints button uses.
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -297,7 +298,7 @@ async fn clipper_extract(
     if let Err(r) = gate_pro("clipper") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -429,7 +430,7 @@ async fn thumbnails_generate(
     if let Err(r) = gate_pro("thumbnails") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -964,7 +965,7 @@ async fn multitrack_list(
     if let Err(r) = gate_pro("multitrack") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -1009,7 +1010,7 @@ async fn multitrack_extract(
     if let Err(r) = gate_pro("multitrack") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -1129,13 +1130,13 @@ async fn reuse_generate(
     if let Err(r) = gate_pro("reuse") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
     // Pull title + channel + duration via the persist row + a quick
     // ffprobe — both are cheap.
-    let (title, channel_name) = match resolve_recording_meta(&recording_id).await {
+    let (title, channel_name) = match resolve_recording_meta(&state, &recording_id).await {
         Some((t, c)) => (t, c),
         None => (recording_id.clone(), String::new()),
     };
@@ -1250,10 +1251,9 @@ fn crunchr_path_exists() -> bool {
 }
 
 /// Best-effort title + channel lookup via the persist DB.
-async fn resolve_recording_meta(recording_id: &str) -> Option<(String, String)> {
+async fn resolve_recording_meta(state: &AppState, recording_id: &str) -> Option<(String, String)> {
     let id = uuid::Uuid::parse_str(recording_id).ok()?;
-    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let db = strivo_core::recording::persist::PersistDb::open(&jobs_db).ok()?;
+    let db = state.jobs_db().await.ok()?;
     let rows = db.load_recording_jobs().await.ok()?;
     rows.into_iter().find(|j| j.id == id).map(|j| {
         (
@@ -1282,11 +1282,11 @@ async fn casebook_generate(
     let crunchr_conn = open_ro(&crunchr_db());
     // Title + channel + started_at from persist; duration from ffprobe.
     let (mut title, channel_name, started_at) =
-        match resolve_recording_meta_full(&recording_id).await {
+        match resolve_recording_meta_full(&state, &recording_id).await {
             Some((t, c, s)) => (t, c, s),
             None => (recording_id.clone(), String::new(), None),
         };
-    let input_path = resolve_recording_path(&recording_id).await.ok();
+    let input_path = resolve_recording_path(&state, &recording_id).await.ok();
     let duration_sec = match input_path.as_ref() {
         Some(p) => probe_duration_async(p).await.unwrap_or(0.0),
         None => 0.0,
@@ -1459,11 +1459,11 @@ struct CasebookQuery {
 }
 
 async fn resolve_recording_meta_full(
+    state: &AppState,
     recording_id: &str,
 ) -> Option<(String, String, Option<String>)> {
     let id = uuid::Uuid::parse_str(recording_id).ok()?;
-    let jobs_db = strivo_core::config::AppConfig::data_dir().join("jobs.db");
-    let db = strivo_core::recording::persist::PersistDb::open(&jobs_db).ok()?;
+    let db = state.jobs_db().await.ok()?;
     let rows = db.load_recording_jobs().await.ok()?;
     rows.into_iter().find(|j| j.id == id).map(|j| {
         (
@@ -1499,7 +1499,7 @@ async fn heatmap_compute(
         return r;
     }
 
-    let input_path = match resolve_recording_path(&recording_id).await {
+    let input_path = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -1652,7 +1652,7 @@ async fn editor_load(
     if let Err(r) = gate_pro("editor") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -1788,7 +1788,7 @@ async fn editor_render(
     if let Err(r) = gate_pro("editor") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -2044,7 +2044,7 @@ async fn deadair_detect(
     if let Err(r) = gate_pro("deadair") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -2636,7 +2636,7 @@ async fn ab_render_compare(
                 .into_response();
         }
     };
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -2799,7 +2799,7 @@ async fn vad_run(
     if let Err(r) = gate_pro("vad") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -2964,7 +2964,7 @@ async fn beat_detect_run(
     if let Err(r) = gate_pro("beat-detect") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -3545,7 +3545,7 @@ async fn loudness_measure(
     if let Err(r) = gate_pro("loudness") {
         return r;
     }
-    let input = match resolve_recording_path(&recording_id).await {
+    let input = match resolve_recording_path(&state, &recording_id).await {
         Ok(p) => p,
         Err(e) => return Problem::not_found(e).into_response(),
     };
@@ -5821,6 +5821,10 @@ mod research_route_tests {
                 std::collections::HashMap::new(),
             )),
             probe_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            jobs_db: std::sync::Arc::new(tokio::sync::OnceCell::new()),
+            jobs_db_path: std::sync::Arc::new(
+                strivo_core::config::AppConfig::data_dir().join("jobs.db"),
+            ),
         }
     }
 
