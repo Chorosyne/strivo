@@ -103,8 +103,14 @@ pub fn list() -> Vec<CommandPreset> {
 mod tests {
     use super::*;
 
+    /// `STRIVO_DATA_DIR` is process-global but each test points it at its
+    /// own tempdir, so running them concurrently lets one test's dir be
+    /// dropped while another is still writing to it. Serialise them.
+    static DATA_DIR_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn save_load_roundtrip() {
+        let _guard = DATA_DIR_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("STRIVO_DATA_DIR", tmp.path());
         let actions = vec!["Quit".to_string(), "EventLogToggle".to_string()];
@@ -116,6 +122,7 @@ mod tests {
 
     #[test]
     fn empty_name_rejected() {
+        let _guard = DATA_DIR_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("STRIVO_DATA_DIR", tmp.path());
         assert!(save("", &[]).is_err());
@@ -125,6 +132,7 @@ mod tests {
 
     #[test]
     fn name_sanitization() {
+        let _guard = DATA_DIR_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("STRIVO_DATA_DIR", tmp.path());
         let path = save("good name!", &[]).unwrap();
