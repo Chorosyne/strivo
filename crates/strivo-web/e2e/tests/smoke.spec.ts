@@ -290,8 +290,11 @@ test("recordings: clear-errored button appears + per-row Play/Info/Delete action
   await expect(finishedRow.locator("[data-action=rec-play]")).toBeVisible();
   const erroredRow = page.locator("tr[data-rec-row]", { hasText: "Mango stream" });
   await expect(erroredRow.locator("[data-action=rec-play]")).toHaveCount(0);
-  // Every non-active row carries Info + Delete.
+  // Every non-active row carries Info inline; Delete lives behind the ⋯
+  // row menu so a destructive action never sits one pixel from Play.
   await expect(finishedRow.locator("[data-action=rec-info]")).toBeVisible();
+  await expect(finishedRow.locator("[data-action=rec-delete]")).toBeHidden();
+  await finishedRow.locator("[data-action=rec-menu-toggle]").click();
   await expect(finishedRow.locator("[data-action=rec-delete]")).toBeVisible();
 });
 
