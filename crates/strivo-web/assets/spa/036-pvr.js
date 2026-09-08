@@ -2,7 +2,7 @@
   document.querySelectorAll(".sch-del").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const i = parseInt(btn.dataset.i, 10);
-      if (!confirm("Delete this cron entry?")) return;
+      if (!(await confirmDialog("Delete this cron entry?", { danger: true, ok: "Delete" }))) return;
       try {
         await API.scheduleDelete(i);
         Toast.success("Removed");
@@ -134,7 +134,7 @@ async function _renderSchedule_legacy_cron_unused() {
   document.querySelectorAll(".sch-del").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const i = parseInt(btn.dataset.i, 10);
-      if (!confirm("Delete this schedule entry?")) return;
+      if (!(await confirmDialog("Delete this schedule entry?", { danger: true, ok: "Delete" }))) return;
       try {
         await API.scheduleDelete(i);
         Toast.success("Schedule entry removed");

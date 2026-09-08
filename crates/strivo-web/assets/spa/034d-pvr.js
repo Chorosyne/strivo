@@ -908,7 +908,7 @@ async function renderSchedule() {
   // Record-when-live row delete.
   document.querySelectorAll(".mon-rec-rm").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      if (!confirm("Stop auto-recording this channel?")) return;
+      if (!(await confirmDialog("Stop auto-recording this channel?", { danger: true, ok: "Stop" }))) return;
       try {
         await API.toggleAutoRecord(btn.dataset.key, false);
         Toast.success("Stopped");

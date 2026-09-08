@@ -37,7 +37,7 @@
   pane.querySelectorAll(".stg-profile-del").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const name = btn.dataset.profileName;
-      if (!confirm(`Delete capture profile '${name}'?`)) return;
+      if (!(await confirmDialog(`Delete capture profile '${name}'?`, { danger: true, ok: "Delete" }))) return;
       try {
         await API.captureProfileDelete(name);
         Toast.success(`Profile '${name}' deleted`);

@@ -180,9 +180,9 @@ function setupChromeHandlers() {
   document.getElementById("add-channel")?.addEventListener("click", () => openAddChannelWizard());
   // Slot pill navigates to Monitor page so users can adjust the cap.
   document.getElementById("rec-slot-pill")?.addEventListener("click", () => route("schedule"));
-  document.getElementById("logout")?.addEventListener("click", () => {
+  document.getElementById("logout")?.addEventListener("click", async () => {
     // Quick confirm — one misclick on the topbar shouldn't sign you out.
-    if (!confirm("Sign out? You'll need to re-enter the API key to come back.")) return;
+    if (!(await confirmDialog("Sign out? You'll need to re-enter the API key to come back.", { ok: "Sign out" }))) return;
     API.logout().catch(() => {}).then(() => route("login"));
   });
   // Health pill — amber/red when any check is degraded (roadmap item 13).
