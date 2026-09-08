@@ -6,7 +6,7 @@ description = "Silence detection + dead-air cut suggestions — DAW-vision iter 
 authors = ["revelri <slrevoy@mailbox.org>"]
 license = "MIT"
 publish = false
-rust-version = "1.75"
+rust-version = "1.88"
 
 [lib]
 path = "src/lib.rs"

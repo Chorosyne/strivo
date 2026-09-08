@@ -10,7 +10,7 @@ library—not a hosted streaming service.
 
 [![CI](https://github.com/revoydotdev/strivo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/revoydotdev/strivo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/revoydotdev/strivo?sort=semver&display_name=tag)](https://github.com/revoydotdev/strivo/releases)
-[![MSRV](https://img.shields.io/badge/MSRV-1.75%2B-orange?logo=rust&logoColor=white)](Cargo.toml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88%2B-orange?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/github/license/revoydotdev/strivo?color=blue)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-1f6feb?logo=linux&logoColor=white)](#platforms)
 
@@ -92,7 +92,7 @@ and macOS archives also include shell completions and a man page.
 
 ### From source
 
-The source build requires Rust 1.75 or newer, in addition to the external
+The source build requires Rust 1.88 or newer, in addition to the external
 tools above.
 
 ```bash

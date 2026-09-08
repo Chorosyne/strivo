@@ -11,7 +11,7 @@ readme = "README.md"
 keywords = ["strivo", "plugin", "transcription", "whisper"]
 categories = ["command-line-utilities", "multimedia"]
 publish = false
-rust-version = "1.75"
+rust-version = "1.88"
 
 [lib]
 path = "src/lib.rs"

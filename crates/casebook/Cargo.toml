@@ -6,7 +6,7 @@ description = "Post-stream Casebook report composer — DAW-vision iter 12"
 authors = ["revelri <slrevoy@mailbox.org>"]
 license = "MIT"
 publish = false
-rust-version = "1.75"
+rust-version = "1.88"
 
 [lib]
 path = "src/lib.rs"

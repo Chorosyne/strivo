@@ -20,7 +20,7 @@ homepage = "https://github.com/revoydotdev/strivo"
 readme = "README.md"
 keywords = ["pvr", "twitch", "youtube", "streaming", "recording"]
 categories = ["command-line-utilities", "multimedia"]
-rust-version = "1.75"
+rust-version = "1.88"
 
 [lib]
 path = "src/lib.rs"
