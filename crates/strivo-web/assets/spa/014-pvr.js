@@ -1063,6 +1063,12 @@ async function renderChat() {
       </main>
     </div>
   `);
+  // renderChat() never called this (a latent bug predating this pass —
+  // #/chat's left rail was rendering empty, since chrome() emits it
+  // empty and only setupChromeHandlers() (012-pvr.js) fills it in via
+  // paintChannelList()). Now that #/chat relies on that same rail as its
+  // only channel list, this is load-bearing, not cosmetic.
+  setupChromeHandlers();
 
   // Register this route's body as a chat paint surface. Persists for
   // the lifetime of the route; the painter self-unregisters when the
