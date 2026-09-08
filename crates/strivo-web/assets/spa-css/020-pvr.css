@@ -148,19 +148,10 @@
   padding: 0.6rem; text-align: center;
 }
 
-/* ── /chat route — collapsible channel list ───────────────────────── */
-.chat-root.tabs-collapsed {
-  grid-template-columns: 0 1fr;
-}
-.chat-root.tabs-collapsed .chat-tabs {
-  display: none;
-}
+/* ── /chat route ──────────────────────────────────────────────────── */
 .chat-main-head {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.15rem 0.2rem 0;
-}
-.chat-tabs-toggle {
-  flex-shrink: 0;
 }
 .chat-main-active {
   font-family: var(--font-mono, ui-monospace, monospace);

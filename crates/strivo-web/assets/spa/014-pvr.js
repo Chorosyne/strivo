@@ -43,14 +43,6 @@ function trackMountedChatRoom(room) {
   return () => mountedChatRooms.delete(room);
 }
 
-// Persisted UI state for the /chat tabs panel collapse.
-const CHAT_TABS_COLLAPSED_KEY = "strivo-chat-tabs-collapsed";
-function loadChatTabsCollapsed() {
-  try { return localStorage.getItem(CHAT_TABS_COLLAPSED_KEY) === "1"; } catch (_) { return false; }
-}
-function saveChatTabsCollapsed(v) {
-  try { localStorage.setItem(CHAT_TABS_COLLAPSED_KEY, v ? "1" : "0"); } catch (_) {}
-}
 
 function chatPushMsg(room, msg) {
   const buf = chatState.buffers[room] ||= { messages: [], unread: 0, mentions: 0 };
@@ -974,27 +966,34 @@ function renderChatTokens(text, ranges = [], room = null) {
   return out.join("");
 }
 
+// Chat used to paint its own #chat-tabs channel list (220px) beside the
+// always-painted left rail (260px) — two channel lists on one screen. The
+// rail is now the only channel list on #/chat too (RAIL_CLICK_HANDLERS.chat
+// below switches rooms on a rail click); this just paints the unread/
+// mention badges + "current room" highlight onto the existing .ch-row
+// elements instead of a second tab strip.
 function paintChatTabs() {
-  const tabs = document.getElementById("chat-tabs");
-  if (!tabs) return;
-  tabs.innerHTML = chatState.rooms.map((r) => {
-    const buf = chatState.buffers[r.room] || { unread: 0, mentions: 0 };
-    const active = r.room === chatState.active ? "active" : "";
-    const mentionPill = buf.mentions > 0 ? `<span class="chat-tab-mentions">${buf.mentions}</span>` : "";
-    const unreadPill = (buf.unread > 0 && r.room !== chatState.active)
-      ? `<span class="chat-tab-unread">${buf.unread}</span>` : "";
-    const liveDot = r.is_live ? `<span class="chat-tab-live" title="live">◉</span>` : "";
-    const offline = r.connectable === false ? " offline" : "";
-    return `<button class="chat-tab ${active}${offline}" data-room="${htmlEscape(r.room)}" ${!r.connectable ? "disabled" : ""}>
-      ${liveDot}<span class="chat-tab-name">${htmlEscape(r.display_name)}</span>${mentionPill}${unreadPill}
-    </button>`;
-  }).join("");
-  tabs.querySelectorAll(".chat-tab").forEach((t) => {
-    t.addEventListener("click", () => {
-      const room = t.dataset.room;
-      switchChatRoom(room);
-    });
+  if (currentRoute() !== "chat") return;
+  const rows = [...document.querySelectorAll(".ch-row")];
+  if (!rows.length) return;
+  rows.forEach((row) => {
+    row.querySelectorAll(".ch-chat-badge").forEach((b) => b.remove());
+    row.classList.remove("chat-active");
   });
+  for (const r of chatState.rooms) {
+    const buf = chatState.buffers[r.room] || { unread: 0, mentions: 0 };
+    const row = rows.find((el) => {
+      const name = (el.querySelector(".ch-name")?.textContent || "").trim().toLowerCase();
+      return name === r.room.toLowerCase() || name === (r.display_name || "").toLowerCase();
+    });
+    if (!row) continue;
+    if (r.room === chatState.active) row.classList.add("chat-active");
+    const mentionPill = buf.mentions > 0
+      ? `<span class="ch-chat-badge ch-chat-mentions">${buf.mentions}</span>` : "";
+    const unreadPill = (buf.unread > 0 && r.room !== chatState.active)
+      ? `<span class="ch-chat-badge ch-chat-unread">${buf.unread}</span>` : "";
+    if (mentionPill || unreadPill) row.insertAdjacentHTML("beforeend", mentionPill + unreadPill);
+  }
 }
 
 function switchChatRoom(room) {
@@ -1019,19 +1018,38 @@ function switchChatRoom(room) {
   }
 }
 
+// Claim rail clicks while #/chat is active — clicking a channel row
+// switches the chat room instead of falling through to selectChannel's
+// default (open channel detail / navigate to Library). Matched by name
+// since the rail's channel objects and /chat's room list don't share an
+// id: the rail keys on an opaque channel id, chat rooms key on the
+// (lowercase) platform login. Declared in RAIL_CLICK_HANDLERS (012-pvr.js).
+RAIL_CLICK_HANDLERS.chat = (channelKey, ev) => {
+  const row = ev && ev.currentTarget;
+  const name = (row?.querySelector(".ch-name")?.textContent || "").trim().toLowerCase();
+  if (!name) return false;
+  const match = chatState.rooms.find(
+    (r) => r.room.toLowerCase() === name || (r.display_name || "").toLowerCase() === name,
+  );
+  if (!match) return false; // not a chat-capable channel — fall through to default
+  if (!match.connectable) {
+    Toast.error(`${match.display_name || match.room} chat isn't connectable yet.`);
+    return true;
+  }
+  switchChatRoom(match.room);
+  return true;
+};
+
 async function renderChat() {
-  const tabsCollapsed = loadChatTabsCollapsed();
-  chatState.tabsCollapsed = tabsCollapsed;
+  // The channel list used to be a second #chat-tabs aside painted beside
+  // the always-present left rail. That's gone — the rail is the one
+  // channel list on every route now, including #/chat (see
+  // RAIL_CLICK_HANDLERS.chat + paintChatTabs above), so .chat-root is a
+  // single column.
   root.innerHTML = chrome(`
-    <div id="chat-root" class="chat-root${tabsCollapsed ? " tabs-collapsed" : ""}">
-      <aside id="chat-tabs" class="chat-tabs" role="tablist"></aside>
+    <div id="chat-root" class="chat-root">
       <main class="chat-main">
         <div class="chat-main-head">
-          <button class="sm chat-tabs-toggle" id="chat-tabs-toggle"
-                  type="button" aria-pressed="${tabsCollapsed ? "true" : "false"}"
-                  title="${tabsCollapsed ? "Show channel list" : "Hide channel list"}">
-            ${tabsCollapsed ? "☰ Channels" : "◀ Hide channels"}
-          </button>
           <span class="chat-main-active pg-cap-hint" id="chat-main-active"></span>
         </div>
         <div class="chat-filters">
@@ -1045,22 +1063,6 @@ async function renderChat() {
       </main>
     </div>
   `);
-
-  // Tabs toggle — collapses the left channel list. Useful when the
-  // window is narrow or the user knows which channel they want and
-  // wants more room for messages.
-  document.getElementById("chat-tabs-toggle")?.addEventListener("click", () => {
-    chatState.tabsCollapsed = !chatState.tabsCollapsed;
-    saveChatTabsCollapsed(chatState.tabsCollapsed);
-    const rootEl = document.getElementById("chat-root");
-    if (rootEl) rootEl.classList.toggle("tabs-collapsed", chatState.tabsCollapsed);
-    const btn = document.getElementById("chat-tabs-toggle");
-    if (btn) {
-      btn.textContent = chatState.tabsCollapsed ? "☰ Channels" : "◀ Hide channels";
-      btn.title = chatState.tabsCollapsed ? "Show channel list" : "Hide channel list";
-      btn.setAttribute("aria-pressed", chatState.tabsCollapsed ? "true" : "false");
-    }
-  });
 
   // Register this route's body as a chat paint surface. Persists for
   // the lifetime of the route; the painter self-unregisters when the

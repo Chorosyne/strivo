@@ -1,38 +1,29 @@
 
-/* Chat client route — Chatterino-class layout. Two columns: tabs strip
- * on the left, message log + filters on the right. */
+/* Chat client route. Single column — the left rail (painted by
+ * paintChannelList, 012-pvr.js) is the one channel list now; this used to
+ * be a two-column grid with its own #chat-tabs strip duplicating it. */
 .chat-root {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 0.6rem;
-  height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 56px - 3rem);
   padding: 0.5rem 0.8rem;
 }
-.chat-tabs {
-  display: flex; flex-direction: column; gap: 0.2rem;
-  overflow-y: auto;
-  border: 1px solid var(--border-light); border-radius: 6px;
-  padding: 0.4rem;
-  background: rgba(0,0,0,0.18);
+/* Unread/mention badges + "current room" highlight painted onto the
+ * shared rail's .ch-row elements (paintChatTabs, 014-pvr.js) rather than
+ * a second tab strip. */
+.ch-row.chat-active {
+  background: var(--overlay);
+  border-left-color: var(--accent2);
 }
-.chat-tab {
-  display: flex; align-items: center; gap: 0.4rem;
-  padding: 0.35rem 0.6rem;
-  border: none; border-radius: 4px;
-  background: transparent; color: inherit;
-  text-align: left; cursor: pointer; font-size: 0.85em;
+.ch-chat-badge {
+  font-size: var(--text-micro, 11px);
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  margin-left: 0.3rem;
 }
-.chat-tab:hover { background: rgba(255,255,255,0.06); }
-.chat-tab.active { background: rgba(110,86,207,0.25); }
-.chat-tab:disabled, .chat-tab.offline { opacity: 0.5; cursor: not-allowed; }
-.chat-tab-live { color: #f00; font-size: var(--text-micro, 11px); }
-.chat-tab-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-tab-unread, .chat-tab-mentions {
-  font-size: 0.7em; padding: 0.05rem 0.4rem; border-radius: 999px;
-  background: rgba(255,255,255,0.18);
-}
-.chat-tab-mentions { background: #c0392b; color: white; }
-.chat-main { display: flex; flex-direction: column; gap: 0.4rem; min-height: 0; }
+.ch-chat-mentions { background: #c0392b; color: #fff; }
+.chat-main { display: flex; flex-direction: column; gap: 0.4rem; min-height: 0; flex: 1; }
 .chat-filters {
   display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
   padding: 0.4rem 0.6rem;
