@@ -518,6 +518,13 @@
   background: color-mix(in srgb, var(--secondary) 25%, transparent);
   color: var(--secondary);
 }
+/* Recording-active tint — the merged "● REC n/max" pill (item 6/13
+ * consolidation) is only ever shown while n > 0, so it's always tinted
+ * recording-red unless the warn variant (cap saturated) overrides it. */
+.storage-pill.storage-pill-rec {
+  background: color-mix(in srgb, var(--recording) 25%, transparent);
+  color: var(--recording);
+}
 /* Make the slot pill clickable-looking so users know they can open Monitor. */
 #rec-slot-pill { cursor: pointer; }
 #rec-slot-pill:hover { filter: brightness(1.15); }

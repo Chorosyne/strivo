@@ -290,15 +290,6 @@ textarea:focus {
   text-decoration: none;
   filter: brightness(1.15);
 }
-.topbar .live-pill {
-  background: var(--recording);
-  color: var(--bg);
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-weight: 600;
-  font-size: 0.75rem;
-  letter-spacing: 0.05em;
-}
 .topbar .spacer {
   flex: 1;
 }
@@ -630,10 +621,6 @@ th[data-sort]:hover {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-.ch-live {
-  color: var(--live);
-  font-size: 0.7rem;
 }
 .ch-rec {
   color: var(--recording);

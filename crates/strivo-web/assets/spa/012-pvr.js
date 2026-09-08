@@ -142,8 +142,6 @@ function chrome(content) {
               title="Live updates connection">● reconnecting…</span>
         <a id="health-pill" class="health-pill" href="#/system" hidden
            role="status" title="System health — click for details"></a>
-        <span id="live-pill" class="live-pill" style="display:none"
-              title="Active recordings"></span>
         <span id="rec-slot-pill" class="storage-pill" style="display:none"
               title="Active recordings / concurrent cap — click to manage"
               role="status"></span>
@@ -346,7 +344,6 @@ function paintChannelList() {
     const rec = recordingChannelIds.has(c.id)
       ? '<span class="ch-rec" title="recording">●</span>'
       : "";
-    const liveDot = c.is_live ? '<span class="ch-live">◉</span>' : "";
     // Live → viewer count; offline Twitch/YT → "last live: N ago" in the same
     // slot (when StriVo has observed it live at least once).
     let viewers = "";
@@ -377,7 +374,7 @@ function paintChannelList() {
          data-platform="${c.platform}" data-live-stream-id="${htmlEscape(liveStreamId)}" href="${href}">
         <span class="ch-plat ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
         <span class="ch-name">${htmlEscape(c.display_name || c.name)}</span>
-        ${tier}${viewers}${liveDot}${rec}
+        ${tier}${viewers}${rec}
       </a>`;
   };
 

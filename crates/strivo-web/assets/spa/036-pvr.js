@@ -602,48 +602,38 @@ function isDownloadJob(r) {
 /// is what made a Patreon post download announce itself as "● LIVE". A
 /// download occupies a capture slot — so it belongs in the slot pill — but
 /// nothing about it is live.
+// `#live-pill` (captures in progress) and `#rec-slot-pill` (slots used /
+// cap) used to be two topbar pills reporting the same underlying fact —
+// how many recordings are in flight. Merged into one "● REC n/max" pill
+// (still `#rec-slot-pill`; its click → Monitor handler is unchanged).
 function updateLiveCount() {
   const inProgress = (recCache || []).filter((r) => isInProgress(r.state));
   const downloads = inProgress.filter(isDownloadJob).length;
   const captures = inProgress.length - downloads;
   const n = inProgress.length; // slots consumed: the daemon caps on all of them
 
-  const pill = document.getElementById("live-pill");
-  if (pill) {
-    if (captures > 0) {
-      pill.textContent = `● LIVE: ${captures}`;
-      pill.className = "live-pill";
-      pill.title = `${captures} live capture${captures === 1 ? "" : "s"} in progress`;
-      pill.style.display = "";
-    } else if (downloads > 0) {
-      // Still show activity, but do not call a download live.
-      pill.textContent = `↓ ${downloads}`;
-      pill.className = "live-pill live-pill-download";
-      pill.title = `${downloads} download${downloads === 1 ? "" : "s"} in progress`;
-      pill.style.display = "";
-    } else {
-      pill.style.display = "none";
-    }
-  }
   const slotPill = document.getElementById("rec-slot-pill");
-  if (slotPill) {
-    if (maxConcurrentSlots > 0) {
-      slotPill.textContent = `${n} / ${maxConcurrentSlots} rec`;
-      slotPill.style.display = "";
-      const saturated = n >= maxConcurrentSlots;
-      slotPill.className = `storage-pill${saturated ? " storage-pill-warn" : ""}`;
-      slotPill.title = saturated
-        ? `⚠ Concurrent cap hit: ${n}/${maxConcurrentSlots} — click to adjust`
-        : `${n} of ${maxConcurrentSlots} capture slots in use (downloads count toward the cap) — click to manage`;
-    } else if (n > 0) {
-      slotPill.textContent = `${n} rec`;
-      slotPill.style.display = "";
-      slotPill.className = "storage-pill";
-      slotPill.title = `${n} recording${n === 1 ? "" : "s"} in progress`;
-    } else {
-      slotPill.style.display = "none";
-    }
+  if (!slotPill) return;
+  if (n === 0) {
+    slotPill.style.display = "none";
+    return;
   }
+  slotPill.style.display = "";
+  slotPill.textContent = maxConcurrentSlots > 0
+    ? `● REC ${n}/${maxConcurrentSlots}`
+    : `● REC ${n}`;
+  const saturated = maxConcurrentSlots > 0 && n >= maxConcurrentSlots;
+  slotPill.className = `storage-pill ${saturated ? "storage-pill-warn" : "storage-pill-rec"}`;
+  const activity = captures > 0 && downloads > 0
+    ? `${captures} live capture${captures === 1 ? "" : "s"} + ${downloads} download${downloads === 1 ? "" : "s"}`
+    : captures > 0
+    ? `${captures} live capture${captures === 1 ? "" : "s"} in progress`
+    : `${downloads} download${downloads === 1 ? "" : "s"} in progress`;
+  slotPill.title = saturated
+    ? `⚠ Concurrent cap hit: ${n}/${maxConcurrentSlots} (${activity}) — click to adjust`
+    : maxConcurrentSlots > 0
+    ? `${activity} — ${n} of ${maxConcurrentSlots} capture slots in use — click to manage`
+    : `${activity} — click to manage`;
 }
 
 // ── Utilities ────────────────────────────────────────────────────────
