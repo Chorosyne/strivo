@@ -7,8 +7,8 @@ import { test, expect } from "@playwright/test";
 //   - `draggable` used to sit on the whole `.ms-leaf`; once a tile plays,
 //     a cross-origin iframe covers it and swallows the mousedown before it
 //     becomes a dragstart. Drag is now delegated to the stage and started
-//     only from a small handle (`.watch-tile-name` until Lane A's
-//     `.pb-grab[data-drag-handle]` lands) — see "handle-drag swap".
+//     only from the player bar's `.pb-grab[data-drag-handle]` — see
+//     "handle-drag swap".
 //   - Rail rows were wired per-paint and wiped by every rail repaint
 //     (`paintChannelList` rebuilds `#channel-list` wholesale on SSE). Drag
 //     is now one delegated `document` listener — see "rail drag survives
@@ -88,19 +88,27 @@ async function pickLive(page: import("@playwright/test").Page, streamId: string)
   await page.locator(".ms-picker").first().locator(`.ms-pick[data-pick="live:${streamId}"]`).click();
 }
 
-// `locator.dragTo()` reliably drives a native drag from a naturally
-// draggable source (the rail's `<a>` rows), but was observed to silently
-// swallow the drag — dragstart never fires — from a handle whose
-// `draggable` was set via a JS property assignment (`el.draggable =
-// true`, as wireStageDnD does for `.watch-tile-name`/`[data-drag-handle]`)
-// rather than present in the initial HTML. A manual mouse sequence (move
-// → down → move in steps → up) reproduces the exact same native drag
-// reliably in both cases, so stage-internal drags below use this instead.
+// `locator.dragTo()` reliably drives a native drag from the rail's `<a>`
+// rows, but was observed to silently swallow the drag — dragstart never
+// fires — from `.pb-grab[data-drag-handle]`, whose visibility is gated by
+// `:hover`/`:focus-within` (the bar is opacity:0 until then). A manual
+// mouse sequence (move → down → move in steps → up) reproduces the exact
+// same native drag reliably, since the real mouse position triggers the
+// CSS hover before mousedown — stage-internal drags below use this.
 async function manualDragTo(
   page: import("@playwright/test").Page,
   source: import("@playwright/test").Locator,
   target: import("@playwright/test").Locator,
 ) {
+  // `.pb-grab` only reaches opacity:1 on `:hover`/`:focus-within` (the
+  // bar is otherwise invisible so a wall of tiles doesn't read as a
+  // toolbar farm) — it is NOT pointer-events:none while hidden, but a
+  // direct `mouse.move` straight to its coordinates can still land on
+  // whatever's rendered above it before the hover transition starts.
+  // `locator.hover()` performs Playwright's own actionability-aware
+  // hover (scrolling into view, waiting for stability) first, which is
+  // what actually reveals it.
+  await source.hover();
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error("manualDragTo: source or target has no box");
@@ -200,9 +208,7 @@ test("handle-drag swaps two populated tiles", async ({ page }) => {
   const ytPathBefore = await ytTile.getAttribute("data-path");
   expect(twitchPathBefore).not.toBe(ytPathBefore);
 
-  // Interim handle per the Lane A contract: `.watch-tile-name` until
-  // `.pb-grab[data-drag-handle]` lands.
-  await manualDragTo(page, twitchTile.locator(".watch-tile-name"), ytTile);
+  await manualDragTo(page, twitchTile.locator("[data-drag-handle]"), ytTile);
 
   // Same two content keys, now on the OTHER path each.
   await expect(page.locator(`.ms-leaf[data-path="${ytPathBefore}"][data-stream-id="Twitch:twitch-live-1"]`)).toHaveCount(1);
@@ -222,7 +228,7 @@ test("dropping on a gutter resolves to the nearest leaf", async ({ page }) => {
   await expect(gutter).toHaveCount(1);
   const emptyLeaf = page.locator(".ms-leaf.ms-empty");
 
-  await manualDragTo(page, page.locator('.ms-leaf[data-stream-id="Twitch:twitch-live-1"] .watch-tile-name'), gutter);
+  await manualDragTo(page, page.locator('.ms-leaf[data-stream-id="Twitch:twitch-live-1"] [data-drag-handle]'), gutter);
 
   // The gutter itself is never a valid content target — the drop must
   // have resolved to a real leaf (either it landed on the empty one via
@@ -243,7 +249,7 @@ test(".ms-stage carries is-dnd only while a drag is in flight", async ({ page })
   await expect(page.locator(".ms-stage")).not.toHaveClass(/is-dnd/);
 
   await page.evaluate(() => {
-    const handle = document.querySelector(".watch-tile-name") as HTMLElement;
+    const handle = document.querySelector("[data-drag-handle]") as HTMLElement;
     const dt = new DataTransfer();
     handle.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
   });

@@ -16,6 +16,15 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+// The empty-slot picker is a filterable card (`.ms-picker`), not the old
+// native `<select class="ms-slot-pick">` — same "live:<id>"/"rec:<id>"
+// value grammar via a `.ms-pick[data-pick="<value>"]` row, always the
+// FIRST open picker (filling one tile makes its card disappear, so the
+// next empty tile's card becomes "first").
+async function pickSlot(page: import("@playwright/test").Page, value: string) {
+  await page.locator(".ms-picker").first().locator(`.ms-pick[data-pick="${value}"]`).click();
+}
+
 async function waitForFakePlayers(page: import("@playwright/test").Page) {
   await page.waitForFunction(() => (window as any).__fakePlayerFactoryReady === true);
 }
@@ -95,7 +104,7 @@ test("a controller with all-false capabilities renders only remove + fullscreen"
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
 
@@ -113,7 +122,7 @@ test("play button calls play(), seek range calls seek() with seconds", async ({ 
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
 
@@ -134,7 +143,7 @@ test("'m' on a focused leaf zeroes volume and mutes", async ({ page }) => {
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
 
@@ -188,10 +197,10 @@ test("legacy fake controller (no capabilities) still yields a volume slider per 
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator("#watch-playall").click();
   await expect(page.locator(".fake-player")).toHaveCount(2);
 
@@ -210,7 +219,7 @@ test("fullscreen button requests fullscreen on the .ms-leaf", async ({ page }) =
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
 
