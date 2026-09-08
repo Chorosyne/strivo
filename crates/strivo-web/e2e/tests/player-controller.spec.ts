@@ -20,6 +20,17 @@ import { test, expect } from "@playwright/test";
 // (each gets the CPU to itself) without touching any assertion.
 test.describe.configure({ mode: "serial" });
 
+// The empty-slot picker used to be a native `<select class="ms-slot-pick">`
+// (`selectOption`). It's now a filterable card (`.ms-picker`) with a row
+// per candidate (`.ms-pick[data-pick="<value>"]`) — same "live:<id>" /
+// "rec:<id>" value grammar, so every call site here just swaps the
+// interaction, not what it proves. Always targets the FIRST open picker,
+// matching the old `.first()` behaviour: filling one tile makes its
+// picker disappear, so the next empty tile's card becomes "first".
+async function pickSlot(page: import("@playwright/test").Page, value: string) {
+  await page.locator(".ms-picker").first().locator(`.ms-pick[data-pick="${value}"]`).click();
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("strivo-tour-done", "1");
@@ -98,10 +109,10 @@ test("each tile carries its own level, and muted means zero", async ({ page }) =
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator("#watch-playall").click();
   await expect(page.locator(".fake-player")).toHaveCount(2);
 
@@ -133,10 +144,10 @@ test("solo raises one tile and silences the rest", async ({ page }) => {
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator("#watch-playall").click();
 
   // Bring both up, then solo the first.
@@ -247,13 +258,13 @@ test("starting one tile does not disturb another", async ({ page }) => {
   // Two tiles, both fed from the mock's live streams.
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
+  const pickers = page.locator(".ms-picker");
   await expect(pickers).toHaveCount(2);
   // Filling a slot removes its picker, so the remaining one collapses back
   // to index 0 — always take the first.
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await expect(pickers).toHaveCount(0);
 
   // Wall opens paused: posters, no players.
@@ -281,10 +292,10 @@ test("removing a tile destroys exactly its own player", async ({ page }) => {
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await expect(pickers).toHaveCount(0);
   await page.locator(".ms-play").first().click();
   await page.locator(".ms-play").first().click();
@@ -305,7 +316,7 @@ test("leaving the watch route tears every player down", async ({ page }) => {
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
 
@@ -329,8 +340,8 @@ test("composer edits leave an untouched tile's player alone", async ({ page }) =
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
 
   // Start the Twitch tile; the other slot stays empty.
@@ -356,7 +367,7 @@ test("a preset change preserves a playing tile", async ({ page }) => {
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await expect(page.locator(".fake-player")).toHaveCount(1);
   const playingId = await page.evaluate(() => (window as any).__fakeLog.created[0]);
@@ -382,10 +393,10 @@ test("play-all starts the rest without rebuilding what is already playing", asyn
 
   await page.locator(".ms-preset-summary").click();
   await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
-  const pickers = page.locator(".ms-slot-pick");
-  await pickers.first().selectOption("live:Twitch:twitch-live-1");
+  const pickers = page.locator(".ms-picker");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await expect(pickers).toHaveCount(1);
-  await pickers.first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
 
   // Start exactly one tile.
   await page.locator(".ms-play").first().click();
@@ -412,7 +423,7 @@ test("a blocked Twitch SDK degrades to a working iframe", async ({ page }) => {
   await page.route("**/player.twitch.tv/js/embed/v1.js", (r) => r.abort());
   await page.goto("/app#/watch");
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
 
   // The controller swaps its host element for a real iframe on SDK failure.
@@ -461,7 +472,7 @@ test("YouTube's script loads on demand, not on page load", async ({ page }) => {
   expect(googleHits, "opening the wall must not contact Google").toHaveLength(0);
 
   // A Twitch tile must not drag the Google script in either.
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
   await page.waitForTimeout(300);
   expect(googleHits, "a Twitch tile must not contact Google").toHaveLength(0);
@@ -472,7 +483,7 @@ test("a YouTube tile without a video id still plays via the iframe", async ({ pa
   await page.route("**/www.youtube.com/iframe_api*", (r) => r.abort());
   await page.goto("/app#/watch");
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator(".ms-play").first().click();
 
   // Whether the API is reachable or not, the tile must end up with a
@@ -526,7 +537,7 @@ test("a failing YouTube player falls back to the iframe", async ({ page }) => {
   await page.route("**/www.youtube.com/iframe_api*", (r) => r.abort());
 
   await page.goto("/app#/watch");
-  await page.locator(".ms-slot-pick").first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator(".ms-play").first().click();
 
   // Ends up on a real iframe rather than a dead mount point.
@@ -544,7 +555,7 @@ test("a YouTube stream is never routed to the Twitch player", async ({ page }) =
   await page.route("**/www.youtube.com/iframe_api*", (r) => r.abort());
   await page.goto("/app#/watch");
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:YouTube:UClive0000000000000000aa");
+  await pickSlot(page, "live:YouTube:UClive0000000000000000aa");
   await page.locator(".ms-play").first().click();
 
   const mount = page.locator(".ms-leaf .ms-mount");
@@ -558,7 +569,7 @@ test("a Twitch stream still routes to the Twitch player", async ({ page }) => {
   await page.route("**/player.twitch.tv/js/embed/v1.js", (r) => r.abort());
   await page.goto("/app#/watch");
 
-  await page.locator(".ms-slot-pick").first().selectOption("live:Twitch:twitch-live-1");
+  await pickSlot(page, "live:Twitch:twitch-live-1");
   await page.locator(".ms-play").first().click();
 
   await expect(page.locator(".ms-leaf .ms-mount")).toHaveAttribute("data-kind", "twitch");
