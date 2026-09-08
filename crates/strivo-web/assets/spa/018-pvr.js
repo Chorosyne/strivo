@@ -1,145 +1,19 @@
 
-// Viewer route — single stream embed + collapsible chat sidepane.
-// Reuses the existing chat plumbing (connectChatRoom, paintChatBody,
-// emote + badge caches) so the chat in the sidepane is the same
-// engine as the standalone /chat route. Channel selection sticks via
-// URL hash (?room=<login>).
+// Viewer route — RETIRED. #/watch's single-tile theater view now covers
+// everything this bare cross-origin-iframe surface did (single-stream
+// embed + chat), plus a real player bar instead of vendor-only chrome —
+// so this route just resolves the requested room and redirects rather
+// than maintaining a second, thinner watch surface.
 async function renderViewer() {
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
-  let room = params.get("room") || "";
-  let rooms;
-  try { rooms = (await API.chatRooms()).rooms || []; }
-  catch (e) {
-    root.innerHTML = chrome(`<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`);
-    return;
+  const room = params.get("room") || "";
+  const c = (channelCache || []).find((x) =>
+    x.platform === "Twitch" && (x.name || x.display_name || "").toLowerCase() === room.toLowerCase());
+  if (c) {
+    location.replace(`#/watch?focus=${encodeURIComponent(`${c.platform}:${c.id}`)}&fresh=1`);
+  } else {
+    location.replace("#/watch");
   }
-  rooms.sort((a, b) => {
-    if (a.is_live !== b.is_live) return a.is_live ? -1 : 1;
-    return a.display_name.localeCompare(b.display_name);
-  });
-  chatState.rooms = rooms;
-  if (!room && rooms.length) room = (rooms.find((r) => r.is_live && r.connectable) || rooms.find((r) => r.connectable))?.room || "";
-  if (!room) {
-    root.innerHTML = chrome(`<div class="empty"><div class="glyph">📺</div>
-      <p>No connectable channels. Follow some on Twitch via Settings → Platforms.</p></div>`);
-    return;
-  }
-  chatState.active = room;
-  const sidepaneOpen = (localStorage.getItem("strivo-viewer-sidepane") || "open") !== "closed";
-  const picker = rooms.filter((r) => r.connectable).map((r) =>
-    `<option value="${htmlEscape(r.room)}" ${r.room === room ? "selected" : ""}>${r.is_live ? "● " : ""}${htmlEscape(r.display_name)}</option>`
-  ).join("");
-  root.innerHTML = chrome(`
-    <div id="viewer-root" class="viewer-root ${sidepaneOpen ? "" : "side-collapsed"}" role="main">
-      <div class="viewer-toolbar">
-        <label>Channel <select id="viewer-channel">${picker}</select></label>
-        <button class="sm" id="viewer-toggle-side" type="button" title="Toggle chat sidepane">${sidepaneOpen ? "↦ Hide chat" : "↤ Show chat"}</button>
-      </div>
-      <div class="viewer-stage">
-        <iframe id="viewer-iframe" class="viewer-iframe" allow="autoplay; fullscreen" allowfullscreen frameborder="0"></iframe>
-      </div>
-      <aside class="viewer-chat" id="viewer-chat">
-        <div class="chat-filters">
-          <input id="chat-filter-kw" type="text" placeholder="filter: contains…" />
-          <input id="chat-filter-out" type="text" placeholder="filter: hide…" />
-        </div>
-        <div id="chat-body" class="chat-body" role="log" aria-live="polite"></div>
-        <form id="chat-compose" class="chat-compose" autocomplete="off">
-          <input id="chat-input" type="text" placeholder="Send message… (Enter)" maxlength="500" />
-          <button class="sm" type="submit">▶</button>
-          <span class="chat-compose-hint pg-cap-hint" id="chat-compose-hint"></span>
-        </form>
-      </aside>
-    </div>
-  `);
-  setupChromeHandlers();
-  // Wire third-party + per-channel caches once.
-  ensureThirdPartyEmotes().then(() => schedulePaintChat());
-  ensureGlobalBadges().then(() => schedulePaintChat());
-  // Mount the embed iframe — Twitch needs parent= hostname.
-  // Twitch's embed validator REJECTS bare IP addresses (and 'localhost'
-  // works only when accessed via 'localhost'). LAN dogfooding via
-  // http://<ip>:8181 fails with 'embed misconfigured'. We detect the
-  // bare-IP case, rewrite parent= to a nip.io equivalent
-  // (<ip-dashed>.nip.io), and offer the user a one-click banner that
-  // navigates the WHOLE page to the matching nip.io URL so the
-  // iframe's referer lines up with parent=. nip.io resolves
-  // <ip-dashed>.nip.io → that IP via wildcard DNS — no setup needed.
-  const rawHost = location.host;
-  const hostNoPort = rawHost.split(":")[0];
-  const port = rawHost.includes(":") ? rawHost.split(":")[1] : "";
-  const isLocalhost = hostNoPort === "localhost" || hostNoPort === "127.0.0.1";
-  const isHttps = location.protocol === "https:";
-  // Twitch's parent= validator + its embed CSP together require:
-  //   * a hostname (no bare IPs)
-  //   * either https:// access, OR access via 'localhost' over http
-  // Anything else gets the 'embed misconfigured' / CSP-violation
-  // error. We rewrite bare IP → nip.io so the parent= validator
-  // passes, but the CSP rule still needs https for nip.io.
-  const parent = embedParentHost(rawHost);
-  const embedBlocked = !isLocalhost && !isHttps;
-  const stage = document.querySelector(".viewer-stage");
-  if (embedBlocked) {
-    const nipUrl = `http://${parent}${port ? ":" + port : ""}${location.pathname}${location.hash}`;
-    // Render a fix overlay above the iframe with three working
-    // paths so the user can pick whichever is easiest.
-    const banner = document.createElement("div");
-    banner.className = "viewer-embed-banner";
-    banner.innerHTML = `
-      <p><strong>Twitch can't embed over plain HTTP on a remote host.</strong>
-      Their player CSP requires <code>https://</code> for any parent that isn't <code>localhost</code>. Pick one of these:</p>
-      <ol class="viewer-embed-options">
-        <li><strong>SSH tunnel (easiest)</strong> — on your laptop run
-          <code>ssh -L 8181:localhost:8181 ${htmlEscape(hostNoPort)}</code>
-          then open <a href="http://localhost:8181${location.pathname}${location.hash}">http://localhost:8181${htmlEscape(location.pathname + location.hash)}</a> — Twitch whitelists localhost over HTTP.</li>
-        <li><strong>HTTPS via nip.io + a cert</strong> — front the serve with Caddy / nginx terminating TLS for
-          <code>${htmlEscape(parent)}${port ? ":" + port : ""}</code>, then access via
-          <a href="${htmlEscape(nipUrl.replace(/^http:/, "https:"))}">https://${htmlEscape(parent)}${port ? ":" + htmlEscape(port) : ""}</a>.</li>
-        <li><strong>SOCKS over the LAN</strong> — proxy the laptop browser through the strivo host (any SOCKS proxy will do) and treat it as localhost.</li>
-      </ol>
-      <p class="pg-cap-hint">The chat sidepane on the right works regardless — Twitch chat connects via WebSocket without the embed CSP. Use it while you sort out the player path.</p>`;
-    stage.prepend(banner);
-  }
-  document.getElementById("viewer-iframe").src =
-    buildEmbedUrl("Twitch", room, { host: rawHost });
-  // Sidepane toggle persists.
-  document.getElementById("viewer-toggle-side").addEventListener("click", () => {
-    const root_ = document.getElementById("viewer-root");
-    const open = !root_.classList.contains("side-collapsed");
-    if (open) { root_.classList.add("side-collapsed"); localStorage.setItem("strivo-viewer-sidepane", "closed"); }
-    else { root_.classList.remove("side-collapsed"); localStorage.setItem("strivo-viewer-sidepane", "open"); }
-    document.getElementById("viewer-toggle-side").textContent = open ? "↤ Show chat" : "↦ Hide chat";
-  });
-  // Channel picker rewrites the URL — render() reruns via hashchange.
-  document.getElementById("viewer-channel").addEventListener("change", (ev) => {
-    const next = ev.target.value;
-    window.location.hash = `#/viewer?room=${encodeURIComponent(next)}`;
-  });
-  connectChatRoom(room);
-  paintChatBody({ full: true });
-  // Filter inputs + compose box — reuse the same handlers as renderChat
-  // by setting up a tiny applyFilters local.
-  const applyFilters = () => {
-    const kw = document.getElementById("chat-filter-kw").value.trim();
-    const out = document.getElementById("chat-filter-out").value.trim();
-    chatState.filters = [];
-    if (kw) chatState.filters.push({ kind: "keyword_in", needle: kw });
-    if (out) chatState.filters.push({ kind: "keyword_out", needle: out });
-    paintChatBody({ full: true });
-  };
-  document.getElementById("chat-filter-kw").addEventListener("input", applyFilters);
-  document.getElementById("chat-filter-out").addEventListener("input", applyFilters);
-  document.getElementById("chat-compose").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const text = (document.getElementById("chat-input").value || "").trim();
-    if (!text) return;
-    try {
-      await API.chatSend(room, text);
-      document.getElementById("chat-input").value = "";
-    } catch (err) {
-      document.getElementById("chat-compose-hint").textContent = err.message || "Send failed";
-    }
-  });
 }
 
 // Multi-stream viewer route. Server returns tiles already laid out for
@@ -340,7 +214,7 @@ function makeIframeController(spec) {
   el.setAttribute("frameborder", "0");
   let base = spec.embedUrl || "";
   let muted = !!spec.muted;
-  const playing = spec.playing !== false;
+  let playing = spec.playing !== false;
   el.setAttribute("data-embed-base", base);
   const sync = () => {
     if (!base) return;
@@ -349,9 +223,21 @@ function makeIframeController(spec) {
     if (el.getAttribute("src") !== next) el.setAttribute("src", next);
   };
   sync();
-  return {
+  const subs = new Set();
+  const notify = () => {
+    const s = controller.state();
+    subs.forEach((fn) => { try { fn(s); } catch (_) { /* advisory */ } });
+  };
+  const controller = {
     kind: "iframe-fallback",
     root: el,
+    // A bare iframe has no control surface beyond its `src` — mute still
+    // reloads the player, so it is NOT advertised as a real capability.
+    capabilities: {
+      play: false, pause: false, seek: false, duration: false,
+      volume: false, mute: false, quality: false, rate: false,
+      pip: false, fullscreen: true, live: true, audioOnly: false,
+    },
     mount(container) {
       if (el.parentElement !== container) container.appendChild(el);
     },
@@ -381,7 +267,27 @@ function makeIframeController(spec) {
     isReady() {
       return true;
     },
+    play() { playing = true; sync(); notify(); },
+    pause() { playing = false; sync(); notify(); },
+    togglePlay() { playing ? controller.pause() : controller.play(); },
+    seek() { /* not addressable */ },
+    currentTime() { return NaN; },
+    duration() { return NaN; },
+    setRate() { /* not addressable */ },
+    state() {
+      return {
+        ready: true, playing, buffering: false, ended: false, muted,
+        volume: NaN, currentTime: NaN, duration: NaN, rate: 1,
+        quality: null, qualities: [], live: true, error: null,
+      };
+    },
+    onState(fn) {
+      subs.add(fn);
+      try { fn(controller.state()); } catch (_) { /* advisory */ }
+      return () => subs.delete(fn);
+    },
   };
+  return controller;
 }
 
 /// Local recording playback. A `<video>` already has a real API, so this
@@ -391,7 +297,7 @@ function makeIframeController(spec) {
 function makeRecordingController(spec) {
   const el = document.createElement("video");
   el.className = "watch-tile-iframe ms-video";
-  el.controls = true;
+  el.controls = false;
   el.playsInline = true;
   el.muted = !!spec.muted;
   const playing = spec.playing !== false;
@@ -436,9 +342,38 @@ function makeRecordingController(spec) {
     }
   }, 15000);
 
-  return {
+  const subs = new Set();
+  let lastEmit = 0;
+  const notify = (opts = {}) => {
+    const now = Date.now();
+    if (opts.throttle && now - lastEmit < 250) return; // ≤4Hz for timeupdate
+    lastEmit = now;
+    const s = controller.state();
+    subs.forEach((fn) => { try { fn(s); } catch (_) { /* advisory */ } });
+  };
+  el.addEventListener("loadedmetadata", () => {
+    const audioOnly = !el.videoWidth && !el.videoHeight;
+    controller.capabilities = { ...controller.capabilities, audioOnly };
+    notify();
+  });
+  el.addEventListener("play", () => notify());
+  el.addEventListener("pause", () => notify());
+  el.addEventListener("ended", () => notify());
+  el.addEventListener("playing", () => notify());
+  el.addEventListener("waiting", () => notify());
+  el.addEventListener("volumechange", () => notify());
+  el.addEventListener("ratechange", () => notify());
+  el.addEventListener("timeupdate", () => notify({ throttle: true }));
+  el.addEventListener("error", () => notify());
+
+  const controller = {
     kind: "recording",
     root: el,
+    capabilities: {
+      play: true, pause: true, seek: true, duration: true, volume: true,
+      mute: true, quality: false, rate: true, pip: true, fullscreen: true,
+      live: false, audioOnly: false,
+    },
     mount(container) {
       if (el.parentElement !== container) container.appendChild(el);
     },
@@ -466,7 +401,37 @@ function makeRecordingController(spec) {
     isReady() {
       return true;
     },
+    play() { el.play().catch(() => {}); },
+    pause() { el.pause(); },
+    togglePlay() { el.paused ? controller.play() : controller.pause(); },
+    seek(sec) { try { el.currentTime = Math.max(0, sec); } catch (_) { /* advisory */ } },
+    currentTime() { return el.currentTime; },
+    duration() { return Number.isFinite(el.duration) ? el.duration : NaN; },
+    setRate(r) { try { el.playbackRate = r; } catch (_) { /* advisory */ } },
+    state() {
+      return {
+        ready: el.readyState >= 1,
+        playing: !el.paused && !el.ended,
+        buffering: el.readyState < 3 && !el.paused && !el.ended,
+        ended: el.ended,
+        muted: el.muted,
+        volume: el.volume,
+        currentTime: el.currentTime,
+        duration: Number.isFinite(el.duration) ? el.duration : NaN,
+        rate: el.playbackRate,
+        quality: null,
+        qualities: [],
+        live: false,
+        error: el.dataset.failed ? "media error" : null,
+      };
+    },
+    onState(fn) {
+      subs.add(fn);
+      try { fn(controller.state()); } catch (_) { /* advisory */ }
+      return () => subs.delete(fn);
+    },
   };
+  return controller;
 }
 
 /// Load Twitch's embed SDK once, shared by every tile.
@@ -523,6 +488,19 @@ function makeTwitchController(spec) {
   let pendingQualityTier = null;
   let muted = !!spec.muted;
   let volume = typeof spec.volume === "number" ? spec.volume : 1;
+  let wantPlaying = spec.playing !== false;
+  let pollTimer = null;
+
+  const subs = new Set();
+  const notify = () => {
+    const s = controller.state();
+    subs.forEach((fn) => { try { fn(s); } catch (_) { /* advisory */ } });
+  };
+  // Twitch's SDK has no time/progress event, so state that might have
+  // drifted (isPaused/getEnded) is sampled while the tile is playing —
+  // stopped the moment it isn't, so an idle wall costs nothing.
+  const startPoll = () => { if (!pollTimer) pollTimer = setInterval(() => { if (player && ready) notify(); }, 500); };
+  const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
 
   /// Map a policy onto whatever this stream actually offers.
   ///
@@ -579,29 +557,61 @@ function makeTwitchController(spec) {
           /* pre-ready calls can throw on some builds */
         }
         if (pendingQualityTier) applyQuality(pendingQualityTier);
+        notify();
       });
+      player.addEventListener(Twitch.Player.PLAY, () => { startPoll(); notify(); });
+      player.addEventListener(Twitch.Player.PLAYING, () => { startPoll(); notify(); });
+      player.addEventListener(Twitch.Player.PAUSE, () => { stopPoll(); notify(); });
+      player.addEventListener(Twitch.Player.ENDED, () => { stopPoll(); notify(); });
+      player.addEventListener(Twitch.Player.OFFLINE, () => notify());
+      player.addEventListener(Twitch.Player.ONLINE, () => notify());
+      player.addEventListener(Twitch.Player.PLAYBACK_BLOCKED, () => notify());
     })
     .catch(() => {
       // SDK blocked or offline: fall back to a plain iframe in place, so
-      // the tile still plays rather than sitting empty.
+      // the tile still plays rather than sitting empty. Every method AND
+      // capability swaps to the fallback's — a stale capability set would
+      // leave the bar advertising controls (mute/quality) the tile can no
+      // longer honour — followed by exactly one state emission so any bar
+      // already mounted repaints against the new (all-but-fullscreen-off)
+      // reality.
       const fb = makeIframeController(spec);
       host.replaceWith(fb.root);
       player = null;
+      stopPoll();
       controller.root = fb.root;
+      controller.capabilities = fb.capabilities;
       controller.setMuted = fb.setMuted;
       controller.setVolume = fb.setVolume;
+      controller.setQuality = fb.setQuality;
       controller.repoint = fb.repoint;
       controller.destroy = fb.destroy;
       controller.mount = fb.mount;
+      controller.isReady = fb.isReady;
+      controller.play = fb.play;
+      controller.pause = fb.pause;
+      controller.togglePlay = fb.togglePlay;
+      controller.seek = fb.seek;
+      controller.currentTime = fb.currentTime;
+      controller.duration = fb.duration;
+      controller.setRate = fb.setRate;
+      controller.state = fb.state;
+      notify();
     });
 
   const controller = {
     kind: "twitch",
     root: host,
+    capabilities: {
+      play: true, pause: true, seek: false, duration: false, volume: true,
+      mute: true, quality: true, rate: false, pip: false, fullscreen: true,
+      live: true, audioOnly: false,
+    },
     mount(container) {
       if (controller.root.parentElement !== container) container.appendChild(controller.root);
     },
     destroy() {
+      stopPoll();
       try {
         // The SDK exposes no documented destroy; dropping the node releases
         // the iframe it created underneath.
@@ -657,6 +667,47 @@ function makeTwitchController(spec) {
     },
     isReady() {
       return ready;
+    },
+    play() {
+      wantPlaying = true;
+      if (player && ready) { try { player.play(); } catch (_) { /* advisory */ } }
+    },
+    pause() {
+      wantPlaying = false;
+      if (player && ready) { try { player.pause(); } catch (_) { /* advisory */ } }
+    },
+    togglePlay() {
+      if (player && ready) {
+        try { (player.isPaused() ? controller.play : controller.pause)(); return; } catch (_) { /* fall through */ }
+      }
+      controller.play();
+    },
+    seek() { /* Twitch is a live embed with no seek API */ },
+    currentTime() { return NaN; },
+    duration() { return NaN; },
+    setRate() { /* not exposed by the SDK */ },
+    state() {
+      let playing = wantPlaying;
+      let ended = false;
+      let currentQuality = null;
+      if (player && ready) {
+        try { playing = !player.isPaused(); } catch (_) { /* advisory */ }
+        try { ended = !!player.getEnded(); } catch (_) { /* advisory */ }
+        try { currentQuality = player.getQuality(); } catch (_) { /* advisory */ }
+      }
+      const usable = qualities.filter((q) => q && q.group && q.group !== "auto");
+      return {
+        ready, playing, buffering: false, ended, muted, volume,
+        currentTime: NaN, duration: NaN, rate: 1,
+        quality: currentQuality,
+        qualities: usable.map((q) => ({ id: q.group, label: q.name || q.group })),
+        live: true, error: null,
+      };
+    },
+    onState(fn) {
+      subs.add(fn);
+      try { fn(controller.state()); } catch (_) { /* advisory */ }
+      return () => subs.delete(fn);
     },
   };
   return controller;
@@ -720,6 +771,17 @@ function makeYouTubeController(spec) {
   let muted = !!spec.muted;
   let volume = typeof spec.volume === "number" ? spec.volume : 1;
   let videoId = spec.videoId || "";
+  let wantPlaying = spec.playing !== false;
+  let pollTimer = null;
+
+  const subs = new Set();
+  const notify = () => {
+    const s = controller.state();
+    subs.forEach((fn) => { try { fn(s); } catch (_) { /* advisory */ } });
+  };
+  // Like Twitch, no time/progress event — sample state while playing only.
+  const startPoll = () => { if (!pollTimer) pollTimer = setInterval(() => { if (player && ready) notify(); }, 500); };
+  const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
 
   // No video id means no player API: YT.Player addresses a video, and the
   // live embed strivo builds addresses a channel. Fall straight back rather
@@ -736,6 +798,7 @@ function makeYouTubeController(spec) {
   const fallBackToIframe = () => {
     if (fellBack) return;
     fellBack = true;
+    stopPoll();
     let fb;
     try {
       if (player && typeof player.destroy === "function") player.destroy();
@@ -748,12 +811,22 @@ function makeYouTubeController(spec) {
     const parent = controller.root.parentElement;
     controller.root.replaceWith(fb.root);
     controller.root = fb.root;
+    controller.capabilities = fb.capabilities;
     controller.setMuted = fb.setMuted;
     controller.setVolume = fb.setVolume;
+    controller.setQuality = fb.setQuality;
     controller.repoint = fb.repoint;
     controller.destroy = fb.destroy;
     controller.mount = fb.mount;
     controller.isReady = fb.isReady;
+    controller.play = fb.play;
+    controller.pause = fb.pause;
+    controller.togglePlay = fb.togglePlay;
+    controller.seek = fb.seek;
+    controller.currentTime = fb.currentTime;
+    controller.duration = fb.duration;
+    controller.setRate = fb.setRate;
+    controller.state = fb.state;
     if (parent) fb.mount(parent);
     // Re-apply the level the tile is supposed to be at.
     try {
@@ -761,6 +834,7 @@ function makeYouTubeController(spec) {
     } catch (_) {
       /* best effort */
     }
+    notify();
   };
 
   loadYouTubeApiOnce()
@@ -769,7 +843,7 @@ function makeYouTubeController(spec) {
       player = new YT.Player(host, {
         videoId,
         playerVars: {
-          autoplay: spec.playing !== false ? 1 : 0,
+          autoplay: wantPlaying ? 1 : 0,
           mute: muted ? 1 : 0,
           playsinline: 1,
           enablejsapi: 1,
@@ -785,6 +859,12 @@ function makeYouTubeController(spec) {
             } catch (_) {
               /* pre-ready races */
             }
+            notify();
+          },
+          onStateChange: (e) => {
+            const st = e && e.data;
+            if (st === 1) startPoll(); else stopPoll();
+            notify();
           },
           // Any player-side failure falls back to the plain channel-live
           // iframe — the path used before this controller existed. The API
@@ -812,10 +892,21 @@ function makeYouTubeController(spec) {
   const controller = {
     kind: "youtube",
     root: host,
+    // Quality is intentionally absent — see makeYouTubeController's own
+    // comment: setPlaybackQuality is a documented no-op. Seek/duration are
+    // also absent: the embed strivo builds addresses a live CHANNEL, not a
+    // VOD, so a seek control would imply a capability the live embed does
+    // not actually have.
+    capabilities: {
+      play: true, pause: true, seek: false, duration: false, volume: true,
+      mute: true, quality: false, rate: false, pip: false, fullscreen: true,
+      live: true, audioOnly: false,
+    },
     mount(container) {
       if (controller.root.parentElement !== container) container.appendChild(controller.root);
     },
     destroy() {
+      stopPoll();
       try {
         if (player && typeof player.destroy === "function") player.destroy();
       } catch (_) {
@@ -861,6 +952,55 @@ function makeYouTubeController(spec) {
     },
     isReady() {
       return ready;
+    },
+    play() {
+      wantPlaying = true;
+      if (player && ready) { try { player.playVideo(); } catch (_) { /* advisory */ } }
+    },
+    pause() {
+      wantPlaying = false;
+      if (player && ready) { try { player.pauseVideo(); } catch (_) { /* advisory */ } }
+    },
+    togglePlay() {
+      if (player && ready) {
+        try {
+          const st = player.getPlayerState();
+          (st === 1 ? controller.pause : controller.play)();
+          return;
+        } catch (_) { /* fall through */ }
+      }
+      controller.play();
+    },
+    seek() { /* the live-channel embed has no timeline to seek */ },
+    currentTime() { return NaN; },
+    duration() { return NaN; },
+    setRate() { /* not offered for the same reason as seek */ },
+    state() {
+      let playing = wantPlaying;
+      let ended = false;
+      let buffering = false;
+      let vol = volume;
+      let mutedNow = muted;
+      if (player && ready) {
+        try {
+          const st = player.getPlayerState();
+          playing = st === 1;
+          ended = st === 0;
+          buffering = st === 3;
+        } catch (_) { /* advisory */ }
+        try { vol = (player.getVolume() || 0) / 100; } catch (_) { /* advisory */ }
+        try { mutedNow = player.isMuted(); } catch (_) { /* advisory */ }
+      }
+      return {
+        ready, playing, buffering, ended, muted: mutedNow, volume: vol,
+        currentTime: NaN, duration: NaN, rate: 1,
+        quality: null, qualities: [], live: true, error: null,
+      };
+    },
+    onState(fn) {
+      subs.add(fn);
+      try { fn(controller.state()); } catch (_) { /* advisory */ }
+      return () => subs.delete(fn);
     },
   };
   return controller;
@@ -937,6 +1077,8 @@ function reconcileControllers(stage) {
     ctl.setMuted(vol === 0);
     ctl.setVolume(vol);
     ctl.setQuality(qualityPolicyFor(mount.dataset.kind || "", path));
+    const leaf = mount.closest(".ms-leaf");
+    if (leaf) mountPlayerBar(leaf, ctl, { path });
   }
 }
 
@@ -1432,8 +1574,9 @@ async function renderWatch() {
   const railOpen = playerState.chatRailOpen ? "true" : "false";
   const railToggleGlyph = playerState.chatRailOpen ? "▶" : "◀";
   const railTitle = playerState.chatRailOpen ? "Collapse chat rail" : "Open chat rail";
+  const theaterClass = countLeaves(playerState.layout) === 1 ? "is-theater" : "";
   root.innerHTML = chrome(`
-    <div id="watch" class="watch-root ${playerState.chatRailOpen ? "has-chat-rail" : ""}" role="main">
+    <div id="watch" class="watch-root ${playerState.chatRailOpen ? "has-chat-rail" : ""} ${theaterClass}" role="main">
       <div class="watch-content"><div class="empty">Loading…</div></div>
       <aside class="player-chat-rail" id="player-chat-rail" data-open="${railOpen}">
         <div class="player-chat-rail-head">
@@ -1486,16 +1629,19 @@ async function renderWatch() {
   paintPlayerStage(watchContent, streams);
   reconcilePlayerChatRail(streams);
   // Apply ?t=<sec> from in-context tools (Crunchr transcript jump,
-  // cuepoints tick, EDL jumps) once the video element has rendered.
+  // cuepoints tick, EDL jumps) via the controller interface — works for
+  // any future seekable controller, not just the recording <video>.
   if (seekTo > 0) {
-    setTimeout(() => {
-      const v = watchContent.querySelector("video.ms-video");
-      if (v) {
-        const apply = () => { try { v.currentTime = seekTo; v.play?.(); } catch (_) {} };
-        if (v.readyState >= 1) apply();
-        else v.addEventListener("loadedmetadata", apply, { once: true });
-      }
-    }, 0);
+    const key = contentKeyOf(getNodeAt(playerState.layout, ""));
+    const ctl = key && playerState.controllers.get(key);
+    if (ctl && typeof ctl.onState === "function") {
+      const unsub = ctl.onState((s) => {
+        if (s.ready) {
+          try { ctl.seek(seekTo); ctl.play && ctl.play(); } catch (_) { /* advisory */ }
+          unsub();
+        }
+      });
+    }
   }
 
   // Background refresh: poll the tiles endpoint every 30s and patch the
@@ -1790,20 +1936,35 @@ function paintPlayerStage(watch, streams) {
     <button class="sm ms-split-h" type="button" title="Split focused tile horizontally (side-by-side)">▥ Split H</button>
     <button class="sm ms-split-v" type="button" title="Split focused tile vertically (top + bottom)">▤ Split V</button>
     <button class="sm ms-collapse" type="button" title="Collapse the focused tile back into its sibling">↶ Undo split</button>` : "";
-  const toolbar = `
-    <div class="watch-toolbar">
-      <span class="watch-count pg-cap-hint">${streams.length} live · ${leaves}/${PLAYER_LEAF_CAP} tile${leaves === 1 ? "" : "s"}</span>
+  // Single-tile (theater) view: the wall-management controls (leaf
+  // count, Compose, Play-all, Mute-all) are about managing MULTIPLE
+  // tiles, so they collapse behind a disclosure once there's only one to
+  // manage. The preset picker stays outside it — switching to a grid
+  // preset is how you'd ever leave theater mode in the first place, so
+  // burying it behind its own toggle would be self-defeating. ids are
+  // preserved so Lane B's handlers still bind regardless of which
+  // markup shape wraps them.
+  const isTheater = leaves === 1;
+  const presetMenu = `
       <details class="ms-preset" id="ms-preset-menu">
         <summary class="sm ms-preset-summary" title="Multi-stream layout presets">▦ Multi-stream: ${htmlEscape(presetLabel)} ▾</summary>
         <div class="ms-preset-menu">${presetOpts}</div>
       </details>
-      ${customTools}
-      <span class="watch-tb-sep" aria-hidden="true">·</span>
+      ${customTools}`;
+  const wallControls = `
+      <span class="watch-count pg-cap-hint">${streams.length} live · ${leaves}/${PLAYER_LEAF_CAP} tile${leaves === 1 ? "" : "s"}</span>
       <button class="sm ms-compose-open" id="ms-compose-open" type="button"
               title="Open the multi-view composer — drag streams onto the plane">⊞ Compose</button>
       <button class="sm watch-playall ${playerState.autoplay ? "active" : ""}" id="watch-playall"
               type="button" title="${playerState.autoplay ? "Pause every tile" : "Start every tile"}">${playerState.autoplay ? "⏸ Pause all" : "▶ Play all"}</button>
-      <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>
+      <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>`;
+  const toolbar = `
+    <div class="watch-toolbar">
+      ${presetMenu}
+      <span class="watch-tb-sep" aria-hidden="true">·</span>
+      ${isTheater
+        ? `<details class="ms-layout-menu"><summary>Layout ▾</summary>${wallControls}</details>`
+        : wallControls}
     </div>`;
 
   // Capture existing iframes/videos before we blow the stage away so
@@ -1822,6 +1983,7 @@ function paintPlayerStage(watch, streams) {
   watch.innerHTML = "";
   watch.insertAdjacentHTML("beforeend", toolbar);
   watch.appendChild(stage);
+  document.getElementById("watch")?.classList.toggle("is-theater", isTheater);
 
   reconcileControllers(stage);
 
