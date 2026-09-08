@@ -96,25 +96,7 @@
   border-top: 1px solid var(--border-light);
   background: rgba(255, 255, 255, 0.02);
 }
-.btn-primary {
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  color: #fff;
-  border: 0;
-  padding: 0.5rem 1.1rem;
-  border-radius: 8px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.btn-primary:hover { transform: translateY(-1px); }
-.btn-ghost {
-  background: transparent;
-  border: 1px solid var(--border-light);
-  color: var(--text);
-  padding: 0.5rem 1.1rem;
-  border-radius: 8px;
-  font: inherit;
-  cursor: pointer;
-}
-.btn-ghost:hover { border-color: var(--accent2); }
+/* .btn-primary / .btn-ghost are aliases of button.primary / the base
+ * button system — see 000-pvr.css — so Creator screens render the same
+ * button look as the rest of the app instead of a second visual system. */
 

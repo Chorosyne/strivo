@@ -1094,7 +1094,7 @@ function startOnboardingTour() {
           <button class="sm tour-skip" type="button">Skip tour</button>
           <span class="spacer"></span>
           ${idx > 0 ? `<button class="sm tour-prev" type="button">← Back</button>` : ""}
-          <button class="btn-primary sm tour-next" type="button">
+          <button class="primary sm tour-next" type="button">
             ${idx === TOUR_STEPS.length - 1 ? "Finish" : "Next →"}
           </button>
         </div>
