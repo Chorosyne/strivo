@@ -192,17 +192,10 @@ function wireSettingsControls() {
     };
     masterEl.addEventListener("change", syncMaster);
   });
-  // Onboarding controls — replay the welcome tour / reset per-page hints.
+  // Onboarding controls — replay the welcome tour.
   pane.querySelector("#stg-replay-tour")?.addEventListener("click", () => {
     localStorage.removeItem("strivo-tour-done");
     startOnboardingTour();
-  });
-  pane.querySelector("#stg-reset-hints")?.addEventListener("click", () => {
-    for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("strivo-hint-")) localStorage.removeItem(k);
-    }
-    Toast.success("Per-page hints reset · will reappear next visit");
-    render().catch(() => {});
   });
   // Layout reorder widgets — Kodi/Aeon-style up/down lists.
   // Each .stg-reorder reads its current order from localStorage

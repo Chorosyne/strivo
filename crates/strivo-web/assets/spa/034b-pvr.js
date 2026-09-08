@@ -25,9 +25,6 @@
           row("Welcome tour",
             `<button class="sm" id="stg-replay-tour" type="button">Replay tour</button>`,
             "Walk through the topbar one stop at a time. Useful after a major UI change."),
-          row("Per-page hints",
-            `<button class="sm" id="stg-reset-hints" type="button">Reset dismissed hints</button>`,
-            "Make every per-page hint banner show up again on the next visit."),
         ].join("")),
         group("Accessibility", [
           row("Reduce motion", toggle("ui.reduce_motion", ui.reduce_motion),

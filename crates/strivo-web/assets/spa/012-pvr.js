@@ -14,13 +14,6 @@
       await renderHistory();
       break;
   }
-  // After whichever route renderer finishes, mount its per-page hint
-  // unconditionally. Renderers that already call setupChromeHandlers()
-  // (most of them) mounted earlier; this is a belt for the few that
-  // bypass it (renderChat, renderWatch). maybeMountPageHint short-
-  // circuits when a hint is already present, so the double call is
-  // safe + idempotent.
-  maybeMountPageHint(r);
 }
 
 // ── Edition gating ────────────────────────────────────────────────────
@@ -196,9 +189,6 @@ function setupChromeHandlers() {
   }).catch(() => {});
   // Channel list lives in the left rail on every page.
   paintChannelList();
-  // Per-page first-visit hint banner. No-op when this route's hint has
-  // already been dismissed or no hint copy exists for the route.
-  maybeMountPageHint(currentRoute());
 }
 
 // Topbar health pill: only shown when the worst check is warn/error, so a

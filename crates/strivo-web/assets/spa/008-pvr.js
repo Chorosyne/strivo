@@ -495,10 +495,6 @@ async function render() {
   if (r !== "archive" && typeof teardownArchive === "function") {
     teardownArchive();
   }
-  // Clear any prior per-page hint before the new route paints; it'll be
-  // re-mounted (if applicable) by maybeMountPageHint after the route
-  // renderer finishes. Avoids stale Library copy bleeding onto Chat etc.
-  document.getElementById("page-hint")?.remove();
   // Universal pre-paint hydration. Every chrome-painting route gets
   // its declared cache dependencies fetched in parallel before its
   // renderer runs. Prevents the 'rail empty on deep-link' family of

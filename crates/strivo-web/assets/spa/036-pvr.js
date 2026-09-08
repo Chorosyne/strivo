@@ -1032,27 +1032,17 @@ function runCmdk(i) {
   if (item) item.run();
 }
 
-// ── Onboarding tour + per-page hint banners ──────────────────────────
+// ── Onboarding tour ───────────────────────────────────────────────────
 // LocalStorage keys:
 //   strivo-tour-done                → seen the welcome walkthrough
-//   strivo-hint-<route>             → dismissed the per-page hint
-// Hint copy is intentionally one line each — the goal is "I know what
-// this surface is for", not full docs.
-// The `pipelines` and `plugins` entries are Creator Edition only — pushed in
-// by 037-creator.js when that feature is compiled in. Both routes already
-// bounce to Home in a PVR build (CREATOR_ROUTES, see 008-pvr.js), but the
-// hint/tour copy itself must not exist as bytes in a PVR bundle either.
-const PAGE_HINTS = {
-  library:    "Live channels in the rail + the current capture dashboard. Click any rail row to see channel detail.",
-  recordings: "Every recording past + present. Tick rows to enable bulk actions, click headers to sort, chips filter by state.",
-  schedule:   "Per-channel record-when-live + auto-download switches. Capture limits + disk gauge live up top.",
-  watch:      "Tile any subset of currently live channels. Unmute one tile at a time; Shift+I shows shortcuts.",
-  chat:       "Twitch IRC over WSS. Tab strip picks a room; filter chips narrow live. BTTV globals + Twitch emotes render as images.",
-  settings:   "Live daemon config. Toggles persist to ~/.config/strivo/config.toml on change.",
-  system:     "Health checks + storage gauge + platform-auth status + Backup/Restore.",
-  logs:       "Rolling daemon log. Toggle Follow for tail mode; Copy / Download exports the filtered view.",
-  history:    "Durable per-recording journal that survives daemon restarts.",
-};
+// The per-page hint banner system (#page-hint / PAGE_HINTS / dismissible
+// per-route tips) was removed by user decision — the onboarding tour and
+// "Replay tour" are the surviving surface. PAGE_HINTS stays declared as an
+// empty, unconsumed object: 037-creator.js:6-7 (outside this lane's
+// ownership, which covers only its splice anchors at lines 17-25) still
+// assigns `PAGE_HINTS.pipelines`/`.plugins` onto it, so removing the
+// binding would break the Creator build. Nothing reads from it anymore.
+const PAGE_HINTS = {};
 
 // Top-bar slots the tour walks. Order matches the natural left-to-right
 // flow; each step pins to the corresponding .topnav-link by data-route.
@@ -1067,8 +1057,6 @@ const TOUR_STEPS = [
 
 function tourDone() { return localStorage.getItem("strivo-tour-done") === "1"; }
 function markTourDone() { localStorage.setItem("strivo-tour-done", "1"); }
-function hintDismissed(route) { return localStorage.getItem(`strivo-hint-${route}`) === "1"; }
-function dismissHint(route) { localStorage.setItem(`strivo-hint-${route}`, "1"); }
 
 function startOnboardingTour() {
   if (tourDone()) return;
@@ -1112,30 +1100,6 @@ function startOnboardingTour() {
     overlay.remove();
   };
   paint();
-}
-
-// Mount a per-page hint banner above the current route's main content
-// IFF the user hasn't dismissed this route's hint yet. Idempotent —
-// called after each render() and short-circuits when already mounted.
-function maybeMountPageHint(route) {
-  if (!route || hintDismissed(route) || !PAGE_HINTS[route]) return;
-  if (document.getElementById("page-hint")) return;
-  const banner = document.createElement("div");
-  banner.id = "page-hint";
-  banner.className = "page-hint";
-  banner.innerHTML = `
-    <span class="page-hint-icon" aria-hidden="true">💡</span>
-    <span class="page-hint-text">${htmlEscape(PAGE_HINTS[route])}</span>
-    <button class="page-hint-dismiss sm" type="button" aria-label="Dismiss this hint">✕</button>`;
-  // Insert as the first child of the main chrome region so it sits
-  // above any page-specific page-title / subtitle.
-  const chrome = document.querySelector(".chrome");
-  if (!chrome) return;
-  chrome.insertBefore(banner, chrome.children[1] || null);
-  banner.querySelector(".page-hint-dismiss").addEventListener("click", () => {
-    dismissHint(route);
-    banner.remove();
-  });
 }
 
 // Keyboard-shortcuts help overlay rows (Shift+I). Creator-only nav slots
