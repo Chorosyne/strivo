@@ -895,6 +895,46 @@
   font-size: 0.9rem;
 }
 
+/* Compact bar — tiles shorter than ~300px (a grid quadrant/wall at
+   typical viewport sizes). The vendor player's own control bar (Twitch
+   logo · pause · volume · settings · fullscreen, rendered INSIDE the
+   iframe) sits at the same pixels as an overlaid `.player-bar` would;
+   docking below the media instead of over it is what avoids the
+   collision the round-2 walk-through caught (a ✕ remove landing right on
+   Twitch's own fullscreen button). Always visible — a hover-only strip
+   this thin is hard to land a pointer on anyway — and DRIVES nothing the
+   vendor bar already covers, so play/seek/rate/PiP/fullscreen never
+   render here (mountPlayerBar omits them entirely in this mode; see
+   019a-pvr.js `isLeafCompact`). Never applied to a fullscreen leaf
+   (JS-enforced; `:not(:fullscreen)` here is belt-and-braces). */
+.ms-leaf.is-compact:not(:fullscreen) .ms-media {
+  bottom: 32px;
+}
+.ms-leaf.is-compact:not(:fullscreen) .player-bar {
+  height: 32px;
+  padding: 0 var(--space-2, 8px);
+  gap: var(--space-2, 8px);
+  font-size: var(--text-caption, 13px);
+  background: hsla(208, 89%, 4%, 0.92);
+  opacity: 1;
+  pointer-events: auto;
+  transition: none;
+}
+.ms-leaf.is-compact .pb-platform,
+.ms-leaf.is-compact .pb-center {
+  display: none;
+}
+.ms-leaf.is-compact .icon-btn {
+  min-width: 28px;
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  font-size: 0.85rem;
+}
+.ms-leaf.is-compact .ms-vol {
+  width: 44px;
+}
+
 /* A download is activity, but it is not live — so it never wears the
    recording red. */
 .live-pill.live-pill-download {
