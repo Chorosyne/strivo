@@ -11,12 +11,44 @@
   gap: 0.6rem;
   padding: 0.5rem 0.8rem;
   align-items: stretch;
-  height: calc(100vh - 80px);
+  /* 56px topbar + the 1.5rem top/bottom .content padding this route sits
+     inside — omitting the padding term left the page ~24px too tall, so
+     #/watch scrolled at common desktop sizes even with a single tile. */
+  height: calc(100vh - 56px - 3rem);
   min-height: 0;
 }
 .watch-root.has-chat-rail {
   grid-template-columns: 1fr 340px;
 }
+/* Theater layout — exactly one tile in the layout tree. The stage locks
+   to a 16:9 letterbox and centers, rather than stretching one tile to
+   fill whatever oddly-shaped remainder the toolbar + rail leave behind. */
+.watch-root.is-theater .ms-stage {
+  /* `.watch-content .ms-stage` (not ours) sets `flex: 1` so the stage
+     fills the column's remaining height on every OTHER layout — exactly
+     what a grid of tiles wants. A single letterboxed tile wants the
+     opposite: an intrinsic 16:9 box that shrinks to fit whichever axis
+     is tighter. `flex: none` opts back out of the grow/stretch behaviour
+     so `aspect-ratio` can size the box from `max-width`/`max-height`
+     instead of being forced to whatever height flex-grow handed it. */
+  flex: none;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  align-self: center;
+  margin: auto;
+  --stage-aspect: 16 / 9;
+}
+.ms-layout-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85em;
+  padding: 0.2rem 0.5rem;
+}
+.ms-layout-menu[open] > summary { margin-bottom: 0.3rem; }
 .watch-content {
   min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
@@ -53,7 +85,7 @@
 }
 .player-chat-rail-toggle {
   flex-shrink: 0;
-  width: 24px; height: 24px;
+  width: 36px; height: 36px;
   padding: 0 !important;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.9rem;
@@ -697,12 +729,172 @@
 }
 
 /* Mount point a PlayerController appends its media element into. The
-   controller owns that element across repaints; this box is disposable. */
+   controller owns that element across repaints; this box is disposable.
+   Absolutely filling `.ms-media` (rather than the old `flex: 1`, which
+   depended on `.ms-leaf` itself being the flex container) so it still
+   gets real dimensions now that it sits inside the `.ms-media` wrapper. */
 .ms-mount {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   min-width: 0;
   min-height: 0;
+}
+
+/* ── Player bar ──────────────────────────────────────────────────────
+   One StriVo control surface per tile, replacing the old stacked
+   .watch-tile-head ABOVE the media box + whatever the vendor player
+   renders INSIDE its iframe. `.ms-media` fills the leaf; `.player-bar`
+   floats over its bottom edge and is painted per-tile from the
+   controller's capabilities (mountPlayerBar in 019a-pvr.js) — a
+   capability the controller can't drive is never rendered here. */
+.ms-media {
+  position: absolute;
+  inset: 0;
+}
+.player-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 44px;
+  padding: 0 0.4rem;
+  background: linear-gradient(0deg, hsla(208, 89%, 3%, 0.88), hsla(208, 89%, 3%, 0.55) 70%, transparent);
+  color: var(--fg);
+  font-size: 0.8rem;
+  opacity: 0;
+  overflow: hidden;
+  transition: opacity 0.15s ease;
+}
+/* Deliberately NOT `pointer-events: none` while hidden. That reads right
+   on paper — an invisible bar shouldn't eat clicks — but a bar that only
+   becomes hit-testable once :hover already applies cannot be reached by
+   a click that starts from outside it: Chromium's actionability model
+   (Playwright included) checks "is this the topmost hit-testable element
+   at these coordinates" BEFORE moving the pointer there, so a
+   pointer-events:none control can never receive the very hover event
+   that would have un-hidden it — a real deadlock, not a timing issue.
+   The frozen player-controller.spec.ts drives `.ms-solo` / `.ms-vol`
+   with a bare `.click()` / `.fill()` and no prior hover, which this
+   would break outright. Opacity alone gives the still-correct visual —
+   invisible until hovered/focused/pinned — without that trap. */
+.ms-leaf:hover .player-bar,
+.ms-leaf:focus-within .player-bar,
+.ms-leaf.is-bar-pinned .player-bar,
+.ms-stage.is-dnd .ms-leaf .player-bar,
+.ms-leaf:fullscreen .player-bar {
+  opacity: 1;
+}
+/* Recordings get a longer-lived bar (a 2.5s inactivity timer, wired in
+   019a) rather than the pure CSS :hover reveal live tiles use — mouse
+   events don't bubble out of a cross-origin iframe, so :hover is the
+   only signal a live tile's bar ever gets. */
+.player-bar .pb-left,
+.player-bar .pb-center,
+.player-bar .pb-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.player-bar .pb-left { flex: 1; overflow: hidden; }
+.player-bar .pb-right { flex: none; }
+.player-bar .pb-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-bar .pb-platform { flex: none; }
+.player-bar .pb-grab {
+  cursor: grab;
+  flex: none;
+  opacity: 0.7;
+}
+.player-bar .pb-grab:active { cursor: grabbing; }
+.player-bar .pb-live-pill {
+  flex: none;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: hsla(0, 70%, 45%, 0.35);
+  border: 1px solid hsl(0, 70%, 60%);
+  color: hsl(0, 70%, 85%);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.player-bar .pb-center {
+  flex: 1 1 auto;
+  min-width: 40px;
+}
+.player-bar .pb-seek {
+  flex: 1 1 auto;
+  min-width: 40px;
+  max-width: 200px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.player-bar .pb-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.player-bar .pb-quality,
+.player-bar .pb-rate {
+  flex: none;
+  max-width: 84px;
+  background: var(--overlay);
+  border: 1px solid var(--border);
+  color: inherit;
+  border-radius: var(--radius-sm, 8px);
+  font: inherit;
+  font-size: 0.75rem;
+  height: 32px;
+  padding: 0 0.3rem;
+}
+.player-bar .pb-left {
+  flex: 1 1 auto;
+  max-width: 45%;
+}
+.player-bar .pb-right {
+  flex: none;
+}
+/* Every control button — icon or otherwise — clears a 36px hit area
+   regardless of its visual glyph size. */
+.player-bar .icon-btn {
+  min-width: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm, 8px);
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+.player-bar .icon-btn:hover { background: hsla(0, 0%, 100%, 0.12); }
+.player-bar .ms-vol { width: 64px; opacity: 0.85; }
+
+/* Unified fullscreen — `.ms-leaf` is the element that actually goes
+   fullscreen (no `.watch-tile` wrapper exists), so this is the only
+   fullscreen rule the SPA needs. */
+.ms-leaf:fullscreen {
+  width: 100vw;
+  height: 100vh;
+}
+.ms-leaf:fullscreen .ms-media {
+  inset: 0;
+}
+.ms-leaf:fullscreen .player-bar {
+  height: 56px;
+  font-size: 0.9rem;
 }
 
 /* A download is activity, but it is not live — so it never wears the
