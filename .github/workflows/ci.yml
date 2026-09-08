@@ -69,6 +69,14 @@ jobs:
       - name: test
         run: cargo test --workspace --release --all-targets --locked
 
+      # Some behaviour only exists in a debug build — most notably the
+      # `STRIVO_DEV_UNLOCK_ALL` entitlement override, which `licence::gate`
+      # compiles out of release. Tests covering those paths are
+      # `cfg(debug_assertions)`-gated and would never run in the release
+      # step above, so run the suite once more unoptimised.
+      - name: test (debug — covers debug-only paths)
+        run: cargo test --workspace --all-targets --locked
+
       - name: build (PVR — default edition)
         run: cargo build --release --locked
 

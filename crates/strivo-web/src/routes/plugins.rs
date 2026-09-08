@@ -5800,6 +5800,14 @@ mod research_route_tests {
         }
     }
 
+    // Entitlement is unreachable in a release build by construction:
+    // `licence::gate::dev_unlock` is `cfg!(debug_assertions)`-gated, and the
+    // dev override is currently the only path to `entitled()` (the licence
+    // cache path is held — see "hold creator edition release paths"). So the
+    // entitled happy paths below can only be exercised in a debug build; the
+    // unentitled/locked paths above are what a release binary can actually
+    // reach, and they run in every profile. CI runs the suite in both.
+    #[cfg(debug_assertions)]
     #[tokio::test]
     async fn list_codes_happy_path_returns_envelope() {
         let _guard = ENV_GUARD.lock().await;
@@ -5907,6 +5915,14 @@ mod research_route_tests {
         }
     }
 
+    // Entitlement is unreachable in a release build by construction:
+    // `licence::gate::dev_unlock` is `cfg!(debug_assertions)`-gated, and the
+    // dev override is currently the only path to `entitled()` (the licence
+    // cache path is held — see "hold creator edition release paths"). So the
+    // entitled happy paths below can only be exercised in a debug build; the
+    // unentitled/locked paths above are what a release binary can actually
+    // reach, and they run in every profile. CI runs the suite in both.
+    #[cfg(debug_assertions)]
     #[tokio::test]
     async fn assign_source_case_happy_path_links_source_to_case() {
         let _guard = ENV_GUARD.lock().await;
