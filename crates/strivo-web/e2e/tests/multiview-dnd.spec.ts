@@ -26,6 +26,14 @@ const YT_LIVE_ROW = '.ch-row[data-live-stream-id="YouTube:UClive0000000000000000
 const FINISHED_REC_ID = "11111111-1111-1111-1111-111111111111";
 
 test.describe.configure({ mode: "serial" });
+// A wide, tall-enough box so grid-regular presets pack the same way the
+// rest of this file already assumed BEFORE aspect-aware repacking
+// existed (split-screen side by side, quadrant 2x2) — Playwright's
+// default 1280x720 is narrow enough that split-screen's 2x1 no longer
+// clears the 70% packing threshold there and repacks to 1x2 (stacked),
+// which is CORRECT behaviour but not what the swap/neighbour tests below
+// are exercising. Packing itself gets its own explicit viewports.
+test.use({ viewport: { width: 1440, height: 900 } });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -312,6 +320,10 @@ test("x removes a populated tile back to empty", async ({ page }) => {
 
 test("Shift+ArrowRight swaps the focused tile with its neighbour", async ({ page }) => {
   await installFakePlayers(page);
+  // Short enough that split-screen packs side by side (2x1) rather than
+  // stacked (1x2, the file's default 1440x900 box's own better packing)
+  // — this test is specifically about a HORIZONTAL neighbour.
+  await page.setViewportSize({ width: 1440, height: 680 });
   await page.goto("/app#/watch");
   await waitForFakePlayers(page);
 
@@ -375,4 +387,106 @@ test("rail click on #/watch fills the focused tile; Ctrl-click still goes to #/l
   await waitForFakePlayers(page);
   await page.locator(YT_LIVE_ROW).click({ modifiers: ["Control"] });
   await expect(page).toHaveURL(/#\/library/);
+});
+
+// ── Round 2: aspect-aware repacking, offline slot, gutter ratio ─────────
+
+test("packing prefers side-by-side for 2 tiles on a wide-short stage, 2x2 stays on a squarer one", async ({ page }) => {
+  await page.goto("/app#/library");
+  const result = await page.evaluate(() => {
+    const h = (window as any).__strivoTestHooks;
+    return {
+      wideShort: h.bestPackedGridShape(2, 1000, 400, { cols: 2, rows: 1 }),
+      squareQuadrant: h.bestPackedGridShape(4, 1000, 700, { cols: 2, rows: 2 }),
+    };
+  });
+  expect(result.wideShort).toEqual({ cols: 2, rows: 1 });
+  expect(result.squareQuadrant).toEqual({ cols: 2, rows: 2 });
+});
+
+test("packing actually reshapes the rendered tree for a short stage", async ({ page }) => {
+  await installFakePlayers(page);
+  // Tall-ish relative to width — split-screen's 2x1 wastes over 30% of
+  // this box, so it should repack to a vertical 1x2 stack instead.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
+  await useSplitScreen(page);
+  const dir = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.layout.dir);
+  expect(dir).toBe("v");
+
+  // And back to side-by-side once the box is short enough that 2x1 wins.
+  await page.setViewportSize({ width: 1440, height: 680 });
+  await page.locator(".ms-preset-summary").click();
+  await page.locator('.ms-preset-opt[data-preset="split-screen"]').click();
+  const dir2 = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.layout.dir);
+  expect(dir2).toBe("h");
+});
+
+test("offline slot pill opens the picker card", async ({ page }) => {
+  await installFakePlayers(page);
+  await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
+  await pickLive(page, "Twitch:twitch-live-1");
+  await expect(page.locator('.ms-leaf[data-stream-id="Twitch:twitch-live-1"]')).toHaveCount(1);
+
+  // The stream leaves the live set (offline, or dropped off the 30s
+  // poll) — repaint with no live streams at all, the same way that poll
+  // does (tryPatchPlayerStage's own fast path, not a forced full
+  // repaint), so renderPopulatedSlotHtml can't resolve it and falls onto
+  // the "Stream offline" pill. streamId itself never changes when a
+  // channel goes offline, only whether `streams` resolves it — the patch
+  // path's diff has to compare against what's actually painted, not just
+  // node identity, or this silently leaves the stale tile in place.
+  await page.evaluate(() => {
+    const h = (window as any).__strivoTestHooks;
+    const watch = document.getElementById("watch");
+    h.paintPlayerStage(watch.querySelector(".watch-content"), []);
+  });
+  const pill = page.locator(".ms-empty-pill");
+  await expect(pill).toBeVisible();
+  await pill.click();
+
+  await expect(page.locator(".ms-picker")).toHaveCount(1);
+});
+
+test("Ctrl+Shift+ArrowRight nudges the split ratio and it survives reload", async ({ page }) => {
+  await installFakePlayers(page);
+  // Short enough that split-screen packs side by side — Ctrl+Shift+Right
+  // only acts on an "h" split.
+  await page.setViewportSize({ width: 1440, height: 680 });
+  await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
+  await useSplitScreen(page);
+  await pickLive(page, "Twitch:twitch-live-1");
+
+  await page.locator('.ms-leaf[data-stream-id="Twitch:twitch-live-1"] .ms-vol').focus();
+  await page.keyboard.press("Control+Shift+ArrowRight");
+
+  const ratioAfter = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.layout.ratio);
+  expect(ratioAfter).toBeCloseTo(0.55, 5);
+
+  await installFakePlayers(page);
+  await page.reload();
+  await waitForFakePlayers(page);
+  const ratioReloaded = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.layout.ratio);
+  expect(ratioReloaded).toBeCloseTo(0.55, 5);
+});
+
+test("the stage sits directly under the toolbar, no dead band above it", async ({ page }) => {
+  await installFakePlayers(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/app#/watch");
+  await waitForFakePlayers(page);
+  await useSplitScreen(page);
+
+  const gap = await page.evaluate(() => {
+    const toolbar = document.querySelector(".watch-toolbar").getBoundingClientRect();
+    const stage = document.querySelector(".ms-stage").getBoundingClientRect();
+    return stage.top - toolbar.bottom;
+  });
+  // The old bug was ~200px of dead space split above AND below an
+  // aspect-locked stage; this only allows the small intentional flex
+  // gap between the toolbar and the stage, never a centering band.
+  expect(gap).toBeLessThanOrEqual(16);
 });
