@@ -45,6 +45,16 @@ const HIT_TARGET_ALLOWLIST: { match: (path: string) => boolean; reason: string }
       "(018-pvr.js) and out of this lane's ownership. Reported target: 32px " +
       "(matches the rail sort control and rail section headers) — Lane A to apply.",
   },
+  {
+    match: (p) => p.includes("ch-section-title"),
+    reason:
+      "Only actually offends on #/watch: Lane A's body.route-watch rule " +
+      "(019a-pvr.css) collapses .leftrail to a 56px icon strip and hides " +
+      "this button's label/caret/count children, leaving the empty button " +
+      "shell at ~22px wide. That's inside Lane A's owned route-watch scope " +
+      "(this lane was told not to touch .leftrail/.chrome grid geometry " +
+      "this round) — flagging for Lane A/coordinator rather than fixing here.",
+  },
 ];
 
 function report(title: string, offenders: unknown[], enforce: boolean) {
