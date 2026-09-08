@@ -1823,8 +1823,11 @@ a.media-pill:hover,
 .rec-info-thumb .rec-thumb-missing::after { font-size: 1rem; letter-spacing: 0.15em; }
 
 /* Recordings index density + multi-select mass-edit (item 22). */
-.rec-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
-.rec-toolbar .grid-filter { flex: 1; }
+.rec-toolbar { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; }
+/* min-width so the filter never shrinks below a usable width and
+ * truncates its own placeholder when the toolbar's other controls (date
+ * range, group-by, density, view toggle, clear-errored) crowd it. */
+.rec-toolbar .grid-filter { flex: 1; min-width: 240px; }
 .recordings-table.compact th,
 .recordings-table.compact td { padding: 0.2rem 0.5rem; font-size: 0.78rem; }
 .recordings-table th.rec-check,

@@ -374,6 +374,51 @@ function paintHistory() {
       }).catch((err) => Toast.error(`Delete failed: ${err.message}`));
     });
   });
+  host.querySelectorAll("[data-action=rec-rerecord]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeAllRecRowMenus();
+      const r = histCache.find((row) => row.id === btn.dataset.jobId);
+      if (!r) return;
+      if (!(await confirmDialog(`Re-record '${r.channel_name}' now? This starts a fresh capture and may collide with any active recording on that channel.`, { ok: "Re-record", danger: true })))
+        return;
+      await withBusy(btn, "Queuing…", async () => {
+        await API.startRecording({
+          channel_id: r.channel_id,
+          channel_name: r.channel_name,
+          platform: r.platform,
+          from_start: true,
+        });
+        Toast.success("Re-record queued");
+        renderRecordingsTimeline().catch(() => {});
+      }).catch((err) => Toast.error(`Re-record failed: ${err.message}`));
+    });
+  });
+  host.querySelectorAll("[data-action=rec-remux]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeAllRecRowMenus();
+      if (!(await confirmDialog("Remux this recording for browser playback? The original is kept as <name>.orig until success.", { ok: "Remux" })))
+        return;
+      await withBusy(btn, "Remuxing…", async () => {
+        await API.remuxRecording(btn.dataset.jobId);
+        Toast.success("Remuxed");
+        renderRecordingsTimeline().catch(() => {});
+      }).catch((err) => Toast.error(`Remux failed: ${err.message}`));
+    });
+  });
+  host.querySelectorAll("[data-action=rec-menu-toggle]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const list = btn.nextElementSibling;
+      const willOpen = list.hidden;
+      closeAllRecRowMenus();
+      if (willOpen) {
+        list.hidden = false;
+        btn.setAttribute("aria-expanded", "true");
+      }
+    });
+  });
   // Clicking anywhere on the pill (outside buttons) opens the Info
   // modal — same convention as the Recordings table.
   host.querySelectorAll(".media-pill").forEach((pill) => {
@@ -402,6 +447,25 @@ function historyPillHtml(j) {
     ? `<button class="sm" data-action="rec-rescan" data-job-id="${htmlEscape(j.id)}" title="Re-check whether the file exists">↻ Re-scan</button>
        <button class="sm" data-action="rec-locate" data-job-id="${htmlEscape(j.id)}" data-path="${htmlEscape(j.output_path || "")}" title="Show the expected file path">📂 Show path</button>`
     : "";
+  // Same "⋯" row menu as the Recordings table (recordingRow, 012-pvr.js) —
+  // Info stays inline, Re-record/Remux/Delete live behind it. Re-record
+  // needs channel_id, which the history/jobs record carries in the real
+  // daemon; guarded defensively in case a caller's row lacks it.
+  const isActive = stateClassName(j.state) === "recording" || stateClassName(j.state) === "downloading";
+  const canRerecord = !isActive && j.channel_id;
+  const canRemux = isFinished;
+  const canDelete = j.file_exists !== false || stateClassName(j.state) !== "recording";
+  const menuItems = [
+    canRerecord ? `<button class="rec-row-menu-item" type="button" data-action="rec-rerecord" data-job-id="${htmlEscape(j.id)}">↺ Re-record</button>` : "",
+    canRemux ? `<button class="rec-row-menu-item" type="button" data-action="rec-remux" data-job-id="${htmlEscape(j.id)}" title="Remux for browser playback">⇄ Remux</button>` : "",
+    canDelete ? `<button class="rec-row-menu-item danger" type="button" data-action="rec-delete" data-job-id="${htmlEscape(j.id)}" title="Delete (moves file to 7-day trash)">✕ Delete</button>` : "",
+  ].join("");
+  const rowMenu = menuItems
+    ? `<div class="rec-row-menu">
+         <button class="sm rec-row-menu-toggle" type="button" data-action="rec-menu-toggle" aria-haspopup="true" aria-expanded="false" title="More actions">⋯</button>
+         <div class="rec-row-menu-list" hidden role="menu">${menuItems}</div>
+       </div>`
+    : "";
   return `
     <div class="media-pill hist-pill${j.file_exists === false ? " mp-broken" : ""}"
          data-job-id="${htmlEscape(j.id)}">
@@ -419,7 +483,7 @@ function historyPillHtml(j) {
         ${playBtn}
         ${fileErrorBtns}
         <button class="sm" data-action="rec-info" data-job-id="${htmlEscape(j.id)}" title="Recording details">ⓘ Info</button>
-        <button class="danger sm" data-action="rec-delete" data-job-id="${htmlEscape(j.id)}" title="Delete (moves file to 7-day trash)">✕</button>
+        ${rowMenu}
       </div>
     </div>`;
 }
