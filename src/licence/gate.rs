@@ -75,12 +75,28 @@ mod tests {
     }
 
     #[test]
-    fn dev_unlock_env_grants_entitlement() {
-        // SAFETY: this test only sets the env if not already set;
-        // `STRIVO_DEV_UNLOCK_ALL=1` is the documented unlock path.
+    fn dev_unlock_env_grants_entitlement_only_in_debug_builds() {
+        // The override is debug-only by construction (see `dev_unlock`):
+        // a release binary must never unlock Pro features from an
+        // environment variable, which is the property "hold creator
+        // edition release paths" established.
+        //
+        // Assert against `cfg!(debug_assertions)` rather than
+        // `#[cfg(debug_assertions)]`-gating the whole test, so the
+        // release half — the half that actually matters for shipping —
+        // is covered instead of compiled away. CI runs the suite with
+        // `--release`, where an unconditional assert here fails.
         std::env::set_var("STRIVO_DEV_UNLOCK_ALL", "1");
-        assert!(is_entitled("test-plugin-a", TEST_PRO_PLUGINS));
-        assert!(entitled());
+        assert_eq!(
+            is_entitled("test-plugin-a", TEST_PRO_PLUGINS),
+            cfg!(debug_assertions),
+            "dev unlock must grant entitlement in debug and never in release"
+        );
+        assert_eq!(entitled(), cfg!(debug_assertions));
         std::env::remove_var("STRIVO_DEV_UNLOCK_ALL");
+
+        // Absent the variable, nothing is entitled in either profile.
+        assert!(!is_entitled("test-plugin-a", TEST_PRO_PLUGINS));
+        assert!(!entitled());
     }
 }
