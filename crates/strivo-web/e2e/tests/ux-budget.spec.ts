@@ -37,17 +37,20 @@ function report(title: string, offenders: unknown[]) {
   if (ENFORCE) expect(offenders, title).toEqual([]);
 }
 
-async function open(page: Page, route: string, layout?: unknown) {
+async function open(page: Page, route: string, layout?: unknown, preset = "custom") {
   await page.addInitScript(
-    ({ layout }) => {
+    ({ layout, preset }) => {
       localStorage.setItem("strivo-tour-done", "1");
       localStorage.setItem("strivo-player-autoplay", "0");
       if (layout) {
         localStorage.setItem("strivo-player-layout", JSON.stringify(layout));
-        localStorage.setItem("strivo-player-preset", "custom");
+        // The preset name matters: aspect-aware sizing only engages for the
+        // grid-regular presets, so a quadrant seeded as "custom" measures the
+        // unconstrained path instead of the one users get from the menu.
+        localStorage.setItem("strivo-player-preset", preset);
       }
     },
-    { layout },
+    { layout, preset },
   );
   await page.goto(`/app#/${route}`);
   await page.locator(".chrome").waitFor();
@@ -192,7 +195,7 @@ const LAYOUTS: Record<string, unknown> = {
 test.describe("#/watch tiles keep their video", () => {
   for (const [name, layout] of Object.entries(LAYOUTS)) {
     test(`${name}: letterbox ≤ 10% per tile`, async ({ page }) => {
-      await open(page, "watch", layout);
+      await open(page, "watch", layout, name);
       const offenders = await page.evaluate((max) => {
         const out: { path: string; w: number; h: number; px: number }[] = [];
         document.querySelectorAll(".ms-leaf:not(.ms-empty)").forEach((leaf) => {
