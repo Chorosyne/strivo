@@ -14,15 +14,17 @@ TOUR_STEPS.splice(settingsStepIdx, 0,
 );
 
 // Same idea for the keyboard-shortcuts help overlay: insert the Creator-only
-// nav hotkeys at their normal position (after "g s" Schedule, before "g i"
-// Activity feed) so the overlay reads exactly as it did pre-split.
-const activityRowIdx = KBD_HELP_ROWS.findIndex(([k]) => k === "g i");
-KBD_HELP_ROWS.splice(activityRowIdx, 0,
+// nav hotkeys right after "g s" Schedule, and the Archive toggle right
+// before "Esc" (the list's last row) — re-anchored off these two stable
+// rows now that the never-wired "g i"/"a" rows they used to key off of
+// have been removed from KBD_HELP_ROWS (036-pvr.js).
+const scheduleRowIdx = KBD_HELP_ROWS.findIndex(([k]) => k === "g s");
+KBD_HELP_ROWS.splice(scheduleRowIdx + 1, 0,
   ["g d", "Pipelines (DAG)"],
   ["g g", "Plugins"],
 );
-const activityToggleRowIdx = KBD_HELP_ROWS.findIndex(([k]) => k === "a");
-KBD_HELP_ROWS.splice(activityToggleRowIdx, 0, ["g v", "Archive (Creator Edition)"]);
+const escRowIdx = KBD_HELP_ROWS.findIndex(([k]) => k === "Esc");
+KBD_HELP_ROWS.splice(escRowIdx, 0, ["g v", "Archive (Creator Edition)"]);
 
 // Real implementation of the recording-info modal's "Plugin actions" panel
 // (028-pvr.js falls back to "" via a `typeof` guard when this doesn't

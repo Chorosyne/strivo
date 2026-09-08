@@ -1149,12 +1149,31 @@ const KBD_HELP_ROWS = [
   ["g l", "Library"],
   ["g r", "Recordings"],
   ["g s", "Schedule"],
-  ["g i", "Activity feed (page)"],
+  ["g w", "Player"],
+  ["g t", "Chat"],
+  ["g o", "Logs"],
   ["g c", "Settings"],
   ["g y", "System"],
-  ["a", "Toggle activity rail"],
   ["p", "Poke channel monitor"],
   ["Esc", "Close overlay"],
+];
+
+// Player-tile keys, shown as their own section in the help overlay —
+// documents the shortcuts the player module (018/019a-pvr.js) actually
+// ships, which weren't listed anywhere before.
+const KBD_HELP_PLAYER_ROWS = [
+  ["Space / k", "Play / pause"],
+  ["j / l", "Seek ±10s"],
+  ["← / →", "Seek ±5s"],
+  ["↑ / ↓", "Volume"],
+  ["m", "Mute"],
+  ["s", "Solo tile"],
+  ["f", "Fullscreen"],
+  ["p", "Picture-in-picture"],
+  ["x", "Remove tile"],
+  ["Shift+Arrows", "Swap tiles"],
+  ["Alt+Arrows", "Move focus"],
+  ["Enter", "Play"],
 ];
 
 function injectKeyboardHelp() {
@@ -1181,6 +1200,10 @@ function injectKeyboardHelp() {
       <h2>Keyboard shortcuts</h2>
       <dl>
         ${KBD_HELP_ROWS.map(([k, v]) => `<dt>${htmlEscape(k)}</dt><dd>${htmlEscape(v)}</dd>`).join("")}
+      </dl>
+      <h2>Player</h2>
+      <dl>
+        ${KBD_HELP_PLAYER_ROWS.map(([k, v]) => `<dt>${htmlEscape(k)}</dt><dd>${htmlEscape(v)}</dd>`).join("")}
       </dl>
     </div>
   `;
