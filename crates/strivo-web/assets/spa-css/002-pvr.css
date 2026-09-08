@@ -1,4 +1,33 @@
 
+/* Table | Timeline segmented control atop Recordings — Timeline is the
+ * former #/history route, folded in as a second view of the same page. */
+.rec-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin: var(--space-2, 8px) 0;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm, 8px);
+}
+.rec-view-btn {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--muted);
+  min-height: var(--control-h, 32px);
+  padding: 0 var(--space-3, 12px);
+  font-size: var(--text-caption, 13px);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rec-view-btn:hover { color: var(--fg); }
+.rec-view-btn.is-active {
+  background: var(--gradient);
+  color: #fff;
+  font-weight: 600;
+}
+
 /* ── Recording info modal + in-app player ───────────────────────────── */
 body.modal-open { overflow: hidden; }
 .modal-overlay {
@@ -66,7 +95,6 @@ body.modal-open { overflow: hidden; }
   top: calc(100% + 4px);
   right: 0;
   z-index: 20;
-  display: flex;
   flex-direction: column;
   min-width: 160px;
   padding: 0.3rem;
@@ -75,6 +103,13 @@ body.modal-open { overflow: hidden; }
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
+}
+/* display:flex only applies while the menu is actually open — otherwise
+ * this author rule would beat the UA stylesheet's `[hidden]{display:none}`
+ * (same specificity, author wins), leaving every closed row menu
+ * invisible-but-present and intercepting clicks meant for the row below. */
+.rec-row-menu-list:not([hidden]) {
+  display: flex;
 }
 .rec-row-menu-item {
   display: block;

@@ -11,8 +11,12 @@
       await renderLogs();
       break;
     case "history":
-      await renderHistory();
-      break;
+      // History folded into Recordings as a Timeline view (see the
+      // Table|Timeline segmented control in renderRecordings, 012-pvr.js).
+      // "history" stays a real ROUTES entry (008-pvr.js) purely so old
+      // #/history links/bookmarks still land somewhere instead of 404ing.
+      location.hash = "#/recordings?view=timeline";
+      return;
   }
 }
 
@@ -78,8 +82,11 @@ async function fetchEdition() {
 // list now; these icon links reach the management pages.
 // Tuple: [route, fallbackGlyph, label, key, iconHref?]
 // Eight slots ship Eliver Lara's candy-icons (GPL-3.0, vendored under
-// /assets/icons/candy/ with the upstream LICENSE + ATTRIBUTION). History
-// keeps its Unicode glyph by the user's choice.
+// /assets/icons/candy/ with the upstream LICENSE + ATTRIBUTION).
+// History has no nav slot of its own any more — it's a Timeline view
+// inside Recordings (segmented control in renderRecordings). "history"
+// stays a ROUTES entry purely so old #/history links redirect there
+// instead of 404ing (render(), 012-pvr.js).
 const TOPNAV = [
   // Free panes — capture-loop core.
   ["library", "▣", "Home", "l", "/assets/icons/sweet-folders/folder-home.svg"],
@@ -93,14 +100,12 @@ const TOPNAV = [
   ["studio", "🎬", "Studio", "u", "/assets/icons/candy/plugins.svg"],
   ["analytics", "📈", "Analytics", "a", "/assets/icons/sweet-folders/folder-documents.svg"],
   ["publish", "🚀", "Publish", "p", "/assets/icons/candy/pipelines.svg"],
-  // No vendored candy icon for Archive yet — falls back to the glyph,
-  // same as History's deliberate choice below.
+  // No vendored candy icon for Archive yet — falls back to the glyph.
   ["archive", "🗄", "Archive", "v"],
   ["chat", "💬", "Chat", "t", "/assets/icons/candy/chat.svg"],
   ["settings", "⚙", "Settings", "c", "/assets/icons/candy/settings.svg"],
   ["system", "🛠", "System", "y", "/assets/icons/candy/system.svg"],
   ["logs", "📜", "Logs", "o", "/assets/icons/candy/logs.svg"],
-  ["history", "🗂", "History", "h", "/assets/icons/candy/history.svg"],
 ];
 
 function chrome(content) {
@@ -1779,17 +1784,43 @@ async function toggleAutoRecord(d) {
 }
 
 // ── Recordings table ─────────────────────────────────────────────────
+// Table | Timeline segmented control shared by both renderRecordings()
+// and renderRecordingsTimeline(). Timeline is the old #/history page,
+// folded in here (see recView/renderRecordingsTimeline below) — the
+// route now redirects (render(), 012-pvr.js) instead of rendering
+// standalone.
+function recordingsViewToggleHtml(active) {
+  return `<div class="rec-view-toggle" role="group" aria-label="View">
+    <button type="button" class="rec-view-btn ${active === "table" ? "is-active" : ""}" data-view="table" aria-pressed="${active === "table"}">Table</button>
+    <button type="button" class="rec-view-btn ${active === "timeline" ? "is-active" : ""}" data-view="timeline" aria-pressed="${active === "timeline"}">Timeline</button>
+  </div>`;
+}
+function wireRecordingsViewToggle() {
+  document.querySelectorAll(".rec-view-toggle [data-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      location.hash = btn.dataset.view === "timeline" ? "#/recordings?view=timeline" : "#/recordings";
+    });
+  });
+}
+
 async function renderRecordings() {
   // Allow sidebar links / external bookmarks to seed the search box
-  // via #/recordings?channel=NAME (audit M2).
+  // via #/recordings?channel=NAME (audit M2), and pick Table vs Timeline
+  // via #/recordings?view=timeline (also what #/history now redirects to).
   const hash = window.location.hash || "";
   const qIdx = hash.indexOf("?");
+  let view = "table";
   if (qIdx !== -1) {
     try {
       const params = new URLSearchParams(hash.slice(qIdx + 1));
       const ch = params.get("channel");
       if (ch != null) recFilter = ch;
+      if (params.get("view") === "timeline") view = "timeline";
     } catch (_) {}
+  }
+  if (view === "timeline") {
+    await renderRecordingsTimeline();
+    return;
   }
   let recordings = [];
   try {
@@ -1808,12 +1839,14 @@ async function renderRecordings() {
   if (recordings.length === 0) {
     root.innerHTML = chrome(`
       <h1 class="page-title">Recordings</h1>
+      ${recordingsViewToggleHtml("table")}
       <div class="empty">
         <div class="glyph">📁</div>
         No recordings yet. Start one from the Library tab.
       </div>
     `);
     setupChromeHandlers();
+    wireRecordingsViewToggle();
     return;
   }
   recCache = recordings;
@@ -1822,6 +1855,7 @@ async function renderRecordings() {
   // the filter box narrows by channel/title live without refetching.
   root.innerHTML = chrome(`
     <h1 class="page-title">Recordings</h1>
+    ${recordingsViewToggleHtml("table")}
     <div class="rec-toolbar">
       <input id="rec-filter" class="grid-filter" type="search"
              placeholder="Filter by channel or title… (/)"
@@ -1864,6 +1898,7 @@ async function renderRecordings() {
     ${recNextCursor != null ? `<button id="rec-load-more" class="button secondary" type="button">Load more recordings</button>` : ""}
   `);
   setupChromeHandlers();
+  wireRecordingsViewToggle();
   paintRecordings();
 
   document.getElementById("rec-filter")?.addEventListener("input", (e) => {
@@ -1963,6 +1998,134 @@ async function renderRecordings() {
       button.disabled = false;
       button.textContent = "Load more recordings";
       Toast.error(`Recordings load failed: ${error.message}`);
+    }
+  });
+}
+
+// ── Recordings → Timeline view (former #/history route) ────────────────
+// Durable per-recording journal from the jobs DB, survives daemon
+// restarts unlike the in-memory /recordings snapshot. Used to be its own
+// #/history page with its own nav slot + a second copy of the Recordings
+// table's actions; #/history now redirects to #/recordings?view=timeline
+// (render(), above) and this is that view. The paint* functions
+// (paintHistHeatmap/paintHistChips/paintHistory/historyPillHtml) stayed
+// in 036-pvr.js — they're not route-specific, they just paint into
+// whichever DOM currently has the matching #hist-* ids.
+let histFilter = "";
+let histGroupBy = localStorage.getItem("strivo-hist-groupby") || "none"; // "none" | "channel" | "date"
+// Date heatmap click-day filter — "YYYY-MM-DD" or "" for unset.
+let histDay = "";
+let histStateFilter = new Set(
+  (localStorage.getItem("strivo-hist-state-filter") || "")
+    .split(",").filter(Boolean),
+);
+let histCache = [];
+let histNextCursor = null;
+let histTotal = 0;
+let histRenderLimit = 200;
+
+async function renderRecordingsTimeline() {
+  // Fetch history alongside the live /recordings snapshot so we can
+  // overlay file_exists state (audit B4). Without this, Timeline happily
+  // reports 'Finished, 9 GB' for files the Recordings table knows are
+  // long gone.
+  let [hist, recs] = [[], []];
+  try {
+    const [h, r] = await Promise.all([
+      API.history().catch(() => ({ history: [] })),
+      API.recordings().catch(() => ({ recordings: [] })),
+    ]);
+    hist = h.history || [];
+    histNextCursor = h.next_cursor ?? null;
+    histTotal = h.total ?? hist.length;
+    recs = r.recordings || [];
+  } catch (_) {}
+  const liveById = new Map(recs.map((r) => [r.id, r]));
+  histCache = hist.map((row) => {
+    const live = liveById.get(row.id);
+    if (live && live.file_exists === false) {
+      return { ...row, file_exists: false, state: "Failed" };
+    }
+    return row;
+  });
+  root.removeAttribute("aria-busy");
+
+  if (histCache.length === 0) {
+    root.innerHTML = chrome(`
+      <h1 class="page-title">Recordings</h1>
+      ${recordingsViewToggleHtml("timeline")}
+      <div class="empty">
+        <div class="glyph">🗂</div>
+        No recording history yet. Captures land here automatically.
+      </div>
+    `);
+    setupChromeHandlers();
+    wireRecordingsViewToggle();
+    return;
+  }
+
+  root.innerHTML = chrome(`
+    <h1 class="page-title">Recordings</h1>
+    ${recordingsViewToggleHtml("timeline")}
+    <p class="page-subtitle" id="hist-count"></p>
+    <div id="hist-heatmap"></div>
+    <div class="rec-toolbar">
+      <input id="hist-filter" class="grid-filter" type="search"
+             placeholder="Filter by channel or title…"
+             aria-label="Filter history" value="${htmlEscape(histFilter)}">
+      <button id="hist-groupby" class="sm" title="Group rows">
+        ${histGroupBy === "channel" ? "▼ Grouped by channel"
+          : histGroupBy === "date" ? "▼ Grouped by month"
+          : "≣ Group by…"}
+      </button>
+      ${histDay ? `<button id="hist-clear-day" class="sm" type="button" title="Clear day filter">✕ ${htmlEscape(histDay)}</button>` : ""}
+    </div>
+    <div id="hist-state-chips" class="rec-state-chips" role="group" aria-label="Filter by state"></div>
+    <div id="hist-list" class="media-list"></div>
+    ${histNextCursor != null ? `<button id="hist-load-more" class="button secondary" type="button">Load more history</button>` : ""}
+  `);
+  setupChromeHandlers();
+  wireRecordingsViewToggle();
+  paintHistHeatmap();
+  paintHistChips();
+  paintHistory();
+  document.getElementById("hist-clear-day")?.addEventListener("click", () => {
+    histDay = "";
+    renderRecordingsTimeline().catch((e) => Toast.error(e.message));
+  });
+
+  document.getElementById("hist-filter")?.addEventListener("input", (e) => {
+    histFilter = e.target.value;
+    paintHistory();
+  });
+  document.getElementById("hist-groupby")?.addEventListener("click", () => {
+    histGroupBy = histGroupBy === "none"
+      ? "channel"
+      : histGroupBy === "channel" ? "date" : "none";
+    localStorage.setItem("strivo-hist-groupby", histGroupBy);
+    renderRecordingsTimeline().catch((e) => Toast.error(e.message));
+  });
+  document.getElementById("hist-load-more")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Loading…";
+    try {
+      const page = await API.history({ cursor: histNextCursor, limit: 200 });
+      histCache.push(...(page.history || []));
+      histNextCursor = page.next_cursor ?? null;
+      histTotal = page.total ?? histCache.length;
+      if (histNextCursor == null) button.remove();
+      else {
+        button.disabled = false;
+        button.textContent = "Load more history";
+      }
+      paintHistHeatmap();
+      paintHistChips();
+      paintHistory();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Load more history";
+      Toast.error(`History load failed: ${error.message}`);
     }
   });
 }

@@ -3,7 +3,7 @@
       return [
         group("Layout", [
           row("Top-nav order",
-            `<div class="stg-reorder" data-reorder-key="strivo-layout-topnav" data-default='${JSON.stringify(["library","recordings","schedule","pipelines","plugins","watch","chat","history","logs","system","settings"]).replace(/'/g, "&apos;")}'><div class="stg-reorder-list"></div><button class="sm stg-reorder-reset" type="button">Reset</button></div>`,
+            `<div class="stg-reorder" data-reorder-key="strivo-layout-topnav" data-default='${JSON.stringify(["library","recordings","schedule","pipelines","plugins","watch","chat","logs","system","settings"]).replace(/'/g, "&apos;")}'><div class="stg-reorder-list"></div><button class="sm stg-reorder-reset" type="button">Reset</button></div>`,
             "Drag entries up/down to reorder the top navigation bar. Order persists locally."),
           row("Rail platform order",
             `<div class="stg-reorder" data-reorder-key="strivo-layout-rail-platforms" data-default='${JSON.stringify(["Twitch","YouTube","Patreon"]).replace(/'/g, "&apos;")}'><div class="stg-reorder-list"></div><button class="sm stg-reorder-reset" type="button">Reset</button></div>`,

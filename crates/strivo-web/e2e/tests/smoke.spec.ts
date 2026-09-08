@@ -159,9 +159,12 @@ test("monitor page renders capture controls and calendar", async ({ page }) => {
   await expect(page.locator(".task-row", { hasText: "Alpha" }).first()).toBeVisible();
 });
 
-test("history page renders durable jobs from the DB", async ({ page }) => {
+test("history page redirects to the Recordings Timeline view and renders durable jobs from the DB", async ({ page }) => {
   await page.goto("/app#/history");
-  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(page).toHaveURL(/#\/recordings\?view=timeline/);
+  await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
+  await expect(page.locator(".rec-view-btn.is-active")).toHaveText("Timeline");
+  await expect(page.locator(".hist-hm-wrap")).toBeVisible();
   await expect(page.locator(".media-list")).toContainText("LilAggy");
   await expect(page.locator(".media-pill").first()).toContainText("Finished");
 });

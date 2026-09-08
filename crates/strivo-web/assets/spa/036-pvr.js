@@ -148,121 +148,12 @@ async function _renderSchedule_legacy_cron_unused() {
 
 // ── Durable History (item 17) — completed/failed audit from the jobs DB,
 // survives restarts (unlike the in-memory /recordings snapshot). ──
-// History page filter / group state — persisted like the Recordings ones.
-let histFilter = "";
-let histGroupBy = localStorage.getItem("strivo-hist-groupby") || "none"; // "none" | "channel" | "date"
-// Date heatmap click-day filter — "YYYY-MM-DD" or "" for unset.
-let histDay = "";
-let histStateFilter = new Set(
-  (localStorage.getItem("strivo-hist-state-filter") || "")
-    .split(",").filter(Boolean),
-);
-let histCache = [];
-let histNextCursor = null;
-let histTotal = 0;
-let histRenderLimit = 200;
-
-async function renderHistory() {
-  // Fetch history alongside the live /recordings snapshot so we can
-  // overlay file_exists state (audit B4). Without this, History happily
-  // reports 'Finished, 9 GB' for files the Recordings page knows are
-  // long gone.
-  let [hist, recs] = [[], []];
-  try {
-    const [h, r] = await Promise.all([
-      API.history().catch(() => ({ history: [] })),
-      API.recordings().catch(() => ({ recordings: [] })),
-    ]);
-    hist = h.history || [];
-    histNextCursor = h.next_cursor ?? null;
-    histTotal = h.total ?? hist.length;
-    recs = r.recordings || [];
-  } catch (_) {}
-  const liveById = new Map(recs.map((r) => [r.id, r]));
-  histCache = hist.map((row) => {
-    const live = liveById.get(row.id);
-    if (live && live.file_exists === false) {
-      return { ...row, file_exists: false, state: "Failed" };
-    }
-    return row;
-  });
-  root.removeAttribute("aria-busy");
-
-  if (histCache.length === 0) {
-    root.innerHTML = chrome(`
-      <h1 class="page-title">History</h1>
-      <div class="empty">
-        <div class="glyph">🗂</div>
-        No recording history yet. Captures land here automatically.
-      </div>
-    `);
-    setupChromeHandlers();
-    return;
-  }
-
-  root.innerHTML = chrome(`
-    <h1 class="page-title">History</h1>
-    <p class="page-subtitle" id="hist-count"></p>
-    <div id="hist-heatmap"></div>
-    <div class="rec-toolbar">
-      <input id="hist-filter" class="grid-filter" type="search"
-             placeholder="Filter by channel or title…"
-             aria-label="Filter history" value="${htmlEscape(histFilter)}">
-      <button id="hist-groupby" class="sm" title="Group rows">
-        ${histGroupBy === "channel" ? "▼ Grouped by channel"
-          : histGroupBy === "date" ? "▼ Grouped by month"
-          : "≣ Group by…"}
-      </button>
-      ${histDay ? `<button id="hist-clear-day" class="sm" type="button" title="Clear day filter">✕ ${htmlEscape(histDay)}</button>` : ""}
-    </div>
-    <div id="hist-state-chips" class="rec-state-chips" role="group" aria-label="Filter by state"></div>
-    <div id="hist-list" class="media-list"></div>
-    ${histNextCursor != null ? `<button id="hist-load-more" class="button secondary" type="button">Load more history</button>` : ""}
-  `);
-  setupChromeHandlers();
-  paintHistHeatmap();
-  paintHistChips();
-  paintHistory();
-  document.getElementById("hist-clear-day")?.addEventListener("click", () => {
-    histDay = "";
-    renderHistory().catch((e) => Toast.error(e.message));
-  });
-
-  document.getElementById("hist-filter")?.addEventListener("input", (e) => {
-    histFilter = e.target.value;
-    paintHistory();
-  });
-  document.getElementById("hist-groupby")?.addEventListener("click", () => {
-    histGroupBy = histGroupBy === "none"
-      ? "channel"
-      : histGroupBy === "channel" ? "date" : "none";
-    localStorage.setItem("strivo-hist-groupby", histGroupBy);
-    renderHistory().catch((e) => Toast.error(e.message));
-  });
-  document.getElementById("hist-load-more")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    button.textContent = "Loading…";
-    try {
-      const page = await API.history({ cursor: histNextCursor, limit: 200 });
-      histCache.push(...(page.history || []));
-      histNextCursor = page.next_cursor ?? null;
-      histTotal = page.total ?? histCache.length;
-      if (histNextCursor == null) button.remove();
-      else {
-        button.disabled = false;
-        button.textContent = "Load more history";
-      }
-      paintHistHeatmap();
-      paintHistChips();
-      paintHistory();
-    } catch (error) {
-      button.disabled = false;
-      button.textContent = "Load more history";
-      Toast.error(`History load failed: ${error.message}`);
-    }
-  });
-}
+// History filter/group/state live on as a Timeline view inside Recordings
+// (renderRecordingsTimeline, 012-pvr.js) rather than their own route —
+// the hist* state below moved there with it. These paint* functions stay
+// here and are called from that new location; nothing here is route-
+// specific, they just paint into whichever DOM currently has the
+// matching #hist-* ids.
 
 function paintHistChips() {
   const host = document.getElementById("hist-state-chips");
@@ -359,7 +250,7 @@ function paintHistHeatmap() {
     btn.addEventListener("click", () => {
       const day = btn.dataset.day;
       histDay = histDay === day ? "" : day;
-      renderHistory().catch((e) => Toast.error(e.message));
+      renderRecordingsTimeline().catch((e) => Toast.error(e.message));
     });
   });
 }
@@ -479,7 +370,7 @@ function paintHistory() {
         await API.deleteRecordingFile(btn.dataset.jobId);
         Toast.success("Deleted");
         histCache = histCache.filter((r) => r.id !== btn.dataset.jobId);
-        renderHistory().catch(() => {});
+        renderRecordingsTimeline().catch(() => {});
       }).catch((err) => Toast.error(`Delete failed: ${err.message}`));
     });
   });
