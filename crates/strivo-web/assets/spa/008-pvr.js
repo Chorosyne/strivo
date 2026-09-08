@@ -57,13 +57,16 @@ const events = {
       // auto-reconnects on transient errors; meanwhile we show a pill
       // and degrade to a slow poll so list views don't go stale.
       this.setConnected(false);
-      // On a hard close (e.g. a 401 before login — /events is now
-      // authenticated), EventSource will NOT auto-reconnect. Recreate it on
-      // a timer so the stream comes back once the session cookie is set.
+      // On a hard close (e.g. a session cookie that expired mid-stream),
+      // EventSource will NOT auto-reconnect. Recreate it on a timer so the
+      // stream comes back once the session is valid again — but only while
+      // `authed` (012-pvr.js) is still true. Retrying unconditionally here
+      // used to spam /events with 401s every 3s for as long as a visitor
+      // sat on the (unauthenticated) login screen.
       if (this.source && this.source.readyState === EventSource.CLOSED) {
         this.source.close();
         this.source = null;
-        setTimeout(() => this.start(), 3000);
+        if (authed) setTimeout(() => this.start(), 3000);
       }
     };
   },

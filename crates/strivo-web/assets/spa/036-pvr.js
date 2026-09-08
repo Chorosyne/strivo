@@ -1378,7 +1378,6 @@ events.on((event) => {
     refreshHealthPill();
   }
 });
-events.start();
 // injectKeyboardHelp() itself is called from 037-creator.js (after that
 // file's KBD_HELP_ROWS splice, if any) rather than here — calling it before
 // a creator-only splice would bake the shorter PVR row list into the DOM
@@ -1386,8 +1385,19 @@ events.start();
 // Resolve the edition (creator vs PVR) and seed Patreon from the daemon
 // snapshot before first paint, so the nav hides creator routes and the
 // Patreon section is populated on load (not after the next poll).
+// Neither the SSE stream nor the Patreon seed starts here unless
+// fetchEdition() actually succeeded authenticated (sets `authed`, see
+// 012-pvr.js) — on a fresh/expired session it 401s and both stay off
+// until login (012-pvr.js ~520) flips `authed` and starts them itself.
+// This is what stops the pre-login fetch storm: an unauthenticated visitor
+// no longer opens an /events stream that just 401s and retries forever.
 fetchEdition()
-  .finally(seedPatreon)
+  .then(() => {
+    if (authed) {
+      events.start();
+      seedPatreon();
+    }
+  })
   .finally(render)
   .finally(() => {
     // Fire the welcome tour once per machine — runs after the first

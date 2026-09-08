@@ -55,12 +55,20 @@ if (REDUCE_MOTION_QUERY) {
 // reduced-motion browser never sees an unsuppressed boot-glyph pulse.
 applyReducedMotion();
 
+// Set on the first successful authenticated API call (a login, or — on
+// reload with a still-valid session cookie — fetchEdition() itself
+// succeeding). Boot-time SSE/Patreon-seed calls wait on this so a
+// logged-out visitor doesn't trigger a pre-login fetch storm (008-pvr.js's
+// SSE reconnect loop gates its retry on the same flag).
+let authed = false;
+
 async function fetchEdition() {
   try {
     const st = await API.settings();
     CREATOR_ENABLED = !!st.creator_enabled;
     REDUCE_MOTION_SETTING = !!(st.ui && st.ui.reduce_motion);
     applyReducedMotion();
+    authed = true;
   } catch (_) {
     CREATOR_ENABLED = false;
   }
@@ -518,7 +526,12 @@ function renderLogin(errorMsg) {
         if (remember) localStorage.setItem("strivo:remembered-api-key", key);
         else localStorage.removeItem("strivo:remembered-api-key");
       } catch (_) {}
+      // Login succeeded — this is the first authenticated call, so both
+      // the SSE stream and the Patreon seed (which were held back at boot,
+      // see fetchEdition() below) are cleared to run now.
+      authed = true;
       events.start(); // (re)connect the now-authorized SSE stream
+      seedPatreon();
       // fetchEdition() only ever ran once at script boot, unauthenticated —
       // /api/v1/settings 401'd and CREATOR_ENABLED stuck false for the rest
       // of the session, hiding every creator route (Archive included) until
