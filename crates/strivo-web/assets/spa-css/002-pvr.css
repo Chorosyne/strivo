@@ -440,6 +440,10 @@ body.modal-open { overflow: hidden; }
 }
 .stg-hint:hover { opacity: 1; }
 .stg-linkbtn {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
+  padding: var(--space-1, 4px) 0;
   color: var(--accent2);
   text-decoration: none;
   font-weight: 500;
@@ -543,10 +547,13 @@ body.modal-open { overflow: hidden; }
 .stg-rail-item.stg-rail-hidden { display: none; }
 .stg-row.stg-row-hidden { display: none; }
 .sys-reauth {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
   margin-left: 0.6rem;
   color: var(--accent2);
   text-decoration: none;
-  font-size: 0.78rem;
+  font-size: var(--text-xs, 12px);
 }
 .sys-reauth:hover { text-decoration: underline; }
 .sch-form {
@@ -629,9 +636,12 @@ body.modal-open { overflow: hidden; }
   padding: 0.6rem 1rem;
 }
 .mon-cron summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs, 12px);
   padding: 0.25rem 0;
 }
 .pg-cap-matrix {

@@ -191,6 +191,8 @@
   color: inherit;
   border-radius: 6px;
   padding: 0.25rem 0.45rem;
+  min-width: var(--hit-min, 28px);
+  min-height: var(--hit-min, 28px);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
@@ -246,9 +248,11 @@
   color: #fff;
   border-radius: 6px;
   padding: 0.3rem 0.6rem;
+  min-height: var(--hit-min, 28px);
   font-weight: 600;
   cursor: pointer;
   line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
   transition: filter 120ms, transform 80ms;
 }
 .chat-compose-bar .cc-send:hover { filter: brightness(1.12); }
@@ -450,7 +454,9 @@
   flex: 1;
 }
 .cal-block {
-  display: block;
+  display: flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
   padding: 0.2rem 0.4rem;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;

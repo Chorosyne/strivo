@@ -131,6 +131,10 @@ a:hover {
  * regardless of which class name a given screen happens to use. */
 button,
 .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--hit-min, 28px);
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid var(--border-light);
   color: var(--fg);
@@ -169,6 +173,7 @@ button.danger:hover {
 
 input[type="text"],
 input[type="password"],
+input[type="number"],
 select,
 textarea {
   background: rgba(0, 0, 0, 0.25);
@@ -179,6 +184,72 @@ textarea {
   font-family: inherit;
   font-size: 0.875rem;
   width: 100%;
+}
+/* select/number inputs render shorter than text inputs by default in
+ * most browsers even with identical padding — pin the control-height
+ * floor explicitly rather than relying on padding alone. */
+select,
+input[type="number"] {
+  min-height: var(--control-h, 32px);
+}
+/* #poll-interval sits inline in a sentence ("every N s"), not a full-width
+ * field — override the shared 100% width with a fixed one sized for its
+ * seconds value (max 86400, 5 digits). */
+#poll-interval {
+  width: 5.5em;
+  display: inline-block;
+}
+/* Checkboxes render at their native ~13px glyph everywhere in this app
+ * (no prior styling at all). Padding does not enlarge a native
+ * appearance:auto checkbox's own box in Chromium (computed padding reads
+ * back as 0 regardless of what's authored — verified against the real
+ * mock lane, not assumed), so the hit area can't be padded out the way
+ * a button can. Instead: appearance:none takes over the box model
+ * entirely, sizing the element itself to a 28px hit box and drawing an
+ * 18px custom glyph centered inside it via ::before/::after. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: var(--hit-min, 28px);
+  height: var(--hit-min, 28px);
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border-light);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+}
+input[type="checkbox"]:checked::before {
+  background: var(--accent2);
+  border-color: var(--accent2);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 5px;
+  height: 9px;
+  margin-top: -6px;
+  margin-left: -3px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:focus-visible::before {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
 }
 input[type="text"]:focus,
 input[type="password"]:focus,
@@ -277,6 +348,9 @@ textarea:focus {
   gap: 1rem;
 }
 .topbar .brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
   font-weight: 800;
   font-size: 1.25rem;
   background: var(--gradient);
@@ -526,6 +600,7 @@ th[data-sort]:hover {
   cursor: pointer;
   font: inherit;
   padding: 0.5rem 1rem 0.25rem;
+  min-height: var(--control-h, 32px);
   font-size: var(--text-micro, 11px);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -880,7 +955,14 @@ th[data-sort]:hover {
   font-size: var(--text-xs, 12px);
   color: var(--muted);
 }
-button.sm {
+/* a.sm shows up wherever a link is styled as a small button (System
+ * backup-row "View"/"Download" links, etc.) — needs display:inline-flex
+ * for min-height to actually apply, since <a> is inline by default and
+ * min-height is a no-op on inline boxes. */
+button.sm,
+a.sm {
+  display: inline-flex;
+  align-items: center;
   min-height: var(--control-h, 32px);
   padding: 0 var(--space-3, 12px);
   font-size: var(--text-caption, 13px);
@@ -1440,9 +1522,10 @@ select[aria-invalid="true"] {
 /* Tasks section — scheduled vs on-demand duality (item 14). */
 .task-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem 0.75rem;
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -1521,7 +1604,10 @@ select[aria-invalid="true"] {
 
 /* Topbar health pill (item 13) — only shown when degraded. */
 .health-pill {
-  padding: 0.2rem 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
+  padding: 0 0.6rem;
   border-radius: 999px;
   font-size: var(--text-micro, 11px);
   font-weight: 700;
@@ -1880,6 +1966,7 @@ a.media-pill:hover,
 /* Logs viewer (item 15). */
 .logs-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.8rem;
   margin-bottom: 0.75rem;
@@ -1902,13 +1989,16 @@ a.media-pill:hover,
 .logs-search:focus { outline: 0; border-color: var(--accent2); }
 .logs-sources { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .logs-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min, 28px);
   background: transparent;
   border: 1px solid var(--border-light);
   color: var(--muted);
   border-radius: 999px;
-  padding: 0.1rem 0.55rem;
+  padding: 0 0.55rem;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--text-xs, 12px);
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
