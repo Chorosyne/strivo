@@ -10,7 +10,7 @@
 .stg-reorder-reset { align-self: flex-start; }
 .stg-layout-select { padding: 0.35rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border-light); border-radius: 4px; color: inherit; }
 /* Recordings date-range filter. Mirrors logs-daterange. */
-.rec-daterange { display: inline-flex; gap: 0.3rem; align-items: center; font-size: 0.85em; }
+.rec-daterange { display: inline-flex; gap: 0.3rem; align-items: center; font-size: var(--text-xs, 12px); }
 .rec-date { padding: 0.3rem 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid var(--border-light); border-radius: 4px; color: inherit; font-family: inherit; }
 /* History date heatmap — 12-week calendar grid above the rec list. */
 .hist-hm-wrap { margin: 0.5rem 0 0.8rem; padding: 0.5rem 0.7rem; background: rgba(0,0,0,0.2); border-radius: 6px; }

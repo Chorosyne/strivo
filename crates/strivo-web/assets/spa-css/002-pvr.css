@@ -74,7 +74,7 @@ body.modal-open { overflow: hidden; }
   justify-content: flex-end;
   vertical-align: middle;
 }
-.rec-actions .sm { padding: 0.25rem 0.55rem; font-size: 0.78rem; border-radius: var(--radius-sm); }
+.rec-actions .sm { padding: 0.25rem 0.55rem; font-size: var(--text-caption, 13px); border-radius: var(--radius-sm); }
 /* Disabled Play placeholder keeps slot 1 occupied across every row state so
  * the action column stays vertically aligned for in-flight / failed rows. */
 .rec-actions .rec-play-disabled {
@@ -583,7 +583,7 @@ body.modal-open { overflow: hidden; }
 .mon-help {
   margin: 0 0 0.8rem;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--text-xs, 12px);
 }
 .mon-scope {
   display: flex;
@@ -591,7 +591,7 @@ body.modal-open { overflow: hidden; }
   gap: 0.2rem;
   margin-top: 0.3rem;
 }
-.mon-scope > span { font-size: 0.74rem; color: var(--muted); }
+.mon-scope > span { font-size: var(--text-xs, 12px); color: var(--muted); }
 .mon-playlists {
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-light);
@@ -642,7 +642,7 @@ body.modal-open { overflow: hidden; }
   padding: 0.7rem 1rem;
 }
 .pg-cap-matrix summary { cursor: pointer; padding: 0.2rem 0; color: var(--text); }
-.pg-cap-hint { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+.pg-cap-hint { color: var(--muted); font-size: var(--text-xs, 12px); font-weight: 400; }
 .pg-cap-grid { display: grid; gap: 0.35rem; margin-top: 0.7rem; }
 .pg-cap-row {
   display: grid;

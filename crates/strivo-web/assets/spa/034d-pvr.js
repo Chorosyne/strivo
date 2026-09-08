@@ -733,7 +733,7 @@ async function renderSchedule() {
         return `
     <div class="task-row">
       <div class="task-info">
-        <span class="task-name">${htmlEscape(e.channel_name || e.channel_id)} <span class="mon-plat plat-${htmlEscape(e.platform.toLowerCase())}">${htmlEscape(e.platform)}</span></span>
+        <span class="task-name">${htmlEscape(e.channel_name || e.channel_id)} <span class="mon-plat micro plat-${htmlEscape(e.platform.toLowerCase())}">${htmlEscape(e.platform)}</span></span>
         <span class="task-cadence">${htmlEscape(e.key)}</span>
         <span class="mon-fmt-row">
           <label class="mon-fmt-label" title="Container override for this channel">Container</label>
@@ -760,7 +760,7 @@ async function renderSchedule() {
       return `
       <div class="task-row mon-dl-row">
         <div class="task-info">
-          <span class="task-name">${htmlEscape(name)} <span class="mon-plat plat-${htmlEscape(e.platform.toLowerCase())}">${htmlEscape(e.platform)}</span></span>
+          <span class="task-name">${htmlEscape(name)} <span class="mon-plat micro plat-${htmlEscape(e.platform.toLowerCase())}">${htmlEscape(e.platform)}</span></span>
           <span class="task-cadence">
             <label class="mon-scope">
               <span>Limit to playlists (optional, comma-separated)</span>

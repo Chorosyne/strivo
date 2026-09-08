@@ -304,7 +304,7 @@ textarea:focus {
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--text-xs, 12px);
 }
 
 /* W6 — visible focus ring on every interactive element. The browser
@@ -491,7 +491,7 @@ th[data-sort]:hover {
   padding: 0.5rem 1rem 0.25rem;
 }
 .ch-sort-label {
-  font-size: 0.7rem;
+  font-size: var(--text-micro, 11px);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--dim);
@@ -526,7 +526,7 @@ th[data-sort]:hover {
   cursor: pointer;
   font: inherit;
   padding: 0.5rem 1rem 0.25rem;
-  font-size: 0.7rem;
+  font-size: var(--text-micro, 11px);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
@@ -579,7 +579,7 @@ th[data-sort]:hover {
   font-weight: 700;
 }
 .ch-plat {
-  font-size: 0.7rem;
+  font-size: var(--text-micro, 11px);
 }
 .ch-plat.twitch { color: var(--twitch); }
 .ch-plat.youtube { color: var(--youtube); }
@@ -610,13 +610,13 @@ th[data-sort]:hover {
   white-space: nowrap;
 }
 .ch-viewers {
-  font-size: 0.7rem;
+  font-size: var(--text-micro, 11px);
   color: var(--muted);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
 .ch-lastlive {
-  font-size: 0.7rem;
+  font-size: var(--text-xs, 12px);
   color: var(--dim);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
@@ -769,7 +769,7 @@ th[data-sort]:hover {
 .dash-count {
   color: var(--muted);
   font-weight: 400;
-  font-size: 0.75rem;
+  font-size: var(--text-micro, 11px);
   font-variant-numeric: tabular-nums;
 }
 /* Home rows: a viewport-responsive grid that wraps instead of scrolling
@@ -823,7 +823,7 @@ th[data-sort]:hover {
 .live-card-badge {
   position: absolute; top: 0.3rem; left: 0.3rem;
   background: var(--recording, #f04444); color: white;
-  font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em;
+  font-size: var(--text-micro, 11px); font-weight: 700; letter-spacing: 0.04em;
   padding: 0.1rem 0.3rem; border-radius: 3px;
   text-transform: uppercase;
 }
@@ -831,7 +831,7 @@ th[data-sort]:hover {
   display: flex; flex-direction: column; gap: 0.05rem;
   padding: 0.3rem 0.45rem 0.4rem;
 }
-.live-card-name { font-size: 0.78rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-card-name { font-size: var(--text-xs, 12px); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-card-sub { font-size: var(--text-micro, 11px); }
 /* Click-to-play affordance on home pills */
 .media-pill.mp-clickable { cursor: pointer; }
@@ -877,7 +877,7 @@ th[data-sort]:hover {
 }
 .empty.sm {
   padding: 0.75rem;
-  font-size: 0.8rem;
+  font-size: var(--text-xs, 12px);
   color: var(--muted);
 }
 button.sm {
@@ -1023,7 +1023,10 @@ button.sm {
 .recordings-table tr:hover {
   background: var(--overlay);
 }
-.recordings-table .state-pill {
+/* Bare (not .recordings-table-qualified) so the same pill sizes/reads
+ * consistently on the dashboard's "Recent"/"In progress" cards and the
+ * Info modal header (028-pvr.js), not just inside the table. */
+.state-pill {
   display: inline-block;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
@@ -1445,8 +1448,8 @@ select[aria-invalid="true"] {
 }
 .task-row:last-child { border-bottom: none; }
 .task-info { display: flex; flex-direction: column; gap: 0.1rem; }
-.task-name { font-size: 0.85rem; font-weight: 600; }
-.task-cadence { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; font-family: var(--mono, monospace); }
+.task-name { font-size: var(--text-xs, 12px); font-weight: 600; }
+.task-cadence { font-size: var(--text-xs, 12px); color: var(--muted); font-variant-numeric: tabular-nums; font-family: var(--mono, monospace); }
 .agenda-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--fg); }
 
 /* Add-Channel wizard (item 19). */
@@ -1714,7 +1717,7 @@ a.media-pill:hover,
 }
 .mp-card .mp-channel {
   font-weight: 700;
-  font-size: 0.82rem;
+  font-size: var(--text-xs, 12px);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1725,9 +1728,10 @@ a.media-pill:hover,
   color: var(--dim);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs, 12px);
 }
 .mp-card .mp-spacer { flex: 1 1 auto; min-width: 0.25rem; }
-.mp-sub { font-size: 0.78rem; color: var(--muted); }
+.mp-sub { font-size: var(--text-xs, 12px); color: var(--muted); }
 .mp-meta {
   display: flex;
   flex-direction: column;
@@ -1739,7 +1743,7 @@ a.media-pill:hover,
 }
 .mp-size { font-size: var(--text-caption, 13px); color: var(--muted); font-variant-numeric: tabular-nums; }
 .mp-badge {
-  font-size: 0.68rem;
+  font-size: var(--text-micro, 11px);
   font-weight: 600;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;

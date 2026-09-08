@@ -310,7 +310,7 @@ function railSortControlHtml() {
     )
     .join("");
   return `<div class="ch-sort">
-      <label class="ch-sort-label" for="rail-sort">Sort</label>
+      <label class="ch-sort-label micro" for="rail-sort">Sort</label>
       <select id="rail-sort" class="ch-sort-select" data-rail-sort>${opts}</select>
     </div>`;
 }
@@ -353,14 +353,14 @@ function paintChannelList() {
     // slot (when StriVo has observed it live at least once).
     let viewers = "";
     if (c.is_live && c.viewer_count) {
-      viewers = `<span class="ch-viewers">${formatCount(c.viewer_count)}</span>`;
+      viewers = `<span class="ch-viewers micro">${formatCount(c.viewer_count)}</span>`;
     } else if (!c.is_live && !isPatreon && c.last_live_at) {
       viewers = `<span class="ch-lastlive" title="last live: ${htmlEscape(lastLiveLong(c.last_live_at))}">${htmlEscape(relTime(c.last_live_at))}</span>`;
     }
     // Patreon rows are visually distinct (item 6): a pledged-tier chip
     // (stored in stream_title) and a patreon-accented platform glyph.
     const tier = isPatreon && c.stream_title
-      ? `<span class="ch-tier" title="pledged tier">${htmlEscape(c.stream_title)}</span>`
+      ? `<span class="ch-tier micro" title="pledged tier">${htmlEscape(c.stream_title)}</span>`
       : "";
     // Filter Recordings + History by this channel when clicked. Live
     // channels link to the recording dashboard so you can spot the
@@ -377,7 +377,7 @@ function paintChannelList() {
       <a class="ch-row ${c.is_live ? "live" : ""} ${isPatreon ? "patreon" : ""} ${sel}"
          data-channel-key="${key}" data-channel-id="${c.id}"
          data-platform="${c.platform}" data-live-stream-id="${htmlEscape(liveStreamId)}" href="${href}">
-        <span class="ch-plat ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
+        <span class="ch-plat micro ${c.platform.toLowerCase()}" aria-hidden="true">${platformGlyph(c.platform)}</span>
         <span class="ch-name">${htmlEscape(c.display_name || c.name)}</span>
         ${tier}${viewers}${rec}
       </a>`;
@@ -388,7 +388,7 @@ function paintChannelList() {
   // way across repaints and reloads.
   const section = (id, title, list) =>
     list.length
-      ? `<button type="button" class="ch-section-title" data-rail-section="${id}"
+      ? `<button type="button" class="ch-section-title micro" data-rail-section="${id}"
                  aria-expanded="${railSectionOpen(id)}" aria-controls="rail-sec-${id}">
            <span class="ch-caret" aria-hidden="true">▾</span>
            <span class="ch-section-label">${title}</span>
@@ -725,7 +725,7 @@ function recordingsDashboardHtml(compact) {
         <div class="mp-title">${htmlEscape(s.channel)}</div>
         <div class="mp-sub">${htmlEscape(new Date(s.next_fire).toLocaleString())}${s.duration ? ` · ${htmlEscape(s.duration)}` : ""}</div>
       </div>
-      <div class="mp-meta"><span class="mp-badge">scheduled</span></div>
+      <div class="mp-meta"><span class="mp-badge micro">scheduled</span></div>
     </div>`;
 
   // Live-now card: thumbnail + channel name + viewer count + LIVE
@@ -738,7 +738,7 @@ function recordingsDashboardHtml(compact) {
     return `
       <a class="live-card" href="${href}" data-live-focus="${htmlEscape(focus)}"
          title="Open ${htmlEscape(c.display_name || c.name)} in the multi-stream viewer">
-        <div class="live-card-thumb">${thumb ? `<img loading="lazy" src="${htmlEscape(thumb)}" alt=""/>` : ""}<span class="live-card-badge">LIVE</span></div>
+        <div class="live-card-thumb">${thumb ? `<img loading="lazy" src="${htmlEscape(thumb)}" alt=""/>` : ""}<span class="live-card-badge micro">LIVE</span></div>
         <div class="live-card-meta">
           <span class="live-card-name">${htmlEscape(c.display_name || c.name)}</span>
           <span class="live-card-sub pg-cap-hint">${htmlEscape(c.platform)}${viewers ? ` · ${viewers}` : ""}</span>
@@ -748,7 +748,7 @@ function recordingsDashboardHtml(compact) {
 
   const rowEl = (title, count, html, empty, klass = "") => `
     <section class="dash-row${klass ? " " + klass : ""}">
-      <h2 class="dash-row-title">${title}${count != null ? ` <span class="dash-count">${count}</span>` : ""}</h2>
+      <h2 class="dash-row-title">${title}${count != null ? ` <span class="dash-count micro">${count}</span>` : ""}</h2>
       <div class="dash-scroll">${html || `<div class="empty sm">${empty}</div>`}</div>
     </section>`;
 
@@ -1460,7 +1460,7 @@ function vodSectionHtml(title, vods, ctx) {
           <div class="mp-title">${htmlEscape(niceTitle(v.title))}</div>
           <div class="mp-sub">${meta}</div>
         </div>
-        <div class="mp-meta">${live ? '<span class="mp-badge live">LIVE VOD</span>' : '<span class="mp-badge">Upload</span>'}</div>
+        <div class="mp-meta">${live ? '<span class="mp-badge micro live">LIVE VOD</span>' : '<span class="mp-badge micro">Upload</span>'}</div>
       </a>
       ${btn}
     </div>`;
@@ -2217,7 +2217,7 @@ function recHeader(key, label) {
   const ariaSort = recSort.col === key
     ? (recSort.dir === "asc" ? "ascending" : "descending")
     : "none";
-  return `<th data-sort="${key}" class="rec-th-sortable" tabindex="0" role="button" aria-sort="${ariaSort}">${label}${arrow}</th>`;
+  return `<th data-sort="${key}" class="rec-th-sortable micro" tabindex="0" role="button" aria-sort="${ariaSort}">${label}${arrow}</th>`;
 }
 
 // Close every open "⋯" row menu (recordingRow's .rec-row-menu-list). One
@@ -2843,11 +2843,11 @@ function expectedDurationFromVodCache(j) {
 // property so the CSS doesn't need a class per percentage bucket.
 function renderStatePill(disp) {
   if (disp.pct == null) {
-    return `<span class="state-pill ${disp.className}">${htmlEscape(disp.label)}</span>`;
+    return `<span class="state-pill micro ${disp.className}">${htmlEscape(disp.label)}</span>`;
   }
   const pct = disp.pct;
   const rounded = Math.round(pct);
-  return `<span class="state-pill ${disp.className} has-fill" style="--state-fill:${pct.toFixed(1)}%">
+  return `<span class="state-pill micro ${disp.className} has-fill" style="--state-fill:${pct.toFixed(1)}%">
     <span class="state-pill-fill" aria-hidden="true"></span>
     <span class="state-pill-label">${rounded}%</span>
   </span>`;

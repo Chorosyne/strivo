@@ -525,12 +525,12 @@ function buildCalStrip(entries) {
       const hue = channelHue(e.channel || "");
       const time = new Date(e.next_fire).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       const tip = `${e.channel || ""}  ·  ${time}${e.duration ? "  ·  " + e.duration : ""}`;
-      return `<a class="cal-block" href="#/schedule"
+      return `<a class="cal-block micro" href="#/schedule"
                  style="background:hsl(${hue},45%,32%);border-color:hsl(${hue},50%,48%)"
                  title="${htmlEscape(tip)}">${htmlEscape((e.channel || "").slice(0, 12))}</a>`;
     }).join("");
     return `<div class="cal-day${isToday ? " cal-today" : ""}">
-      <div class="cal-day-label">${htmlEscape(label)}</div>
+      <div class="cal-day-label micro">${htmlEscape(label)}</div>
       <div class="cal-day-blocks">${blocks || '<span class="cal-no-fire">—</span>'}</div>
     </div>`;
   }).join("");

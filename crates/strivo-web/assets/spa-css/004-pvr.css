@@ -1,6 +1,6 @@
 .mon-cron-hint {
   margin: 0.6rem 0 0;
-  font-size: 0.78rem;
+  font-size: var(--text-xs, 12px);
   color: var(--muted);
   line-height: 1.5;
 }
