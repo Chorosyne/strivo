@@ -53,6 +53,45 @@ body.modal-open { overflow: hidden; }
   cursor: not-allowed;
   pointer-events: none;
 }
+/* "⋯" row menu (Info stays inline; Re-record/Remux/Delete live here) —
+ * replaces the old inline ✕ delete beside Play. */
+.rec-row-menu { position: relative; display: inline-flex; }
+.rec-row-menu-toggle {
+  min-width: var(--hit-min, 28px);
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+}
+.rec-row-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 0.3rem;
+  background: var(--overlay);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.rec-row-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: var(--text-caption, 13px);
+  cursor: pointer;
+}
+.rec-row-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+.rec-row-menu-item.danger { color: var(--recording); }
+.rec-row-menu-item.danger:hover { background: color-mix(in srgb, var(--recording) 18%, transparent); }
 .recordings-table tr[data-rec-row] { cursor: pointer; }
 .recordings-table tr[data-rec-row]:hover td { background: rgba(255,255,255,0.03); }
 

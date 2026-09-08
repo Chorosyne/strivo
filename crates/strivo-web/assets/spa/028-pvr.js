@@ -185,9 +185,12 @@ async function openRecordingInfo(jobId, opts = {}) {
     return;
   }
 
-  const state = stateLabel(rec.state);
-  const stateClass = stateClassName(rec.state);
-  const isFinished = stateClass === "finished";
+  // Routed through the canonical recordingDisplayState() (012-pvr.js)
+  // instead of raw stateLabel/stateClassName, so this modal's pill agrees
+  // with the Recordings table on Downloading/File Error nuances instead of
+  // just reading the bare backend state.
+  const disp = recordingDisplayState(rec);
+  const isFinished = disp.className === "finished";
   const meta = (k, v) => `<dt>${htmlEscape(k)}</dt><dd>${v}</dd>`;
   // Bullet-proof scope match: accept the canonical lowercase "recording",
   // the Rust-debug form "Item(Recording)", or any string whose lowercase
@@ -237,7 +240,7 @@ async function openRecordingInfo(jobId, opts = {}) {
     : "";
   overlay.querySelector(".modal-card").innerHTML = `
     <header class="rec-info-head">
-      <span class="state-pill ${stateClass}">${htmlEscape(state)}</span>
+      ${renderStatePill(disp)}
       <h2>${htmlEscape(niceTitle(rec.stream_title) || "(no title)")}</h2>
       ${targetTimeHtml}
       <button class="modal-close" aria-label="Close" data-action="modal-close">✕</button>

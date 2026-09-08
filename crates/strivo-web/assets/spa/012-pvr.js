@@ -2057,6 +2057,23 @@ function recHeader(key, label) {
   return `<th data-sort="${key}" class="rec-th-sortable" tabindex="0" role="button" aria-sort="${ariaSort}">${label}${arrow}</th>`;
 }
 
+// Close every open "⋯" row menu (recordingRow's .rec-row-menu-list). One
+// document-level listener (Escape + click-outside) keeps this to O(1)
+// bindings regardless of row count.
+function closeAllRecRowMenus() {
+  document.querySelectorAll(".rec-row-menu-list").forEach((list) => {
+    list.hidden = true;
+    list.previousElementSibling?.setAttribute("aria-expanded", "false");
+  });
+}
+if (!document.body.dataset.recMenuBound) {
+  document.body.dataset.recMenuBound = "1";
+  document.addEventListener("click", closeAllRecRowMenus);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllRecRowMenus();
+  });
+}
+
 // Apply the live filter + sort to recCache and repaint the table body.
 function paintRecordings() {
   const body = document.getElementById("rec-body");
@@ -2131,10 +2148,7 @@ function paintRecordings() {
   }
   const count = document.getElementById("rec-count");
   if (count) {
-    count.textContent =
-      q || totalRows !== recCache.length
-        ? `${totalRows} matching · ${renderRows.length} rendered`
-        : `${recCache.length} total · ${renderRows.length} rendered`;
+    count.textContent = `${recCache.length} recordings · ${totalRows} match`;
   }
   body.querySelectorAll("[data-action=stop]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2179,6 +2193,54 @@ function paintRecordings() {
         recCache = recCache.filter((r) => r.id !== btn.dataset.jobId);
         renderRecordings().catch(() => {});
       }).catch((err) => Toast.error(`Delete failed: ${err.message}`));
+    });
+  });
+  body.querySelectorAll("[data-action=rec-rerecord]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeAllRecRowMenus();
+      const r = recCache.find((row) => row.id === btn.dataset.jobId);
+      if (!r) return;
+      if (!(await confirmDialog(`Re-record '${r.channel_name}' now? This starts a fresh capture and may collide with any active recording on that channel.`, { ok: "Re-record", danger: true })))
+        return;
+      await withBusy(btn, "Queuing…", async () => {
+        await API.startRecording({
+          channel_id: r.channel_id,
+          channel_name: r.channel_name,
+          platform: r.platform,
+          from_start: true,
+        });
+        Toast.success("Re-record queued");
+        render().catch(() => {});
+      }).catch((err) => Toast.error(`Re-record failed: ${err.message}`));
+    });
+  });
+  body.querySelectorAll("[data-action=rec-remux]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeAllRecRowMenus();
+      if (!(await confirmDialog("Remux this recording for browser playback? The original is kept as <name>.orig until success.", { ok: "Remux" })))
+        return;
+      await withBusy(btn, "Remuxing…", async () => {
+        await API.remuxRecording(btn.dataset.jobId);
+        Toast.success("Remuxed");
+        render().catch(() => {});
+      }).catch((err) => Toast.error(`Remux failed: ${err.message}`));
+    });
+  });
+  // "⋯" row menu — one open at a time; a click anywhere else (or Escape)
+  // closes it. Delegated on body rather than per-row so N rows cost one
+  // listener, matching the rest of this table's wiring.
+  body.querySelectorAll("[data-action=rec-menu-toggle]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const list = btn.nextElementSibling;
+      const willOpen = list.hidden;
+      closeAllRecRowMenus();
+      if (willOpen) {
+        list.hidden = false;
+        btn.setAttribute("aria-expanded", "true");
+      }
     });
   });
   // Row click:
@@ -2301,17 +2363,15 @@ function updateMassbar() {
   const visible = new Set(visibleRecordingIds());
   const sel = recVisible.filter((r) => recSelected.has(r.id) && visible.has(r.id));
   if (sel.length === 0) {
-    // Audit fix: persistent toolbar so the bulk affordances are
-    // discoverable BEFORE selection. Disabled buttons show what's
-    // possible; selecting any row enables them.
-    bar.hidden = false;
-    bar.classList.add("massbar-empty");
-    bar.innerHTML = `
-      <span class="massbar-count muted">No rows selected — tick a checkbox to enable bulk actions</span>
-      <button class="sm" disabled>Stop active</button>
-      <button class="sm" disabled>Re-record</button>
-      <button class="sm" disabled>Remux</button>
-      <button class="danger sm" disabled>Delete</button>`;
+    // Reversal of an earlier "audit fix": that version kept this bar
+    // permanently visible (disabled buttons) so the bulk affordances were
+    // discoverable before any selection. The persistent chrome itself is
+    // now the problem the user picked to fix — the bar was one of four
+    // always-on rows in the topbar/toolbar area competing for attention.
+    // Hide it entirely until a row is actually ticked.
+    bar.hidden = true;
+    bar.classList.remove("massbar-empty");
+    bar.innerHTML = "";
     return;
   }
   bar.classList.remove("massbar-empty");
@@ -2446,10 +2506,28 @@ function recordingRow(r) {
   const playBtn = isFinished
     ? `<button class="primary sm" data-action="rec-play" data-job-id="${r.id}" title="Open player (Enter)">▶ Play</button>`
     : `<button class="primary sm rec-play-disabled" disabled aria-disabled="true" title="${isActive ? "Playable when capture finishes" : "Recording unavailable"}">▶ Play</button>`;
+  // Delete/Re-record/Remux live in a "⋯" row menu instead of sitting as
+  // inline buttons beside Play — only Stop (while active) and Info stay
+  // directly visible. Each item is offered only when it would actually do
+  // something for this row's state.
+  const canRerecord = !isActive;
+  const canRemux = stateClass === "finished" && r.file_exists !== false;
+  const canDelete = r.file_exists !== false || stateClass !== "recording";
+  const menuItems = [
+    canRerecord ? `<button class="rec-row-menu-item" type="button" data-action="rec-rerecord" data-job-id="${r.id}">↺ Re-record</button>` : "",
+    canRemux ? `<button class="rec-row-menu-item" type="button" data-action="rec-remux" data-job-id="${r.id}" title="Remux for browser playback">⇄ Remux</button>` : "",
+    canDelete ? `<button class="rec-row-menu-item danger" type="button" data-action="rec-delete" data-job-id="${r.id}" title="Delete (Del)">✕ Delete</button>` : "",
+  ].join("");
+  const rowMenu = menuItems
+    ? `<div class="rec-row-menu">
+         <button class="sm rec-row-menu-toggle" type="button" data-action="rec-menu-toggle" aria-haspopup="true" aria-expanded="false" title="More actions">⋯</button>
+         <div class="rec-row-menu-list" hidden role="menu">${menuItems}</div>
+       </div>`
+    : "";
+  const infoBtn = `<button class="sm" data-action="rec-info" data-job-id="${r.id}" title="Recording details (I)">ⓘ Info</button>`;
   const tailBtns = isActive
-    ? `<button class="danger sm" data-action="stop" data-job-id="${r.id}">Stop</button>`
-    : `<button class="sm" data-action="rec-info" data-job-id="${r.id}" title="Recording details (I)">ⓘ Info</button>
-       <button class="danger sm" data-action="rec-delete" data-job-id="${r.id}" title="Delete (Del)">✕</button>`;
+    ? `<button class="danger sm" data-action="stop" data-job-id="${r.id}">Stop</button>${infoBtn}${rowMenu}`
+    : `${infoBtn}${rowMenu}`;
   // File-error remediation: re-scan (re-check file_exists, in case the
   // user remounted a drive or restored from backup) + locate (show the
   // absolute path with a copy gesture). Distinct from Failed which is

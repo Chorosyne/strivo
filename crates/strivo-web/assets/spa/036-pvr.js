@@ -521,7 +521,7 @@ function historyPillHtml(j) {
         <div class="mp-sub">${htmlEscape(j.channel_name || "")} · ${htmlEscape(when)}</div>
       </div>
       <div class="mp-meta">
-        ${(() => { const d = recordingDisplayState(j); return `<span class="state-pill ${d.className}">${htmlEscape(d.label)}</span>`; })()}
+        ${renderStatePill(recordingDisplayState(j))}
         <span class="mp-size">${formatBytes(j.bytes_written || 0)}</span>
       </div>
       <div class="hist-actions">

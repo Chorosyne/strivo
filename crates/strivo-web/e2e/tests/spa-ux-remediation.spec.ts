@@ -16,7 +16,7 @@ test("R01: recordings Load more reaches a second page beyond the first 500", asy
   await expect(page.locator(".recordings-table")).toBeVisible();
 
   const count = page.locator("#rec-count");
-  await expect(count).toContainText("500 total");
+  await expect(count).toContainText("500 recordings");
 
   const loadMore = page.locator("#rec-load-more");
   await expect(loadMore).toBeVisible();
@@ -26,7 +26,7 @@ test("R01: recordings Load more reaches a second page beyond the first 500", asy
 
   // The 2 remaining rows are now in the client cache, and the button
   // retires because the server reports no further cursor.
-  await expect(count).toContainText("502 total");
+  await expect(count).toContainText("502 recordings");
   await expect(loadMore).toHaveCount(0);
 });
 
