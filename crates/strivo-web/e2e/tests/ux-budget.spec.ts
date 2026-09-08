@@ -5,14 +5,22 @@ import { test, expect, type Page } from "@playwright/test";
 // per shortcut, a stage that fits the viewport, and tiles that don't
 // letterbox their video away.
 //
-// Two modes:
-//   UX_BUDGET=report  (default) — attach offenders to the test report, never fail.
-//   UX_BUDGET=enforce           — assert. The density lane flips the default
-//                                 once every route is inside budget.
+// Enforcement (as of the 2026-09 density sweep round 2):
+//   - small hit targets, overlay count, and viewport overflow are ENFORCED
+//     unconditionally — every route was brought inside budget for these on
+//     this branch, so a regression should fail the suite, not just get
+//     logged. HIT_TARGET_ALLOWLIST below is the only escape hatch, and
+//     every entry on it carries a one-line reason.
+//   - tiny text and letterbox stay report-only (UX_BUDGET=enforce opts
+//     them in too): tiny-text still has real non-.micro offenders outside
+//     this lane's file ownership (008-pvr.css's .mon-status-banner et al,
+//     the multistream picker in 004b-pvr.css/018-pvr.js) that can't be
+//     closed from here, and letterbox is Lane A/B's player geometry, not
+//     this lane's surface, to assert on as a hard gate.
 //
 // Measured at 1440×900 because that is the desktop size the sweep was
 // assessed at; the mock lane's default 1280×720 is kept for every other spec.
-const ENFORCE = (globalThis as any).process?.env?.UX_BUDGET === "enforce";
+const ENFORCE_EXTRA = (globalThis as any).process?.env?.UX_BUDGET === "enforce";
 const MIN_HIT = 28;
 const MIN_FONT_PX = 12;
 const MAX_LETTERBOX = 0.1;
@@ -26,7 +34,20 @@ const MOCK_STREAMS = ["Twitch:twitch-live-1", "YouTube:UClive0000000000000000aa"
 
 type Offender = { path: string; w?: number; h?: number; px?: number };
 
-function report(title: string, offenders: unknown[]) {
+// Hit targets deliberately left under 28px — each entry names the owner
+// and why it isn't fixed from this lane. Checked against smallHitTargets'
+// `path` strings (a truncated ` > `-joined ancestor chain).
+const HIT_TARGET_ALLOWLIST: { match: (path: string) => boolean; reason: string }[] = [
+  {
+    match: (p) => p.includes("ms-preset-summary") || p.includes("ms-layout-menu"),
+    reason:
+      "#/watch's preset/layout <summary> toggles are Lane A's toolbar HTML " +
+      "(018-pvr.js) and out of this lane's ownership. Reported target: 32px " +
+      "(matches the rail sort control and rail section headers) — Lane A to apply.",
+  },
+];
+
+function report(title: string, offenders: unknown[], enforce: boolean) {
   test.info().annotations.push({ type: "ux-budget", description: `${title}: ${offenders.length}` });
   if (offenders.length) {
     void test.info().attach(title, {
@@ -34,7 +55,7 @@ function report(title: string, offenders: unknown[]) {
       contentType: "application/json",
     });
   }
-  if (ENFORCE) expect(offenders, title).toEqual([]);
+  if (enforce) expect(offenders, title).toEqual([]);
 }
 
 async function open(page: Page, route: string, layout?: unknown, preset = "custom") {
@@ -139,12 +160,21 @@ for (const route of ROUTES) {
   test.describe(`#/${route}`, () => {
     test("hit targets are at least 28px", async ({ page }) => {
       await open(page, route);
-      report("small hit targets", await smallHitTargets(page));
+      const all = await smallHitTargets(page);
+      const allowed = all.filter((o) => HIT_TARGET_ALLOWLIST.some((a) => a.match(o.path)));
+      const offenders = all.filter((o) => !HIT_TARGET_ALLOWLIST.some((a) => a.match(o.path)));
+      if (allowed.length) {
+        test.info().annotations.push({
+          type: "ux-budget-allowlisted",
+          description: `small hit targets (allowlisted, not enforced): ${allowed.length}`,
+        });
+      }
+      report("small hit targets", offenders, true);
     });
 
     test("no text under 12px outside .micro", async ({ page }) => {
       await open(page, route);
-      report("tiny text", await tinyText(page));
+      report("tiny text", await tinyText(page), ENFORCE_EXTRA);
     });
 
     test("Ctrl+K opens exactly one overlay and Escape closes it", async ({ page }) => {
@@ -155,8 +185,8 @@ for (const route of ROUTES) {
       await page.keyboard.press("Escape");
       await page.waitForTimeout(500);
       const closed = await visibleDialogs(page);
-      report("overlays after Ctrl+K (want 1)", opened.length === 1 ? [] : opened.map((path) => ({ path })));
-      report("overlays after Escape (want 0)", closed.map((path) => ({ path })));
+      report("overlays after Ctrl+K (want 1)", opened.length === 1 ? [] : opened.map((path) => ({ path })), true);
+      report("overlays after Escape (want 0)", closed.map((path) => ({ path })), true);
     });
   });
 }
@@ -172,7 +202,7 @@ test.describe("#/watch and #/chat fit the viewport", () => {
           return c ? c.scrollHeight - c.clientHeight : 0;
         })(),
       }));
-      report("viewport overflow px", m.doc > 1 || m.content > 1 ? [{ path: `document +${m.doc}px, #content +${m.content}px` }] : []);
+      report("viewport overflow px", m.doc > 1 || m.content > 1 ? [{ path: `document +${m.doc}px, #content +${m.content}px` }] : [], true);
     });
   }
 });
@@ -214,7 +244,7 @@ test.describe("#/watch tiles keep their video", () => {
         });
         return out;
       }, MAX_LETTERBOX);
-      report("letterboxed tiles (% wasted)", offenders);
+      report("letterboxed tiles (% wasted)", offenders, ENFORCE_EXTRA);
     });
   }
 });
