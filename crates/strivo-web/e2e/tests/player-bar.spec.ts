@@ -250,3 +250,111 @@ test("a single tile at 1440x900 does not overflow the page", async ({ page }) =>
   const overflow = await page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
   expect(overflow).toBeLessThanOrEqual(1);
 });
+
+// ── Round 2: left-rail collapse + compact bar ────────────────────────
+
+const R2_STREAMS = ["Twitch:twitch-live-1", "YouTube:UClive0000000000000000aa"];
+const r2Slot = (streamId: string) => ({ kind: "slot", streamId, recordingId: null });
+const r2Split = (dir: "h" | "v", a: unknown, b: unknown) => ({ kind: "split", dir, ratio: 0.5, a, b });
+// Same shape multiview-dnd.spec.ts / ux-budget.spec.ts use to seed a
+// layout without needing a real controller — poster tiles are enough to
+// measure leaf/bar geometry.
+const R2_QUADRANT = r2Split(
+  "v",
+  r2Split("h", r2Slot(R2_STREAMS[0]), r2Slot(R2_STREAMS[1])),
+  r2Split("h", r2Slot(R2_STREAMS[1]), r2Slot(R2_STREAMS[0])),
+);
+
+async function openQuadrant(page: import("@playwright/test").Page, { chatRailOpen }: { chatRailOpen: boolean }) {
+  await page.addInitScript(
+    ({ layout, chatRailOpen }) => {
+      localStorage.setItem("strivo-tour-done", "1");
+      localStorage.setItem("strivo-player-layout", JSON.stringify(layout));
+      // "quadrant" (not "custom") so the aspect-locked stage sizing
+      // (paintPlayerStage's stageAspectFor, gated on the named preset)
+      // actually kicks in — that lock is what makes a quadrant tile
+      // shrink below 300px in the first place; a "custom" layout with
+      // the same shape stays unconstrained and never goes compact.
+      localStorage.setItem("strivo-player-preset", "quadrant");
+      localStorage.setItem("strivo-player-chat-rail-open", chatRailOpen ? "1" : "0");
+    },
+    { layout: R2_QUADRANT, chatRailOpen },
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/app#/watch");
+  await page.waitForSelector(".ms-leaf:not(.ms-empty)");
+  // Let the ResizeObserver's first callback (and any layout settling)
+  // land before reading compact state.
+  await page.waitForTimeout(150);
+}
+
+test("quadrant with the chat rail open docks a compact bar below the media, no overlap", async ({ page }) => {
+  await openQuadrant(page, { chatRailOpen: true });
+  const leaves = page.locator(".ms-leaf:not(.ms-empty)");
+  await expect(leaves).toHaveCount(4);
+  await expect(page.locator(".ms-leaf.is-compact")).toHaveCount(4);
+
+  const geo = await page.locator(".ms-leaf.is-compact").first().evaluate((leaf) => {
+    const media = leaf.querySelector(".ms-media")!.getBoundingClientRect();
+    const bar = leaf.querySelector(".player-bar")!.getBoundingClientRect();
+    return { mediaBottom: media.bottom, barTop: bar.top, barHeight: bar.height };
+  });
+  // Docked below, not overlaid: the media box ends at or before the bar
+  // begins, and the bar is the compact 32px strip, not the full overlay.
+  expect(geo.mediaBottom).toBeLessThanOrEqual(geo.barTop + 1);
+  expect(geo.barHeight).toBeLessThanOrEqual(36);
+});
+
+test("quadrant with the chat rail collapsed gives tiles room and no compact mode", async ({ page }) => {
+  await openQuadrant(page, { chatRailOpen: false });
+  const leaves = page.locator(".ms-leaf:not(.ms-empty)");
+  await expect(leaves).toHaveCount(4);
+  await expect(page.locator(".ms-leaf.is-compact")).toHaveCount(0);
+
+  const heights = await leaves.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+  for (const h of heights) expect(h).toBeGreaterThanOrEqual(300);
+});
+
+test("body.route-watch is present on #/watch and cleared off-route", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("strivo-tour-done", "1"));
+  await page.goto("/app#/watch");
+  await page.waitForSelector(".ms-leaf");
+  await expect(page.locator("body")).toHaveClass(/route-watch/);
+
+  await page.evaluate(() => { window.location.hash = "#/library"; });
+  await page.waitForFunction(() => window.location.hash.startsWith("#/library"));
+  await expect(page.locator("body")).not.toHaveClass(/route-watch/);
+});
+
+test("the rail toggle persists across reload", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("strivo-tour-done", "1"));
+  await page.goto("/app#/watch");
+  await page.waitForSelector(".ms-leaf");
+
+  // Default is collapsed — the toolbar toggle expands it.
+  await expect(page.locator("body")).not.toHaveClass(/watch-rail-open/);
+  await page.locator(".watch-rail-toggle").click();
+  await expect(page.locator("body")).toHaveClass(/watch-rail-open/);
+  const stored = await page.evaluate(() => localStorage.getItem("strivo-player-rail-open"));
+  expect(stored).toBe("1");
+
+  await page.reload();
+  await page.waitForSelector(".ms-leaf");
+  await expect(page.locator("body")).toHaveClass(/watch-rail-open/);
+  await expect(page.locator(".watch-rail-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("fullscreen clears compact mode even on a short tile", async ({ page }) => {
+  await page.addInitScript(() => {
+    (Element.prototype as any).requestFullscreen = function () {
+      Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => this });
+      this.dispatchEvent(new Event("fullscreenchange", { bubbles: true }));
+      return Promise.resolve();
+    };
+  });
+  await openQuadrant(page, { chatRailOpen: true });
+  await expect(page.locator(".ms-leaf.is-compact")).toHaveCount(4);
+
+  await page.evaluate(() => (document.querySelector(".ms-leaf") as HTMLElement).requestFullscreen());
+  await expect(page.locator(".ms-leaf").first()).not.toHaveClass(/is-compact/);
+});
