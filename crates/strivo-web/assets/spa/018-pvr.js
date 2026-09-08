@@ -2952,8 +2952,8 @@ function renderEmptySlotHtml(path, streams) {
           ${recRows ? `<div class="ms-picker-group-label">Recent recordings</div>${recRows}` : ""}
           ${empty}
         </div>
+        <div class="ms-empty-hint pg-cap-hint">…or drag a channel from the rail.</div>
       </div>
-      <div class="ms-empty-hint pg-cap-hint">…or drag a channel from the rail.</div>
     </div>`;
 }
 
