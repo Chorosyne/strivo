@@ -667,10 +667,14 @@ mod tests {
         // field must default to empty rather than fail decode (additive,
         // no protocol bump).
         let json = r#"{"StateSnapshot":{"version":2,"channels":[],"recordings":{},"twitch_connected":false,"youtube_connected":false,"patreon_connected":false,"pending_auth":null}}"#;
-        let msg: ServerMessage = serde_json::from_str(json).expect("deserialize old-shaped snapshot");
+        let msg: ServerMessage =
+            serde_json::from_str(json).expect("deserialize old-shaped snapshot");
         match msg {
             ServerMessage::StateSnapshot { auth_issues, .. } => {
-                assert!(auth_issues.is_empty(), "expected empty auth_issues, got: {auth_issues:?}");
+                assert!(
+                    auth_issues.is_empty(),
+                    "expected empty auth_issues, got: {auth_issues:?}"
+                );
             }
             other => panic!("expected StateSnapshot, got: {other:?}"),
         }

@@ -7,8 +7,8 @@ use tokio::sync::RwLock;
 use crate::config::credentials;
 use crate::events::DaemonEvent;
 use crate::platform::{
-    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind,
-    RefreshOutcome, RefreshRejected, VodEntry,
+    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind, RefreshOutcome,
+    RefreshRejected, VodEntry,
 };
 
 const TWITCH_AUTH_URL: &str = "https://id.twitch.tv/oauth2";
@@ -459,9 +459,7 @@ impl TwitchPlatform {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return match classify_token_response(status.as_u16(), &body) {
-                RefreshOutcome::Rejected(reason) => {
-                    Err(RefreshRejected(reason).into())
-                }
+                RefreshOutcome::Rejected(reason) => Err(RefreshRejected(reason).into()),
                 RefreshOutcome::Transient(reason) => {
                     bail!("token refresh failed ({status}): {reason}")
                 }
@@ -820,6 +818,9 @@ mod login_required_tests {
     fn transient_error_propagates_as_outage() {
         let err = anyhow::anyhow!("connection reset by peer");
         let result = login_required_or_outage(err);
-        assert!(result.is_err(), "a non-rejection error must propagate, not become LoginRequired");
+        assert!(
+            result.is_err(),
+            "a non-rejection error must propagate, not become LoginRequired"
+        );
     }
 }

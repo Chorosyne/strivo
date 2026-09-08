@@ -673,9 +673,24 @@ fn platform_auth_checks(
     };
 
     let platforms = [
-        ("Twitch", PlatformKind::Twitch, cfg.twitch.is_some(), connected[0]),
-        ("YouTube", PlatformKind::YouTube, cfg.youtube.is_some(), connected[1]),
-        ("Patreon", PlatformKind::Patreon, cfg.patreon.is_some(), connected[2]),
+        (
+            "Twitch",
+            PlatformKind::Twitch,
+            cfg.twitch.is_some(),
+            connected[0],
+        ),
+        (
+            "YouTube",
+            PlatformKind::YouTube,
+            cfg.youtube.is_some(),
+            connected[1],
+        ),
+        (
+            "Patreon",
+            PlatformKind::Patreon,
+            cfg.patreon.is_some(),
+            connected[2],
+        ),
     ];
 
     let mut out = Vec::new();
@@ -3673,7 +3688,10 @@ mod platform_auth_checks_tests {
         let checks = platform_auth_checks(&cfg, None);
         let row = find(&checks, "Twitch");
         assert_eq!(row["severity"], "warn");
-        assert_eq!(row["message"], "Twitch configured but not yet authenticated.");
+        assert_eq!(
+            row["message"],
+            "Twitch configured but not yet authenticated."
+        );
     }
 
     #[test]
@@ -3690,14 +3708,21 @@ mod platform_auth_checks_tests {
         let cfg = cfg_with(true, false, false);
         let snap = snapshot(
             (false, false, false),
-            Some((PlatformKind::Twitch, "https://example.com/activate".into(), "ABCD-1234".into())),
+            Some((
+                PlatformKind::Twitch,
+                "https://example.com/activate".into(),
+                "ABCD-1234".into(),
+            )),
             Vec::new(),
         );
         let checks = platform_auth_checks(&cfg, Some(&snap));
         let row = find(&checks, "Twitch");
         assert_eq!(row["severity"], "warn");
         assert!(row["message"].as_str().unwrap().contains("ABCD-1234"));
-        assert!(row["message"].as_str().unwrap().contains("https://example.com/activate"));
+        assert!(row["message"]
+            .as_str()
+            .unwrap()
+            .contains("https://example.com/activate"));
     }
 
     #[test]

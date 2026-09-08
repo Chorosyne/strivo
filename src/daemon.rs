@@ -2123,8 +2123,14 @@ mod tests {
             reason: "sign in to confirm you're not a bot".into(),
         });
         assert_eq!(state.auth_issues.len(), 1);
-        assert_eq!(state.auth_issues[0].since, since, "since must survive an upsert");
-        assert_eq!(state.auth_issues[0].reason, "sign in to confirm you're not a bot");
+        assert_eq!(
+            state.auth_issues[0].since, since,
+            "since must survive an upsert"
+        );
+        assert_eq!(
+            state.auth_issues[0].reason,
+            "sign in to confirm you're not a bot"
+        );
 
         // Zero bytes is still not evidence.
         state.apply(&progress(0));
@@ -2132,7 +2138,10 @@ mod tests {
 
         // Data on disk is.
         state.apply(&progress(4096));
-        assert!(state.auth_issues.is_empty(), "bytes written must clear the cookies issue");
+        assert!(
+            state.auth_issues.is_empty(),
+            "bytes written must clear the cookies issue"
+        );
     }
 
     fn job(state: RecordingState, age_secs: i64) -> RecordingJob {

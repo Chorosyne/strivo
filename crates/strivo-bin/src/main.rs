@@ -1097,9 +1097,24 @@ async fn print_auth_status(config_path: Option<&std::path::Path>) {
     };
 
     let platforms: [(&str, PlatformKind, bool, bool); 3] = [
-        ("Twitch", PlatformKind::Twitch, cfg.twitch.is_some(), twitch_connected),
-        ("YouTube", PlatformKind::YouTube, cfg.youtube.is_some(), youtube_connected),
-        ("Patreon", PlatformKind::Patreon, cfg.patreon.is_some(), patreon_connected),
+        (
+            "Twitch",
+            PlatformKind::Twitch,
+            cfg.twitch.is_some(),
+            twitch_connected,
+        ),
+        (
+            "YouTube",
+            PlatformKind::YouTube,
+            cfg.youtube.is_some(),
+            youtube_connected,
+        ),
+        (
+            "Patreon",
+            PlatformKind::Patreon,
+            cfg.patreon.is_some(),
+            patreon_connected,
+        ),
     ];
 
     for (name, kind, configured, connected) in platforms {
@@ -1115,8 +1130,14 @@ async fn print_auth_status(config_path: Option<&std::path::Path>) {
         let pending = pending_auth.as_ref().filter(|(p, ..)| *p == kind);
 
         if let Some(issue) = oauth_issue {
-            let since_local = issue.since.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
-            println!("{name}: NEEDS ATTENTION — {} (since {since_local})", issue.reason);
+            let since_local = issue
+                .since
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M");
+            println!(
+                "{name}: NEEDS ATTENTION — {} (since {since_local})",
+                issue.reason
+            );
             println!("  next step: re-authenticate from Settings → Platforms (or `strivo setup`).");
         } else if let Some((_, uri, code)) = pending {
             println!("{name}: waiting for device code {code} at {uri}");
@@ -1127,7 +1148,10 @@ async fn print_auth_status(config_path: Option<&std::path::Path>) {
         }
 
         if let Some(issue) = cookie_issue {
-            let since_local = issue.since.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
+            let since_local = issue
+                .since
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M");
             println!(
                 "{name} cookies: NEEDS ATTENTION — {} (since {since_local})",
                 issue.reason

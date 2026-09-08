@@ -290,7 +290,8 @@ mod classify_tests {
 
     #[test]
     fn google_invalid_grant_is_rejected() {
-        let body = r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
+        let body =
+            r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
         match classify_token_response(400, body) {
             RefreshOutcome::Rejected(reason) => {
                 assert_eq!(reason, "Token has been expired or revoked");

@@ -8,8 +8,8 @@ use tokio::sync::RwLock;
 use crate::config::credentials;
 use crate::events::DaemonEvent;
 use crate::platform::{
-    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind,
-    RefreshOutcome, RefreshRejected, VodEntry,
+    classify_token_response, AppCredentials, ChannelEntry, Platform, PlatformKind, RefreshOutcome,
+    RefreshRejected, VodEntry,
 };
 
 const YOUTUBE_API_URL: &str = "https://www.googleapis.com/youtube/v3";
