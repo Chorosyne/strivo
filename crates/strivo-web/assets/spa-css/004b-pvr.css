@@ -46,7 +46,10 @@
   max-height: 100%;
   aspect-ratio: var(--stage-aspect, auto);
   align-self: center;
-  margin: auto;
+  /* `0 auto`, not `auto` — a height-limited stage top-aligns under the
+   * toolbar instead of splitting the leftover space into a dead band
+   * above AND below it (which read as broken, not "locked"). */
+  margin: 0 auto;
 }
 /* Drag shield — CSS only, no DOM inserted into the tile markup. A
  * cross-origin iframe/video swallows dragover before it ever reaches this
@@ -79,15 +82,37 @@
 .ms-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 0; }
 .ms-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .ms-pane > * { flex: 1; min-width: 0; min-height: 0; }
-/* Gutter — 6px draggable strip between two children of a split. */
+/* Gutter — 6px draggable hit-area between two children of a split. A
+ * fully transparent strip was undiscoverable; a visible 2px line
+ * (::before) plus a grip pill that appears on hover/focus (::after) make
+ * it read as a control rather than a seam. */
 .ms-gutter {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.05);
+  background: transparent;
   flex: 0 0 6px;
   position: relative;
   user-select: none;
 }
-.ms-gutter:hover { background: var(--accent, #b07cff); border-color: var(--accent, #b07cff); }
+.ms-gutter::before {
+  content: "";
+  position: absolute;
+  margin: auto;
+  background: var(--border-light, rgba(255,255,255,.18));
+}
+.ms-gutter-h::before { inset: 0; width: 2px; height: 100%; }
+.ms-gutter-v::before { inset: 0; width: 100%; height: 2px; }
+.ms-gutter::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  border-radius: 2px;
+  background: var(--accent, #b07cff);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.ms-gutter-h::after { width: 4px; height: 24px; transform: translate(-50%, -50%); }
+.ms-gutter-v::after { width: 24px; height: 4px; transform: translate(-50%, -50%); }
+.ms-gutter:hover::after,
+.ms-gutter:focus-visible::after { opacity: 1; }
 .ms-gutter-h { cursor: col-resize; }
 .ms-gutter-v { cursor: row-resize; }
 body.ms-resizing { cursor: ew-resize; user-select: none; }
@@ -115,6 +140,9 @@ body.ms-resizing { cursor: ew-resize; user-select: none; }
   justify-content: center;
   gap: 0.4rem;
 }
+/* The "Stream offline" pill (019a's renderPopulatedSlotHtml) — clicking
+ * it converts the slot back to empty and opens the picker card (see
+ * wireTileHandlers' offlinePill handler). */
 .ms-empty-pill {
   display: inline-flex; align-items: center; gap: 0.5rem;
   background: rgba(255,255,255,0.1);
@@ -123,15 +151,10 @@ body.ms-resizing { cursor: ew-resize; user-select: none; }
   border-radius: 999px;
   font-size: 0.85rem;
   backdrop-filter: blur(6px);
+  cursor: pointer;
 }
+.ms-empty-pill:hover { background: rgba(255,255,255,0.16); border-color: var(--accent, #b07cff); }
 .ms-empty-pill > span { font-weight: 600; }
-.ms-empty-pill select {
-  background: rgba(0,0,0,0.4);
-  border: 1px solid rgba(255,255,255,0.15);
-  color: inherit;
-  border-radius: 4px;
-  padding: 0.15rem 0.3rem;
-}
 .ms-empty-hint { font-size: 0.7rem; }
 .ms-empty.is-drop-target { box-shadow: inset 0 0 0 3px var(--accent, #b07cff); }
 .ms-leaf.is-drop-target { box-shadow: inset 0 0 0 3px var(--accent, #b07cff); }

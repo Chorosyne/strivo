@@ -1162,6 +1162,51 @@ function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; 
 function _row2() { return _split("h", 0.5, _slot(), _slot()); }
 function _row3() { return _split("h", 1 / 3, _slot(), _split("h", 0.5, _slot(), _slot())); }
 
+/// Nested split tree for an EXACT cols x rows grid of empty slots, in
+/// reading order — generalises _row2/_row3 above to any grid shape.
+/// (Reproduces PLAYER_PRESETS' own split-screen/quadrant/grid-6/grid-9
+/// trees exactly for (2,1)/(2,2)/(2,3)/(3,3).) Used by the aspect-aware
+/// repacking below to rebuild a grid-regular preset's tree for whichever
+/// (cols, rows) actually fits the stage box.
+function buildGridTree(cols, rows) {
+  const buildRow = (n) => (n <= 1 ? _slot() : _split("h", 1 / n, _slot(), buildRow(n - 1)));
+  const buildCol = (n) => (n <= 1 ? buildRow(cols) : _split("v", 1 / n, buildRow(cols), buildCol(n - 1)));
+  return buildCol(rows);
+}
+
+/// Structural signature (dir sequence only — no content, no ratio) of a
+/// layout tree. Two trees with the same signature have the same shape;
+/// used to check whether a layout already matches a candidate grid shape
+/// without a full deep-equality helper.
+function gridSignature(node) {
+  return node.kind === "slot" ? "s" : `(${node.dir}:${gridSignature(node.a)},${gridSignature(node.b)})`;
+}
+
+/// Rebuild `layout` as an exact cols x rows grid, carrying every
+/// populated slot's content across in reading order — same rule the
+/// preset-switch handler uses — and re-pointing soloPath at wherever its
+/// source landed, if it's still on the wall.
+function repackLayoutToGrid(layout, cols, rows) {
+  const preserved = [];
+  const prevSoloPath = playerState.soloPath || "";
+  walkLayout(layout, (n, path) => {
+    if (n.kind === "slot" && (n.streamId || n.recordingId)) {
+      preserved.push({ streamId: n.streamId || null, recordingId: n.recordingId || null, wasSoloed: path === prevSoloPath });
+    }
+  });
+  let next = buildGridTree(cols, rows);
+  const slotPaths = [];
+  walkLayout(next, (n, path) => { if (n.kind === "slot") slotPaths.push(path); });
+  let newSoloPath = "";
+  for (let i = 0; i < Math.min(preserved.length, slotPaths.length); i++) {
+    next = setNodeAt(next, slotPaths[i], _slot(preserved[i].streamId, preserved[i].recordingId));
+    if (preserved[i].wasSoloed) newSoloPath = slotPaths[i];
+  }
+  if (newSoloPath) playerState.soloPath = newSoloPath;
+  else if (prevSoloPath) playerState.soloPath = "";
+  return next;
+}
+
 // One drag-payload codec, shared by the stage, the rail and the composer.
 // encodeDragPayload builds the wire string; decodeDragPayload validates
 // shape + ID grammar so a stray browser URL drag (or a corrupted/old
@@ -1520,6 +1565,57 @@ function stageAspectFor(preset, w, h) {
   const shape = PRESET_GRID_SHAPE[preset];
   if (!shape) return null;
   return (shape.cols * 16) / (shape.rows * 9);
+}
+
+// ── Aspect-aware repacking ────────────────────────────────────────────
+//
+// A preset's FIXED cols x rows shape (PRESET_GRID_SHAPE) is the right
+// call most of the time, but it can waste more than half the stage: a
+// quadrant's 2x2 in a short, wide box (chat rail open) locks every tile
+// to a 16:9 slice of a square-ish aspect that doesn't fit the box at
+// all. When that happens, every OTHER exact factorisation of the same
+// leaf count is tried and whichever covers the most actual video area
+// wins — for 2 tiles on a wide-short stage that's 2x1 (side by side),
+// for 4 it can mean 4x1 instead of 2x2, depending on the box.
+
+/// Total on-screen video area a cols x rows grid of 16:9 tiles covers
+/// inside a WxH box — same fit math as bestGridFor, just for one
+/// candidate shape rather than searching for the best (cols, rows).
+function gridFitArea(shape, W, H) {
+  const tileW = W / shape.cols;
+  const tileH = H / shape.rows;
+  const fitW = Math.min(tileW, tileH * (16 / 9));
+  const fitH = fitW * (9 / 16);
+  return fitW * fitH * shape.cols * shape.rows;
+}
+
+/// Every (cols, rows) pair that exactly tiles n leaves — the only
+/// shapes worth considering, since a preset's leaf count is fixed.
+function candidateGridShapes(n) {
+  const out = [];
+  for (let rows = 1; rows <= n; rows++) {
+    if (n % rows === 0) out.push({ cols: n / rows, rows });
+  }
+  return out;
+}
+
+/// The shape to actually render a grid-regular preset with: `base`
+/// unless it covers under 70% of the WxH box AND a same-leaf-count
+/// alternative covers more.
+function bestPackedGridShape(n, W, H, base) {
+  if (!base || !(W > 0) || !(H > 0)) return base;
+  const baseArea = gridFitArea(base, W, H);
+  if (baseArea / (W * H) >= 0.7) return base;
+  let best = base;
+  let bestArea = baseArea;
+  for (const cand of candidateGridShapes(n)) {
+    const area = gridFitArea(cand, W, H);
+    if (area > bestArea) {
+      best = cand;
+      bestArea = area;
+    }
+  }
+  return best;
 }
 
 function getNodeAt(layout, path) {
@@ -2047,6 +2143,40 @@ function wireStageKeyboard(stage, watch, streams) {
     const dirKey = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[e.key];
     if (!dirKey) return;
 
+    // Ctrl+Shift+Arrow nudges the focused leaf's PARENT split ratio —
+    // checked before the plain Shift+Arrow swap below, since Ctrl+Shift
+    // also carries shiftKey. Only responds when the arrow's axis matches
+    // the parent split's own direction (h: left/right, v: up/down); the
+    // perpendicular pair is a no-op rather than resizing an unrelated
+    // ancestor split.
+    if (e.ctrlKey && e.shiftKey) {
+      const path = leaf.dataset.path || "";
+      if (!path) return; // the root has no parent split to resize
+      const parts = pathParts(path);
+      const parentPath = pathStr(parts.slice(0, -1));
+      const parent = getNodeAt(playerState.layout, parentPath);
+      if (!parent || parent.kind !== "split") return;
+      let delta = 0;
+      if (parent.dir === "h") {
+        if (dirKey === "left") delta = -0.05;
+        else if (dirKey === "right") delta = 0.05;
+      } else if (parent.dir === "v") {
+        if (dirKey === "up") delta = -0.05;
+        else if (dirKey === "down") delta = 0.05;
+      }
+      if (!delta) return;
+      e.preventDefault();
+      parent.ratio = Math.max(0.1, Math.min(0.9, parent.ratio + delta));
+      savePlayerLayout();
+      // Ratio isn't part of the patch path's content diff (only slot
+      // contents are compared), so a same-shape repaint would leave the
+      // pane flex styles stale — force the full render.
+      playerState.lastPaintedLayout = null;
+      paintPlayerStage(watch, streams);
+      e.stopPropagation();
+      return;
+    }
+
     if (e.shiftKey) {
       e.preventDefault();
       const other = neighborLeafInDirection(stage, leaf, dirKey);
@@ -2187,6 +2317,24 @@ function wireTileHandlers(tile, stage, watch, streams) {
 
   wirePickerCard(tile, { stage, watch, streams });
 
+  // A slot whose stream left the live set renders the "Stream offline"
+  // pill (019a's renderPopulatedSlotHtml, when the leaf's streamId no
+  // longer resolves against `streams`) — a dead end with no picker.
+  // `.ms-empty-pill` only ever appears on THAT branch: a real empty slot
+  // renders `.ms-picker` instead (renderEmptySlotHtml, above), so this
+  // check can't misfire on a genuinely empty tile. Clicking it converts
+  // the slot back to a real empty one and repaints, landing on the same
+  // picker card an empty slot shows.
+  const offlinePill = tile.querySelector(".ms-empty-pill");
+  if (offlinePill) {
+    offlinePill.addEventListener("click", () => {
+      const path = tile.dataset.path || "";
+      playerState.layout = setNodeAt(playerState.layout, path, _slot());
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+    });
+  }
+
   wireTileChrome(tile, { stage, watch, streams });
 }
 
@@ -2219,9 +2367,19 @@ function tryPatchPlayerStage(watch, prev, curr, streams) {
   for (const { path, prevNode, currNode } of work) {
     const tile = stage.querySelector(`.ms-leaf[data-path="${cssEscape(path)}"]`);
     if (!tile) return false; // shape thought it was the same but DOM disagrees → bail
+    // A slot's own streamId never changes when a channel goes live/offline
+    // — only whether `streams` still resolves it does — so the identity
+    // check above is blind to exactly the transition that matters here.
+    // Compare against what's actually painted (`data-stream-id` is absent
+    // on the "Stream offline" pill markup) so a resolvability flip forces
+    // the re-render that swaps between the two.
+    const domHasStream = !!tile.dataset.streamId;
+    const nowResolves = currNode.streamId ? streams.some((s) => s.stream_id === currNode.streamId) : null;
+    const wentLiveOrOffline = currNode.streamId != null && nowResolves !== domHasStream;
     const sameContent =
       (prevNode.streamId || null) === (currNode.streamId || null) &&
-      (prevNode.recordingId || null) === (currNode.recordingId || null);
+      (prevNode.recordingId || null) === (currNode.recordingId || null) &&
+      !wentLiveOrOffline;
     if (sameContent) {
       // Same content. Mute may have flipped; mountPlayerBar (via
       // reconcileControllers below) repaints the whole bar from current
@@ -2355,15 +2513,36 @@ function paintPlayerStage(watch, streams) {
 
   reconcileControllers(stage);
 
+  // Repack a grid-regular preset's tree BEFORE locking any aspect ratio
+  // to it, when the fixed shape would waste too much of the box (see
+  // bestPackedGridShape's doc comment). This changes the tree itself —
+  // not just a CSS ratio — so it's a full re-render: mutate the layout
+  // and recurse into a fresh paintPlayerStage call rather than trying to
+  // patch pane ratios in place here. Terminates in one extra pass: the
+  // rebuilt tree already has the packed shape's signature, so the next
+  // call's own repack check finds nothing left to do.
+  const baseShape = PRESET_GRID_SHAPE[playerState.preset];
+  if (baseShape) {
+    const geoForPacking = stageGeometry();
+    const packed = bestPackedGridShape(leaves, geoForPacking.w, geoForPacking.h, baseShape);
+    if (gridSignature(playerState.layout) !== gridSignature(buildGridTree(packed.cols, packed.rows))) {
+      playerState.layout = repackLayoutToGrid(playerState.layout, packed.cols, packed.rows);
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+      return;
+    }
+  }
+
   // Aspect-aware presets. A grid-regular preset (split-screen, quadrant,
-  // grid-6, grid-9) gets a --stage-aspect derived from its FIXED cols x
-  // rows shape (see PRESET_GRID_SHAPE), so CSS can letterbox the whole
-  // stage to a true 16:9-per-tile box instead of stretching every tile to
-  // whatever the viewport happens to be — that stretch was costing each
-  // quadrant tile ~45% letterbox at 1440x900. single/focus-3/custom have
-  // no uniform grid shape, so they stay unconstrained.
+  // grid-6, grid-9) gets a --stage-aspect derived from the shape it's
+  // ACTUALLY laid out as (baseShape, or bestPackedGridShape's pick when
+  // that shape covers more of the box — see above), so CSS can letterbox
+  // the whole stage to a true 16:9-per-tile box instead of stretching
+  // every tile to whatever the viewport happens to be. single/focus-3/
+  // custom have no uniform grid shape, so they stay unconstrained.
   const geo = stageGeometry();
-  const aspect = stageAspectFor(playerState.preset, geo.w, geo.h);
+  const effectiveShape = baseShape ? bestPackedGridShape(leaves, geo.w, geo.h, baseShape) : null;
+  const aspect = effectiveShape ? (effectiveShape.cols * 16) / (effectiveShape.rows * 9) : null;
   // `.has-aspect` (CSS) is what actually opts the stage out of the
   // default fill-the-row sizing — see 004b's doc comment. Gating on a
   // class rather than always setting --stage-aspect and letting
@@ -2940,9 +3119,14 @@ function renderEmptySlotHtml(path, streams) {
     .slice(0, 24);
   const recRows = finishedRecs.map((r) => {
     const label = niceTitle(r.stream_title) || r.channel_name || r.id.slice(0, 8);
+    // The filter matches channel AND title, even though the display
+    // label only shows whichever one it picked (title first) — typing
+    // the channel name must still find a recording titled something
+    // else entirely.
+    const filterLabel = [niceTitle(r.stream_title), r.channel_name].filter(Boolean).join(" ") || label;
     return `
       <button type="button" class="ms-pick ms-pick-rec" data-pick="rec:${htmlEscape(r.id)}"
-              data-pick-label="${htmlEscape(label)}" role="option">
+              data-pick-label="${htmlEscape(filterLabel)}" role="option">
         <span class="ms-pick-dot rec" aria-hidden="true">▣</span>
         <span class="ms-pick-name">${htmlEscape(label)}</span>
         <span class="ms-pick-meta">${htmlEscape(shortWhen(r.started_at))}</span>
@@ -3022,5 +3206,9 @@ Object.assign(TEST_HOOK_EXTENSIONS, {
   bestGridFor,
   stageAspectFor,
   paintChannelList,
+  bestPackedGridShape,
+  candidateGridShapes,
+  gridFitArea,
+  paintPlayerStage,
 });
 
