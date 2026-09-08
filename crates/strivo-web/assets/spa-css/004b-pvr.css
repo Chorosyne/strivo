@@ -13,15 +13,53 @@
 .watch-stage { background: rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; }
 
 /* ── Player stage (multi-view collapsed into the player) ─────────── */
+/* `width: auto` + `aspect-ratio` lets a grid-regular preset (see
+ * --stage-aspect, set in paintPlayerStage) derive its width from the
+ * available height instead of always stretching to the viewport — that
+ * stretch was the ~45% per-tile letterbox on a 1440x900 quadrant. Presets
+ * without a uniform grid shape (single/focus-3/custom) leave
+ * --stage-aspect unset, so `aspect-ratio: auto` is a no-op and the stage
+ * fills the row exactly as it always did. */
 .ms-stage {
   position: relative;
   display: flex;
-  width: 100%;
+  width: auto;
   height: calc(100vh - 180px);
   min-height: 360px;
+  max-width: 100%;
+  aspect-ratio: var(--stage-aspect, auto);
+  margin: auto;
   background: rgba(0,0,0,0.5);
   border-radius: 6px;
   overflow: hidden;
+}
+/* Drag shield — CSS only, no DOM inserted into the tile markup. A
+ * cross-origin iframe/video swallows dragover before it ever reaches this
+ * document, so a plain transparent catcher over the media area is what
+ * makes dropping onto a PLAYING tile possible at all. `.ms-mount` isn't
+ * itself positioned, so give it one here rather than editing 020's rule —
+ * `.ms-media` is Lane A's future wrapper, targeted in advance. */
+.ms-mount, .ms-media { position: relative; }
+.ms-stage.is-dnd .ms-media::after,
+.ms-stage.is-dnd .ms-mount::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+/* Handle-only drag affordance — `draggable` never sits on `.ms-leaf`
+ * itself (see wireStageDnD's doc comment in 018-pvr.js). */
+.ms-leaf [data-drag-handle],
+.ms-leaf .watch-tile-name {
+  cursor: grab;
+}
+.ms-leaf.is-dragging [data-drag-handle],
+.ms-leaf.is-dragging .watch-tile-name {
+  cursor: grabbing;
+}
+.ms-leaf:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent, #b07cff);
 }
 .ms-stage > * { flex: 1; min-width: 0; min-height: 0; }
 .ms-split { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 0; }
@@ -107,4 +145,75 @@ body.ms-resizing { cursor: ew-resize; user-select: none; }
   margin: 0;
 }
 .ms-preset-opt.active { background: rgba(176,124,255,0.15); border-color: var(--accent, #b07cff); }
+
+/* Empty-slot picker card — replaces the old native <select>. Glass-card
+ * idiom from DESIGN.md's "Web UI Theme": translucent navy glass, heavy
+ * blur, --radius corners. Sized to the tile so it reads as part of the
+ * wall rather than a floating menu. */
+.ms-picker {
+  position: absolute;
+  inset: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: hsla(208, 60%, 13%, .5);
+  backdrop-filter: blur(20px) saturate(110%);
+  -webkit-backdrop-filter: blur(20px) saturate(110%);
+  border: 1px solid hsla(0, 0%, 100%, .12);
+  border-radius: 10px;
+  padding: 0.5rem;
+  overflow: hidden;
+}
+.ms-picker-filter {
+  min-height: 32px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid hsla(0, 0%, 100%, .15);
+  border-radius: 8px;
+  color: inherit;
+  padding: 0 0.6rem;
+  font-size: 0.85rem;
+}
+.ms-picker-filter:focus-visible { outline: 2px solid var(--accent, #b07cff); outline-offset: 1px; }
+.ms-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ms-picker-group-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: hsl(208, 16%, 55%);
+  padding: 0.3rem 0.3rem 0.1rem;
+}
+.ms-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.45rem;
+  cursor: pointer;
+}
+.ms-pick:hover, .ms-pick:focus-visible {
+  background: hsla(0, 0%, 100%, .08);
+  border-color: hsla(0, 0%, 100%, .18);
+  outline: none;
+}
+.ms-pick-dot { flex: none; font-size: 0.6rem; }
+.ms-pick-dot.live { color: hsl(150, 60%, 50%); }
+.ms-pick-dot.rec { color: hsl(0, 70%, 60%); }
+.ms-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-pick-meta { color: hsl(208, 22%, 72%); font-size: 0.72rem; flex: none; }
+.ms-picker-empty { padding: 0.4rem; }
 

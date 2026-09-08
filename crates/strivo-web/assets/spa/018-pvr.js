@@ -1148,6 +1148,7 @@ function setTilePlaying(node, on) {
 const PLAYER_LEAF_CAP = 9;
 const PLAYER_LAYOUT_KEY = "strivo-player-layout";
 const PLAYER_PRESET_KEY = "strivo-player-preset";
+const PLAYER_SOLO_KEY = "strivo-player-solo";
 
 // A slot can hold ONE of (or neither):
 //   streamId      — live channel (rendered as a platform embed iframe)
@@ -1161,14 +1162,24 @@ function _split(dir, ratio, a, b) { return { kind: "split", dir, ratio, a, b }; 
 function _row2() { return _split("h", 0.5, _slot(), _slot()); }
 function _row3() { return _split("h", 1 / 3, _slot(), _split("h", 0.5, _slot(), _slot())); }
 
-// Strict drag-payload parser. Validates the shape and ID grammar so a
-// stray browser URL drag (or a corrupted/old payload) can't slip into
-// the layout as a real stream. Returns:
+// One drag-payload codec, shared by the stage, the rail and the composer.
+// encodeDragPayload builds the wire string; decodeDragPayload validates
+// shape + ID grammar so a stray browser URL drag (or a corrupted/old
+// payload) can't slip into the layout as a real stream. Grammar is
+// unchanged from the previous ad-hoc parser: `strivo-tile:<path>`,
+// `strivo-stream:<id>`, `strivo-recording:<id>`. decode returns:
 //   { type: "tile",      path: string }
 //   { type: "stream",    id:   string }
 //   { type: "recording", id:   string }
 // or null when the payload doesn't match any known schema.
-function parsePlayerDragPayload(text) {
+function encodeDragPayload(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  if (payload.type === "tile") return `strivo-tile:${payload.path ?? ""}`;
+  if (payload.type === "stream") return `strivo-stream:${payload.id ?? ""}`;
+  if (payload.type === "recording") return `strivo-recording:${payload.id ?? ""}`;
+  return "";
+}
+function decodeDragPayload(text) {
   if (typeof text !== "string" || !text) return null;
   // Path can be empty (root); slug chars only beyond that.
   if (text.startsWith("strivo-tile:")) {
@@ -1453,16 +1464,82 @@ function reconcilePlayerChatRail(streams) {
   }
 }
 
-// Stage size handed to /multistream/tiles. Fixed for now; the layout lane
-// replaces this with a measurement of the real stage.
+// Stage size handed to /multistream/tiles. Measures the real `.ms-stage`
+// element so tile geometry matches what's actually on screen; falls back
+// to the old fixed guess when the stage isn't mounted yet (first paint,
+// before the DOM exists) or reports a zero-size box (display:none,
+// mid-teardown).
 function stageGeometry() {
+  const stage = document.querySelector(".ms-stage");
+  if (stage) {
+    const r = stage.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      return { w: Math.round(r.width), h: Math.round(r.height) };
+    }
+  }
   return { w: 800, h: 450 };
+}
+
+// Fixed cols x rows shape for the grid-regular presets — matches the
+// PLAYER_PRESETS trees above exactly, so the aspect ratio painted onto
+// `.ms-stage` always agrees with the tiles actually on screen. Presets
+// not listed here (single, focus-3, custom) don't have a uniform grid
+// shape and stay unconstrained.
+const PRESET_GRID_SHAPE = {
+  "split-screen": { cols: 2, rows: 1 },
+  quadrant: { cols: 2, rows: 2 },
+  "grid-6": { cols: 2, rows: 3 },
+  "grid-9": { cols: 3, rows: 3 },
+};
+
+/// Pure helper: for `n` same-size 16:9 tiles packed into a WxH box, pick
+/// the cols x rows combination that maximises each tile's area. Exposed
+/// as a hook for anything that wants an aspect-aware grid without a fixed
+/// shape above (and for e2e to exercise the geometry math directly).
+function bestGridFor(n, W, H) {
+  if (!(n > 0)) return { cols: 1, rows: 1 };
+  let best = { cols: n, rows: 1, area: -1 };
+  for (let rows = 1; rows <= n; rows++) {
+    const cols = Math.ceil(n / rows);
+    const tileW = W / cols;
+    const tileH = H / rows;
+    const fitW = Math.min(tileW, tileH * (16 / 9));
+    const fitH = fitW * (9 / 16);
+    const area = fitW * fitH;
+    if (area > best.area) best = { cols, rows, area };
+  }
+  return { cols: best.cols, rows: best.rows };
+}
+
+/// `--stage-aspect` value for a preset, or null to leave the stage
+/// unconstrained (single / focus-3 / custom — none of these are a
+/// uniform grid, so letterboxing math doesn't apply to the stage as a
+/// whole).
+function stageAspectFor(preset, w, h) {
+  void w; void h; // reserved for a future non-fixed-shape preset
+  const shape = PRESET_GRID_SHAPE[preset];
+  if (!shape) return null;
+  return (shape.cols * 16) / (shape.rows * 9);
 }
 
 function getNodeAt(layout, path) {
   let n = layout;
   for (const step of pathParts(path)) n = n[step];
   return n;
+}
+
+/// Safe existence check — never throws on a stale/garbage path string.
+function nodeExistsAt(layout, path) {
+  try {
+    let n = layout;
+    for (const step of pathParts(path)) {
+      if (!n || typeof n !== "object") return false;
+      n = n[step];
+    }
+    return !!n && n.kind === "slot";
+  } catch (_) {
+    return false;
+  }
 }
 
 // Replace the node at path with newNode (immutably-ish — we structuredClone
@@ -1481,6 +1558,9 @@ function savePlayerLayout() {
   try {
     localStorage.setItem(PLAYER_LAYOUT_KEY, JSON.stringify(playerState.layout));
     localStorage.setItem(PLAYER_PRESET_KEY, playerState.preset);
+    // Focus (audible tile) is a viewer choice worth surviving a reload —
+    // losing it meant every refresh silently fell back to mute-all.
+    localStorage.setItem(PLAYER_SOLO_KEY, playerState.soloPath || "");
   } catch (_) {}
 }
 
@@ -1511,6 +1591,11 @@ function loadPlayerLayout() {
       if (validatePlayerLayout(parsed)) {
         playerState.layout = parsed;
         playerState.preset = localStorage.getItem(PLAYER_PRESET_KEY) || "custom";
+        // Only restore focus onto a path that still resolves to a real
+        // leaf in THIS layout — a stale solo path from a previous, larger
+        // layout must not silently point at nothing.
+        const savedSolo = localStorage.getItem(PLAYER_SOLO_KEY) || "";
+        playerState.soloPath = savedSolo && nodeExistsAt(playerState.layout, savedSolo) ? savedSolo : "";
         return;
       }
     }
@@ -1519,6 +1604,7 @@ function loadPlayerLayout() {
   // never silently stuck with a corrupted layout.
   playerState.layout = PLAYER_PRESETS.single();
   playerState.preset = "single";
+  playerState.soloPath = "";
 }
 
 async function renderWatch() {
@@ -1710,109 +1796,405 @@ function sameLayoutShape(a, b) {
   return true; // both slots — shape matches regardless of content
 }
 
-// Re-bind interactive handlers on a single freshly-replaced .ms-leaf
-// tile. Mirrors the per-tile loops at the bottom of paintPlayerStage so
-// surgical patches don't need a full repaint just to wire up drag /
-// drop / solo / fs / remove / slot-picker on one tile.
-function wireTileHandlers(tile, stage, watch, streams) {
-  // Tile-source drag (populated tiles only).
-  if (tile.dataset.streamId || tile.dataset.recordingId) {
-    tile.draggable = true;
-    tile.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", `strivo-tile:${tile.dataset.path || ""}`);
-      e.dataTransfer.effectAllowed = "move";
-      tile.classList.add("is-dragging");
-    });
-    tile.addEventListener("dragend", () => tile.classList.remove("is-dragging"));
-  }
-  // Drop targets — every tile, populated or empty.
-  tile.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    tile.classList.add("is-drop-target");
+// ── Delegated stage drag-and-drop ────────────────────────────────────
+//
+// Drag used to be wired per-tile with `draggable` on the whole `.ms-leaf`.
+// Once a tile is playing it's covered by a cross-origin iframe, and a
+// mousedown inside that iframe never produces a `dragstart` on the
+// parent document — so playing tiles silently stopped being draggable
+// ("sometimes works" from the user's report). Delegating to the stage and
+// dragging only from a small handle inside the tile chrome sidesteps the
+// iframe entirely: the handle is never covered.
+//
+// Contract with Lane A (player frame): `.pb-grab[data-drag-handle]` is
+// the permanent handle once the player-bar lands. Until then this also
+// treats `.watch-tile-name` as a handle — one extra selector, removable
+// once the toolbar ships.
+function markStageDnd(on) {
+  document.querySelectorAll(".ms-stage").forEach((s) => {
+    s.classList.toggle("is-dnd", on);
+    if (!on) {
+      s.querySelectorAll(".is-dragging, .is-drop-target").forEach((el) =>
+        el.classList.remove("is-dragging", "is-drop-target"),
+      );
+    }
   });
-  tile.addEventListener("dragleave", () => tile.classList.remove("is-drop-target"));
-  tile.addEventListener("drop", (e) => {
+}
+// A native drag can end anywhere — over a valid target, off-window, on
+// Escape — and `dragend` is the one event guaranteed to fire regardless.
+// One document-level listener here is simpler and more reliable than
+// trying to clean up from every possible drop/cancel path individually.
+document.addEventListener("dragend", () => markStageDnd(false));
+
+/// Resolve which `.ms-leaf` a drop over the stage should land on. Direct
+/// hits (including gutters/panes, which used to be dead drop zones) fall
+/// through to the nearest leaf by centre-to-point distance so nothing
+/// between tiles swallows a drop silently.
+function resolveDropLeaf(stage, e) {
+  const direct = e.target.closest && e.target.closest(".ms-leaf");
+  if (direct) return direct;
+  const leaves = [...stage.querySelectorAll(".ms-leaf")];
+  if (!leaves.length) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const leaf of leaves) {
+    const r = leaf.getBoundingClientRect();
+    const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right);
+    const dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom);
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = leaf;
+    }
+  }
+  return best;
+}
+
+/// Apply a decoded drag payload onto a resolved target leaf. Shared by
+/// the stage's delegated drop handler for every payload kind (tile swap,
+/// stream assign, recording assign).
+function applyDropOntoLeaf(leaf, parsed, watch, streams) {
+  const toPath = leaf.dataset.path || "";
+  if (parsed.type === "tile") {
+    const fromPath = parsed.path;
+    if (fromPath === toPath) return;
+    const fromNode = getNodeAt(playerState.layout, fromPath);
+    const toNode = getNodeAt(playerState.layout, toPath);
+    if (!fromNode || !toNode) return;
+    let next = setNodeAt(
+      playerState.layout,
+      fromPath,
+      _slot(toNode.streamId || null, toNode.recordingId || null),
+    );
+    next = setNodeAt(
+      next,
+      toPath,
+      _slot(fromNode.streamId || null, fromNode.recordingId || null),
+    );
+    playerState.layout = next;
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
+    return;
+  }
+  if (parsed.type === "stream") {
+    playerState.layout = setNodeAt(playerState.layout, toPath, _slot(parsed.id, null));
+    savePlayerLayout();
+    // If the dropped stream isn't in our current cache (rail showed it as
+    // live but the multistream snapshot is stale — race between the
+    // channels poll and the tiles poll), refresh before repainting so
+    // renderSlot can resolve the embed URL. Without this the dropped
+    // tile renders the "Stream offline" pill even though the channel is
+    // fine — the bug the user kept hitting.
+    if (!streams.find((x) => x.stream_id === parsed.id)) {
+      API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host)
+        .then((resp) => {
+          const fresh = resp.streams || [];
+          playerState.chatRailLastStreams = fresh;
+          paintPlayerStage(watch, fresh);
+        })
+        .catch((err) => {
+          Toast.error(`Couldn't load dropped stream: ${err && err.message || err}`);
+          paintPlayerStage(watch, streams);
+        });
+      return;
+    }
+    paintPlayerStage(watch, streams);
+    return;
+  }
+  if (parsed.type === "recording") {
+    playerState.layout = setNodeAt(playerState.layout, toPath, _slot(null, parsed.id));
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
+  }
+}
+
+/// Wire the whole stage's drag-and-drop ONCE per paint. Delegation means
+/// a surgical tile swap (tryPatchPlayerStage) or a rail repaint never
+/// loses drag wiring the way per-tile listeners did.
+function wireStageDnD(stage, watch, streams) {
+  let currentTarget = null;
+  const clearTarget = () => {
+    if (currentTarget) currentTarget.classList.remove("is-drop-target");
+    currentTarget = null;
+  };
+
+  stage.addEventListener("dragstart", (e) => {
+    const handle = e.target.closest && e.target.closest("[data-drag-handle], .watch-tile-name");
+    if (!handle) return;
+    const leaf = handle.closest(".ms-leaf");
+    if (!leaf || (!leaf.dataset.streamId && !leaf.dataset.recordingId)) return;
+    e.dataTransfer.setData("text/plain", encodeDragPayload({ type: "tile", path: leaf.dataset.path || "" }));
+    e.dataTransfer.effectAllowed = "move";
+    markStageDnd(true);
+    leaf.classList.add("is-dragging");
+  });
+
+  // A drop target must accept BOTH dragenter and dragover (some DnD
+  // implementations — including CDP-driven automation — only look at
+  // dragenter to decide whether the zone is valid at all) — accepting
+  // only dragover produced a drag that visually tracked the cursor but
+  // silently cancelled on mouseup instead of firing `drop`.
+  //
+  // `dropEffect` MUST agree with the source's `effectAllowed`
+  // (tile-drags set "move", rail/composer sources set "copy") — forcing
+  // "move" unconditionally made Chromium quietly refuse the drop for a
+  // "copy" source instead of firing it, with no error and no `drop`
+  // event at all.
+  const accept = (e) => {
     e.preventDefault();
-    tile.classList.remove("is-drop-target");
-    const parsed = parsePlayerDragPayload(e.dataTransfer.getData("text/plain"));
-    const toPath = tile.dataset.path || "";
+    const allowed = e.dataTransfer.effectAllowed;
+    e.dataTransfer.dropEffect = allowed === "copy" || allowed === "copyLink" ? "copy" : "move";
+    const leaf = resolveDropLeaf(stage, e);
+    if (leaf !== currentTarget) {
+      clearTarget();
+      currentTarget = leaf;
+      if (currentTarget) currentTarget.classList.add("is-drop-target");
+    }
+  };
+  stage.addEventListener("dragenter", accept);
+  stage.addEventListener("dragover", accept);
+
+  stage.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const leaf = resolveDropLeaf(stage, e);
+    clearTarget();
+    markStageDnd(false);
+    if (!leaf) return;
+    const parsed = decodeDragPayload(e.dataTransfer.getData("text/plain"));
     if (!parsed) return;
-    if (parsed.type === "tile") {
-      const fromPath = parsed.path;
-      if (fromPath === toPath) return;
-      const fromNode = getNodeAt(playerState.layout, fromPath);
-      const toNode = getNodeAt(playerState.layout, toPath);
-      let next = setNodeAt(
-        playerState.layout,
-        fromPath,
-        _slot(toNode.streamId || null, toNode.recordingId || null),
-      );
-      next = setNodeAt(
-        next,
-        toPath,
-        _slot(fromNode.streamId || null, fromNode.recordingId || null),
-      );
+    applyDropOntoLeaf(leaf, parsed, watch, streams);
+  });
+}
+
+/// Nearest leaf to `leaf` in a compass direction, by centre-to-centre
+/// position — used by both Shift+Arrow (swap) and Alt+Arrow (move focus).
+function neighborLeafInDirection(stage, leaf, dir) {
+  const rect = leaf.getBoundingClientRect();
+  const cx = (rect.left + rect.right) / 2;
+  const cy = (rect.top + rect.bottom) / 2;
+  let best = null;
+  let bestDist = Infinity;
+  stage.querySelectorAll(".ms-leaf").forEach((other) => {
+    if (other === leaf) return;
+    const r = other.getBoundingClientRect();
+    const ox = (r.left + r.right) / 2;
+    const oy = (r.top + r.bottom) / 2;
+    const dx = ox - cx;
+    const dy = oy - cy;
+    let ok = false;
+    if (dir === "left") ok = dx < -1 && Math.abs(dy) < rect.height;
+    else if (dir === "right") ok = dx > 1 && Math.abs(dy) < rect.height;
+    else if (dir === "up") ok = dy < -1 && Math.abs(dx) < rect.width;
+    else if (dir === "down") ok = dy > 1 && Math.abs(dx) < rect.width;
+    if (!ok) return;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = other;
+    }
+  });
+  return best;
+}
+
+/// Keyboard on the stage: Enter (play poster / focus a tile / open its
+/// picker), x/Delete (remove → empty slot), Shift+Arrows (swap focused
+/// tile with its neighbour), Alt+Arrows (move focus without touching
+/// content), Escape (blur out of an open picker). Partitioned from Lane
+/// A's per-tile keys (Space/k/j/l/arrows/m/s/f/p/i/o/c/,/./<>/0-9/t on
+/// `.ms-leaf`) by listening on `.ms-stage` instead and stopping
+/// propagation on every key handled here, so the global 036 shortcut
+/// handler never double-fires.
+function wireStageKeyboard(stage, watch, streams) {
+  stage.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const active = document.activeElement;
+      if (active && active.closest(".ms-picker")) {
+        active.blur();
+        e.stopPropagation();
+      }
+      return;
+    }
+
+    const leaf = e.target.closest && e.target.closest(".ms-leaf");
+    if (!leaf) return;
+
+    if (e.key === "Enter") {
+      const playBtn = leaf.querySelector(".ms-play");
+      const filter = leaf.querySelector(".ms-picker-filter");
+      if (playBtn) {
+        playBtn.click();
+      } else if (filter) {
+        filter.focus();
+      } else {
+        stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
+        leaf.classList.add("is-focused");
+      }
+      e.stopPropagation();
+      return;
+    }
+
+    if (e.key === "x" || e.key === "X" || e.key === "Delete") {
+      if (!leaf.dataset.streamId && !leaf.dataset.recordingId) return;
+      playerState.layout = setNodeAt(playerState.layout, leaf.dataset.path || "", _slot());
+      savePlayerLayout();
+      paintPlayerStage(watch, streams);
+      e.stopPropagation();
+      return;
+    }
+
+    const dirKey = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[e.key];
+    if (!dirKey) return;
+
+    if (e.shiftKey) {
+      e.preventDefault();
+      const other = neighborLeafInDirection(stage, leaf, dirKey);
+      if (!other) return;
+      const pathA = leaf.dataset.path || "";
+      const pathB = other.dataset.path || "";
+      const nodeA = getNodeAt(playerState.layout, pathA);
+      const nodeB = getNodeAt(playerState.layout, pathB);
+      let next = setNodeAt(playerState.layout, pathA, _slot(nodeB.streamId || null, nodeB.recordingId || null));
+      next = setNodeAt(next, pathB, _slot(nodeA.streamId || null, nodeA.recordingId || null));
       playerState.layout = next;
       savePlayerLayout();
       paintPlayerStage(watch, streams);
+      e.stopPropagation();
       return;
     }
-    if (parsed.type === "stream") {
-      playerState.layout = setNodeAt(playerState.layout, toPath, _slot(parsed.id, null));
-      savePlayerLayout();
-      // If the dropped stream isn't in our current cache (rail showed
-      // it as live but the multistream snapshot is stale — race between
-      // the channels poll and the tiles poll), refresh before
-      // repainting so renderSlot can resolve the embed URL. Without
-      // this the dropped tile renders the "Stream offline" pill even
-      // though the channel is fine — the bug the user kept hitting.
-      if (!streams.find((x) => x.stream_id === parsed.id)) {
-        API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host)
-          .then((resp) => {
-            const fresh = resp.streams || [];
-            playerState.chatRailLastStreams = fresh;
-            paintPlayerStage(watch, fresh);
-          })
-          .catch((err) => {
-            Toast.error(`Couldn't load dropped stream: ${err && err.message || err}`);
-            paintPlayerStage(watch, streams);
-          });
-        return;
-      }
-      paintPlayerStage(watch, streams);
-      return;
-    }
-    if (parsed.type === "recording") {
-      playerState.layout = setNodeAt(playerState.layout, toPath, _slot(null, parsed.id));
-      savePlayerLayout();
-      paintPlayerStage(watch, streams);
+
+    if (e.altKey) {
+      e.preventDefault();
+      const other = neighborLeafInDirection(stage, leaf, dirKey);
+      if (!other) return;
+      stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
+      other.classList.add("is-focused");
+      other.focus?.();
+      e.stopPropagation();
     }
   });
+}
 
-  // Focus on background click (not on buttons / iframe / picker).
+// Rail rows are draggable as a stream source. One delegated listener on
+// `document`, registered once at module load, survives every rail
+// repaint (`paintChannelList` rebuilds `#channel-list` innerHTML wholesale
+// on every SSE update) — the previous per-row wiring was wiped by the
+// very next repaint, which is why rail drag "stopped working" after the
+// first live/offline transition. `<a>` tags are draggable by default
+// (the browser drags the href); setting our own payload + effectAllowed
+// overrides that default.
+document.addEventListener("dragstart", (e) => {
+  const row = e.target.closest && e.target.closest("#channel-list .ch-row[data-live-stream-id]");
+  if (!row || !row.dataset.liveStreamId) return;
+  e.dataTransfer.setData("text/plain", encodeDragPayload({ type: "stream", id: row.dataset.liveStreamId }));
+  e.dataTransfer.effectAllowed = "copy";
+  markStageDnd(true);
+});
+
+/// Wire the filter + keyboard nav on one empty tile's picker card.
+/// Replaces the old native `<select class="ms-slot-pick">` — sized to
+/// the tile, arrow-key navigable, Enter picks, Escape blurs.
+function wirePickerCard(tile, ctx) {
+  const { watch, streams } = ctx;
+  const picker = tile.querySelector(".ms-picker");
+  if (!picker) return;
+  const path = picker.dataset.path || "";
+  const filterInput = picker.querySelector(".ms-picker-filter");
+  const list = picker.querySelector(".ms-picker-list");
+  if (!filterInput || !list) return;
+
+  const rows = () => [...list.querySelectorAll(".ms-pick")];
+
+  const applyFilter = () => {
+    const q = (filterInput.value || "").trim().toLowerCase();
+    rows().forEach((r) => {
+      const label = (r.dataset.pickLabel || "").toLowerCase();
+      r.hidden = !(!q || label.includes(q));
+    });
+    list.querySelectorAll(".ms-picker-group-label").forEach((h) => {
+      let sib = h.nextElementSibling;
+      let any = false;
+      while (sib && !sib.classList.contains("ms-picker-group-label")) {
+        if (!sib.hidden) any = true;
+        sib = sib.nextElementSibling;
+      }
+      h.hidden = !any;
+    });
+  };
+  filterInput.addEventListener("input", applyFilter);
+
+  const pick = (btn) => {
+    const val = btn.dataset.pick || "";
+    let next;
+    if (val.startsWith("rec:")) next = _slot(null, val.slice(4));
+    else if (val.startsWith("live:")) next = _slot(val.slice(5), null);
+    else return;
+    // Assigning a slot does NOT start it playing — the wall opens paused
+    // by design (see PLAYER_AUTOPLAY_KEY's doc comment), and the old
+    // `<select>` picker never auto-played either. The viewer presses
+    // Play (or Play-all) explicitly.
+    playerState.layout = setNodeAt(playerState.layout, path, next);
+    savePlayerLayout();
+    paintPlayerStage(watch, streams);
+  };
+
+  rows().forEach((btn) => {
+    btn.addEventListener("click", () => pick(btn));
+    btn.addEventListener("keydown", (e) => {
+      const visible = rows().filter((r) => !r.hidden);
+      const i = visible.indexOf(btn);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        (visible[i + 1] || visible[0])?.focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (i <= 0) filterInput.focus();
+        else visible[i - 1].focus();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        pick(btn);
+      } else if (e.key === "Escape") {
+        btn.blur();
+      }
+    });
+  });
+
+  filterInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const visible = rows().filter((r) => !r.hidden);
+      if (!visible.length) return;
+      visible[e.key === "ArrowDown" ? 0 : visible.length - 1].focus();
+    } else if (e.key === "Escape") {
+      filterInput.blur();
+    }
+  });
+}
+
+// Re-bind interactive handlers on a single freshly-replaced .ms-leaf
+// tile. Mirrors the per-tile loop at the bottom of paintPlayerStage so
+// surgical patches don't need a full repaint just to wire up focus /
+// slot-picker / chrome on one tile. Drag-and-drop is delegated to the
+// stage (wireStageDnD) — it is wired once per paint, not per tile.
+function wireTileHandlers(tile, stage, watch, streams) {
+  // The handle itself must be draggable — a generic <span>/<button> isn't,
+  // by default, and neither Lane A's markup nor this file's template
+  // strings mark it so. Setting the property here (rather than in HTML)
+  // keeps this file the single place that owns "what starts a stage
+  // drag" without touching 019a's markup, and covers BOTH the full
+  // per-tile loop and the surgical single-tile swap in
+  // tryPatchPlayerStage — the latter never calls wireStageDnD again.
+  tile.querySelectorAll("[data-drag-handle], .watch-tile-name").forEach((el) => {
+    el.draggable = true;
+  });
+
+  // Focus on background click (not on buttons / input / picker / iframe).
   tile.addEventListener("mousedown", (e) => {
-    if (e.target.closest("button, select, iframe")) return;
+    if (e.target.closest("button, select, input, .ms-picker, iframe")) return;
     stage.querySelectorAll(".ms-leaf.is-focused").forEach((x) => x.classList.remove("is-focused"));
     tile.classList.add("is-focused");
   });
 
-  // Empty-slot stream picker.
-  const sel = tile.querySelector("select.ms-slot-pick");
-  if (sel) {
-    sel.addEventListener("change", () => {
-      const path = sel.dataset.path || "";
-      const val = sel.value;
-      if (!val) return;
-      let next;
-      if (val.startsWith("rec:")) next = _slot(null, val.slice(4));
-      else if (val.startsWith("live:")) next = _slot(val.slice(5), null);
-      else next = _slot(val);
-      playerState.layout = setNodeAt(playerState.layout, path, next);
-      savePlayerLayout();
-      paintPlayerStage(watch, streams);
-    });
-  }
+  wirePickerCard(tile, { stage, watch, streams });
 
   wireTileChrome(tile, { stage, watch, streams });
 }
@@ -1892,6 +2274,10 @@ function tryPatchPlayerStage(watch, prev, curr, streams) {
   // the mute-all pressed state.
   const muteAll = watch.querySelector("#watch-mute-all");
   if (muteAll) muteAll.classList.toggle("active", !playerState.soloPath);
+  // A solo/unsolo click takes this fast path (content unchanged, only the
+  // mute state moved) — persist here too, or soloPath silently reverts to
+  // whatever the last full repaint saved on the next reload.
+  savePlayerLayout();
   return true;
 }
 
@@ -1987,6 +2373,18 @@ function paintPlayerStage(watch, streams) {
 
   reconcileControllers(stage);
 
+  // Aspect-aware presets. A grid-regular preset (split-screen, quadrant,
+  // grid-6, grid-9) gets a --stage-aspect derived from its FIXED cols x
+  // rows shape (see PRESET_GRID_SHAPE), so CSS can letterbox the whole
+  // stage to a true 16:9-per-tile box instead of stretching every tile to
+  // whatever the viewport happens to be — that stretch was costing each
+  // quadrant tile ~45% letterbox at 1440x900. single/focus-3/custom have
+  // no uniform grid shape, so they stay unconstrained.
+  const geo = stageGeometry();
+  const aspect = stageAspectFor(playerState.preset, geo.w, geo.h);
+  if (aspect) stage.style.setProperty("--stage-aspect", String(aspect));
+  else stage.style.removeProperty("--stage-aspect");
+
   // ── Preset menu ──
   watch.querySelectorAll(".ms-preset-opt").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -2046,8 +2444,18 @@ function paintPlayerStage(watch, streams) {
     savePlayerLayout();
     paintPlayerStage(watch, streams);
   };
-  watch.querySelector(".ms-split-h")?.addEventListener("click", () => splitFocused("h"));
-  watch.querySelector(".ms-split-v")?.addEventListener("click", () => splitFocused("v"));
+  // `button.`-qualified: `.ms-split-h`/`.ms-split-v` are ALSO the class
+  // names `renderLayoutNode` puts on an h/v split's own container div
+  // (`class="ms-split ms-split-h"`). An unqualified `.ms-split-h` lookup
+  // silently bound this click handler to that layout div instead of the
+  // (at the time, absent — customTools is empty outside "custom" preset)
+  // toolbar button whenever the tree's root happened to be an h-split —
+  // e.g. every "split-screen" wall. Any click bubbling up through the
+  // stage then force-split whatever leaf it landed in. The old
+  // `<select>` picker's "change" event never bubbled into this, which is
+  // why nothing surfaced it until the picker card's "click" did.
+  watch.querySelector("button.ms-split-h")?.addEventListener("click", () => splitFocused("h"));
+  watch.querySelector("button.ms-split-v")?.addEventListener("click", () => splitFocused("v"));
   watch.querySelector(".ms-collapse")?.addEventListener("click", () => {
     const focused = stage.querySelector(".ms-leaf.is-focused") || stage.querySelector(".ms-leaf");
     if (!focused) return;
@@ -2071,6 +2479,10 @@ function paintPlayerStage(watch, streams) {
   stage.querySelectorAll(".ms-leaf").forEach((tile) => {
     wireTileHandlers(tile, stage, watch, streams);
   });
+  // Delegated once per paint — see wireStageDnD's own doc comment for why
+  // this replaced per-tile `draggable`/drag listeners.
+  wireStageDnD(stage, watch, streams);
+  wireStageKeyboard(stage, watch, streams);
 
   // Mute-all toolbar button: top-level, not per-tile.
   watch.querySelector("#watch-mute-all")?.addEventListener("click", () => {
@@ -2093,18 +2505,9 @@ function paintPlayerStage(watch, streams) {
     openComposer(watch, streams);
   });
 
-  // Channel-list rail rows are draggable as a stream source. <a> tags
-  // are draggable by default (the browser drags the href); our custom
-  // dragstart MUST run AND set effectAllowed first so the browser's
-  // URL-drag default doesn't win.
-  document.querySelectorAll(".ch-row[data-channel-key]").forEach((row) => {
-    if (!row.dataset.liveStreamId) return;
-    row.draggable = true;
-    row.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData("text/plain", `strivo-stream:${row.dataset.liveStreamId}`);
-      e.dataTransfer.effectAllowed = "copy";
-    });
-  });
+  // Rail rows are draggable via the delegated document-level `dragstart`
+  // listener declared next to wireStageDnD — it survives every rail
+  // repaint, unlike the old per-row wiring this replaced.
 
   // ── Resize gutters ──
   stage.querySelectorAll(".ms-gutter").forEach((gutter) => {
@@ -2277,10 +2680,37 @@ function openComposer(watch, streams) {
   if (existing) existing.remove();
   composerSelectedPath = null;
 
+  // Restore focus to whatever opened the composer (the Compose button) on
+  // every close path — a modal that eats focus and never gives it back
+  // strands keyboard/screen-reader users on a detached button.
+  const opener = document.activeElement;
+  let onEsc = null;
+  let onTrapKey = null;
+
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.id = "ms-composer";
   document.body.appendChild(overlay);
+
+  // Registered once, not inside wire() — wire() reruns on every draw()
+  // (each state change redraws overlay.innerHTML), and `overlay` itself
+  // persists across those redraws, so a listener attached there on every
+  // wire() call would accumulate one per redraw.
+  const closeComposer = () => {
+    if (onEsc) {
+      document.removeEventListener("keydown", onEsc);
+      onEsc = null;
+    }
+    if (onTrapKey) {
+      overlay.removeEventListener("keydown", onTrapKey);
+      onTrapKey = null;
+    }
+    overlay.remove();
+    if (opener && typeof opener.focus === "function" && document.contains(opener)) opener.focus();
+  };
+  overlay.addEventListener("mousedown", (e) => {
+    if (e.target === overlay) closeComposer();
+  });
 
   const repaintStage = () => {
     savePlayerLayout();
@@ -2321,6 +2751,35 @@ function openComposer(watch, streams) {
         </div>
       </div>`;
     wire();
+
+    // Tab focus trap inside the card, and initial focus on open. Rebuilt
+    // every draw() since innerHTML (and therefore every focusable element
+    // in it) is rebuilt wholesale each time.
+    const card = overlay.querySelector(".msc-card");
+    const focusables = () =>
+      card
+        ? [...card.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+            .filter((el) => !el.disabled && el.offsetParent !== null)
+        : [];
+    if (onTrapKey) overlay.removeEventListener("keydown", onTrapKey);
+    onTrapKey = (e) => {
+      if (e.key !== "Tab") return;
+      const f = focusables();
+      if (!f.length) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    overlay.addEventListener("keydown", onTrapKey);
+    if (!card?.contains(document.activeElement)) {
+      (card?.querySelector(".modal-close") || focusables()[0])?.focus();
+    }
   };
 
   const assign = (path, kind, id) => {
@@ -2337,8 +2796,7 @@ function openComposer(watch, streams) {
   };
 
   const wire = () => {
-    overlay.querySelector('[data-action="modal-close"]')?.addEventListener("click", () => overlay.remove());
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('[data-action="modal-close"]')?.addEventListener("click", () => closeComposer());
 
     overlay.querySelectorAll(".msc-preset").forEach((b) => {
       b.addEventListener("click", () => {
@@ -2357,8 +2815,8 @@ function openComposer(watch, streams) {
     // empty) cell so the whole flow works without a drag if you prefer.
     overlay.querySelectorAll(".msc-src").forEach((chip) => {
       chip.addEventListener("dragstart", (e) => {
-        const kind = chip.dataset.srcKind === "rec" ? "strivo-rec:" : "strivo-stream:";
-        e.dataTransfer.setData("text/plain", kind + chip.dataset.srcId);
+        const type = chip.dataset.srcKind === "rec" ? "recording" : "stream";
+        e.dataTransfer.setData("text/plain", encodeDragPayload({ type, id: chip.dataset.srcId }));
         e.dataTransfer.effectAllowed = "copy";
       });
       chip.addEventListener("click", () => {
@@ -2387,11 +2845,10 @@ function openComposer(watch, streams) {
       cell.addEventListener("drop", (e) => {
         e.preventDefault();
         cell.classList.remove("is-drop-target");
-        const raw = e.dataTransfer.getData("text/plain") || "";
-        if (raw.startsWith("strivo-rec:")) return assign(path, "rec", raw.slice("strivo-rec:".length));
-        const parsed = parsePlayerDragPayload(raw);
+        const parsed = decodeDragPayload(e.dataTransfer.getData("text/plain") || "");
         if (!parsed) return;
         if (parsed.type === "stream") return assign(path, "stream", parsed.id);
+        if (parsed.type === "recording") return assign(path, "rec", parsed.id);
         if (parsed.type === "tile" && parsed.path !== path) {
           const from = getNodeAt(playerState.layout, parsed.path);
           const to = getNodeAt(playerState.layout, path);
@@ -2404,7 +2861,7 @@ function openComposer(watch, streams) {
       });
       if (cell.classList.contains("is-filled")) {
         cell.addEventListener("dragstart", (e) => {
-          e.dataTransfer.setData("text/plain", `strivo-tile:${path}`);
+          e.dataTransfer.setData("text/plain", encodeDragPayload({ type: "tile", path }));
           e.dataTransfer.effectAllowed = "move";
         });
       }
@@ -2447,8 +2904,8 @@ function openComposer(watch, streams) {
   };
 
   draw();
-  const onEsc = (e) => {
-    if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", onEsc); }
+  onEsc = (e) => {
+    if (e.key === "Escape") closeComposer();
   };
   document.addEventListener("keydown", onEsc);
 }
@@ -2469,26 +2926,108 @@ function renderSlot(slot, path, streams) {
   // Populated tiles (recording or live stream) render in 019a-pvr.js so the
   // player chrome can evolve without touching the layout code here.
   if (slot.recordingId || slot.streamId) return renderPopulatedSlotHtml(slot, path, streams);
-  // ─ Empty slot — pickable from live channels + recent recordings ─
-  const liveOpts = (streams || []).map((s) =>
-    `<option value="live:${htmlEscape(s.stream_id)}">▶ LIVE · ${htmlEscape(s.channel_name)} · ${htmlEscape(s.platform)}</option>`
-  ).join("");
-  const recOpts = (recCache || [])
+  return renderEmptySlotHtml(path, streams);
+}
+
+/// Empty-slot picker card — replaces the old native `<select>`. Live
+/// channels first, then up to 24 recent finished recordings; a filter
+/// input narrows both lists by name. Sized to the tile itself so it reads
+/// as part of the wall rather than a floating menu.
+function renderEmptySlotHtml(path, streams) {
+  const liveRows = (streams || []).map((s) => `
+    <button type="button" class="ms-pick" data-pick="live:${htmlEscape(s.stream_id)}"
+            data-pick-label="${htmlEscape(s.channel_name)}" role="option">
+      <span class="ms-pick-dot live" aria-hidden="true">●</span>
+      <span class="ms-pick-name">${htmlEscape(s.channel_name)}</span>
+      <span class="ms-pick-meta">${htmlEscape(s.platform)}${s.viewer_count != null ? ` · ${formatCount(s.viewer_count)}` : ""}</span>
+    </button>`).join("");
+  const finishedRecs = (recCache || [])
     .filter((r) => r.state === "Finished" && r.file_exists !== false)
-    .slice(0, 24)
-    .map((r) => `<option value="rec:${htmlEscape(r.id)}">📁 REC · ${htmlEscape(niceTitle(r.stream_title) || r.channel_name || r.id.slice(0, 8))}</option>`)
-    .join("");
+    .sort((a, b) => recordingTime(b) - recordingTime(a))
+    .slice(0, 24);
+  const recRows = finishedRecs.map((r) => {
+    const label = niceTitle(r.stream_title) || r.channel_name || r.id.slice(0, 8);
+    return `
+      <button type="button" class="ms-pick ms-pick-rec" data-pick="rec:${htmlEscape(r.id)}"
+              data-pick-label="${htmlEscape(label)}" role="option">
+        <span class="ms-pick-dot rec" aria-hidden="true">▣</span>
+        <span class="ms-pick-name">${htmlEscape(label)}</span>
+        <span class="ms-pick-meta">${htmlEscape(shortWhen(r.started_at))}</span>
+      </button>`;
+  }).join("");
+  const empty = !liveRows && !recRows
+    ? '<div class="ms-picker-empty pg-cap-hint">No live channels or recordings yet.</div>'
+    : "";
   return `
-    <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}">
-      <div class="ms-empty-pill">
-        <span>Select stream</span>
-        <select class="ms-slot-pick" data-path="${htmlEscape(path)}" aria-label="Pick a stream or recording for this tile">
-          <option value="">— pick a live channel or recording —</option>
-          ${liveOpts ? `<optgroup label="Live channels">${liveOpts}</optgroup>` : ""}
-          ${recOpts ? `<optgroup label="Recent recordings">${recOpts}</optgroup>` : ""}
-        </select>
+    <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}" tabindex="0">
+      <div class="ms-picker" data-path="${htmlEscape(path)}">
+        <input type="text" class="ms-picker-filter" placeholder="Filter live channels / recordings…"
+               aria-label="Filter streams and recordings" autocomplete="off">
+        <div class="ms-picker-list" role="listbox" aria-label="Pick a stream or recording for this tile">
+          ${liveRows ? `<div class="ms-picker-group-label">Live now</div>${liveRows}` : ""}
+          ${recRows ? `<div class="ms-picker-group-label">Recent recordings</div>${recRows}` : ""}
+          ${empty}
+        </div>
       </div>
       <div class="ms-empty-hint pg-cap-hint">…or drag a channel from the rail.</div>
     </div>`;
 }
+
+// ── Rail click on #/watch ────────────────────────────────────────────
+//
+// Clicking a live rail row while on #/watch used to navigate away to
+// #/library — the click landed on the default selectChannel() behaviour
+// because nothing claimed it first. This claims it: a plain click assigns
+// the channel into a tile (like dropping it there), Ctrl/Cmd-click keeps
+// the old "go to channel detail" behaviour for anyone who wants it.
+RAIL_CLICK_HANDLERS.watch = (channelKey, ev) => {
+  if (ev && (ev.metaKey || ev.ctrlKey)) return false;
+  const sep = (channelKey || "").indexOf(":");
+  if (sep < 0) return false;
+  const platform = channelKey.slice(0, sep);
+  const id = channelKey.slice(sep + 1);
+  const channel = (channelCache || []).find((c) => c.platform === platform && String(c.id) === id);
+  if (!channel || !channel.is_live) return false;
+
+  const watch = document.getElementById("watch");
+  if (!watch || !playerState.layout) return false;
+  const streamId = `${channel.platform}:${channel.id}`;
+  const stage = watch.querySelector(".ms-stage");
+  const focused = stage?.querySelector(".ms-leaf.is-focused");
+  const dest = (focused && focused.dataset.path) ?? firstEmptyPath(playerState.layout) ?? firstLeafPath(playerState.layout);
+  if (dest === null || dest === undefined) return false;
+
+  const node = _slot(streamId, null);
+  playerState.layout = setNodeAt(playerState.layout, dest, node);
+  setTilePlaying(node, true);
+  savePlayerLayout();
+
+  const streams = playerState.chatRailLastStreams || [];
+  if (streams.find((s) => s.stream_id === streamId)) {
+    paintPlayerStage(watch, streams);
+  } else {
+    // Rail said live, but the multistream snapshot hasn't caught up yet —
+    // refresh before repainting so the tile can resolve an embed URL
+    // instead of showing "Stream offline" for a channel that's fine.
+    API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host)
+      .then((resp) => {
+        const fresh = resp.streams || [];
+        playerState.chatRailLastStreams = fresh;
+        paintPlayerStage(watch, fresh);
+      })
+      .catch((err) => {
+        Toast.error(`Couldn't load ${channel.display_name || channel.name}: ${err && err.message || err}`);
+      });
+  }
+  return true;
+};
+
+// ── e2e hooks ────────────────────────────────────────────────────────
+Object.assign(TEST_HOOK_EXTENSIONS, {
+  encodeDragPayload,
+  decodeDragPayload,
+  bestGridFor,
+  stageAspectFor,
+  paintChannelList,
+});
 

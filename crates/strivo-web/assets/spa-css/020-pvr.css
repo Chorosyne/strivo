@@ -598,7 +598,7 @@
 .msc-src:hover { border-color: var(--accent); }
 .msc-src:active { cursor: grabbing; }
 .msc-src-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msc-src-meta { color: var(--dim); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.msc-src-meta { color: var(--dim); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
 .msc-src-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live, #39ff7f); flex: none; }
 .msc-src-dot.youtube { background: hsl(0, 70%, 60%); }
 .msc-src-dot.patreon { background: var(--secondary, #f5a623); }
@@ -659,7 +659,7 @@
   font-weight: 600;
 }
 .msc-cell-empty { font-size: 1.2rem; color: var(--dim); }
-.msc-cell-warn { font-size: 0.65rem; color: hsl(0, 70%, 70%); }
+.msc-cell-warn { font-size: 0.75rem; color: hsl(0, 70%, 70%); }
 .msc-cell-clear {
   position: absolute;
   top: 2px;
@@ -674,7 +674,7 @@
 }
 .msc-cell-clear:hover { color: var(--fg); }
 
-.msc-hint { font-size: 0.72rem; }
+.msc-hint { font-size: 0.75rem; }
 .msc-foot {
   display: flex;
   align-items: center;
