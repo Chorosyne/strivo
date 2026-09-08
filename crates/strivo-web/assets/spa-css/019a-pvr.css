@@ -1,2 +1,49 @@
-/* Player tile chrome (bar, tile controls, theater, fullscreen). Owned by
-   the player-frame work; empty until that lands. */
+/* Player tile chrome (bar, tile controls, theater, fullscreen) lives in
+   020-pvr.css alongside the rest of the round-1 player-bar work. This
+   file carries round 2's #/watch-scoped left-rail collapse — an
+   extension to this lane's ownership granted specifically for rules
+   scoped under `body.route-watch`, so it stays separate from 000's own
+   `.chrome`/`.leftrail` declarations rather than editing them. */
+
+/* Collapse the 292px channel rail (000-pvr.css) to a 56px icon strip on
+   #/watch by default — a 260px rail plus a 340px open chat rail leaves a
+   16:9-locked wall a fraction of the viewport (see round 2 walk-through).
+   `.watch-rail-open` (toggled by the toolbar button, 019a-pvr.js) opts
+   back into the full-width rail. */
+body.route-watch:not(.watch-rail-open) .chrome {
+  grid-template-columns: 56px 1fr;
+}
+body.route-watch:not(.watch-rail-open) .ch-sort,
+body.route-watch:not(.watch-rail-open) .ch-name,
+body.route-watch:not(.watch-rail-open) .ch-viewers,
+body.route-watch:not(.watch-rail-open) .ch-lastlive,
+body.route-watch:not(.watch-rail-open) .ch-tier,
+body.route-watch:not(.watch-rail-open) .ch-section-label,
+body.route-watch:not(.watch-rail-open) .ch-count,
+body.route-watch:not(.watch-rail-open) .ch-caret {
+  display: none;
+}
+/* Platform glyph + live/recording dots survive collapse — enough to spot
+   which row is which without the name; hover/focus surfaces the name via
+   `title` (set for rows that lack one, 019a-pvr.js). */
+body.route-watch:not(.watch-rail-open) .ch-row {
+  justify-content: center;
+  padding: var(--space-2, 8px) 0;
+  gap: 2px;
+}
+body.route-watch:not(.watch-rail-open) .ch-section-title {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+body.route-watch:not(.watch-rail-open) .ch-plat {
+  font-size: 1rem;
+}
+
+/* Toolbar rail toggle. */
+.watch-rail-toggle {
+  font-size: var(--text-caption, 13px);
+}
+.watch-rail-toggle[aria-pressed="true"] {
+  background: var(--overlay);
+}

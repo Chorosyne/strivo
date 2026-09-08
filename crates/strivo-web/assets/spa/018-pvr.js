@@ -1612,6 +1612,10 @@ async function renderWatch() {
   // poll (playerState.refreshTimer + the legacy _watchRefreshTimer
   // alias). A12 consolidation — don't duplicate the clear here.
   if (!playerState.layout) loadPlayerLayout();
+  // Collapses the left channel rail to an icon strip on this route (019a)
+  // — a 292px rail plus a 340px open chat rail otherwise leaves a
+  // 16:9-locked wall floating in a fraction of the viewport.
+  enterWatchRoute();
 
   // Honour URL params from rail / dashboard clicks:
   //   ?focus=<streamId>      → load that LIVE stream into the (empty) single slot
@@ -2317,8 +2321,13 @@ function paintPlayerStage(watch, streams) {
       <button class="sm watch-playall ${playerState.autoplay ? "active" : ""}" id="watch-playall"
               type="button" title="${playerState.autoplay ? "Pause every tile" : "Start every tile"}">${playerState.autoplay ? "⏸ Pause all" : "▶ Play all"}</button>
       <button class="sm watch-mute-all ${muteAllPressed}" id="watch-mute-all" title="Mute every tile">🔇 Mute all</button>`;
+  const railToggle = `
+      <button class="icon-btn watch-rail-toggle" type="button" id="watch-rail-toggle"
+              title="${isWatchRailOpen() ? "Collapse channel rail" : "Expand channel rail"}"
+              aria-pressed="${isWatchRailOpen() ? "true" : "false"}">☰</button>`;
   const toolbar = `
     <div class="watch-toolbar">
+      ${railToggle}
       ${presetMenu}
       <span class="watch-tb-sep" aria-hidden="true">·</span>
       ${isTheater

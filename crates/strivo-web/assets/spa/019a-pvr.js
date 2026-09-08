@@ -9,6 +9,70 @@
 // chrome) cannot be touched from here — that duplication is inherent to
 // an embed and is not something this bar can fix.
 
+// ── Left rail collapse on #/watch ────────────────────────────────────
+//
+// At 1440×900 with the 260px channel rail AND a 340px chat rail both
+// open, the stage is left with ~735px — a 16:9-locked wall floats in a
+// sea of empty space. Twitch's own site collapses its left nav in
+// multi-view for the same reason. Defaults to collapsed on #/watch;
+// the toolbar toggle re-expands it, and the choice persists.
+const WATCH_RAIL_OPEN_KEY = "strivo-player-rail-open";
+function loadWatchRailOpen() {
+  try { return localStorage.getItem(WATCH_RAIL_OPEN_KEY) === "1"; } catch (_) { return false; }
+}
+let _watchRailOpen = loadWatchRailOpen();
+function isWatchRailOpen() { return _watchRailOpen; }
+function saveWatchRailOpen() {
+  try { localStorage.setItem(WATCH_RAIL_OPEN_KEY, _watchRailOpen ? "1" : "0"); } catch (_) { /* private mode */ }
+}
+function applyWatchRailBodyClass() {
+  document.body.classList.toggle("watch-rail-open", _watchRailOpen);
+}
+function toggleWatchRail() {
+  _watchRailOpen = !_watchRailOpen;
+  saveWatchRailOpen();
+  applyWatchRailBodyClass();
+  const btn = document.querySelector(".watch-rail-toggle");
+  if (btn) {
+    btn.setAttribute("aria-pressed", _watchRailOpen ? "true" : "false");
+    btn.title = _watchRailOpen ? "Collapse channel rail" : "Expand channel rail";
+  }
+}
+
+// Route-scoped body class + its one-time listeners. `renderWatch` (018,
+// owned there) calls `enterWatchRoute()` on every paint; the guards below
+// make the two `addEventListener` calls idempotent across repeated calls.
+let _watchRouteWiringBound = false;
+function enterWatchRoute() {
+  document.body.classList.add("route-watch");
+  applyWatchRailBodyClass();
+  if (_watchRouteWiringBound) return;
+  _watchRouteWiringBound = true;
+  // Route away → drop both body classes. `teardownAcrossRoutes` (008) is
+  // Lane C's; a hashchange listener here is the seam that's ours to use
+  // without touching that function.
+  window.addEventListener("hashchange", () => {
+    const route = (window.location.hash.split("?")[0] || "").replace(/^#\/?/, "");
+    if (route !== "watch") document.body.classList.remove("route-watch", "watch-rail-open");
+  });
+  // Toggle button lives in the toolbar (018, rebuilt on every paint), so
+  // it's wired once here via delegation rather than re-bound per repaint.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".watch-rail-toggle")) toggleWatchRail();
+  });
+  // Collapsed rows drop their visible name — surface it as a tooltip
+  // instead of leaving a bare platform glyph with no way to identify
+  // the channel. Delegated + title-absence-gated so this never fights
+  // any `title` the row already carries when the rail is expanded.
+  document.addEventListener("mouseover", (e) => {
+    if (_watchRailOpen || !document.body.classList.contains("route-watch")) return;
+    const row = e.target.closest(".ch-row");
+    if (!row || row.title) return;
+    const name = row.querySelector(".ch-name")?.textContent?.trim();
+    if (name) row.title = name;
+  });
+}
+
 /// Capabilities to paint from, tolerant of the legacy e2e fake controller
 /// (`player-controller.spec.ts`) which predates the capability contract
 /// entirely. `ctl === null` means "not yet playing" (a poster tile) —
@@ -100,6 +164,54 @@ function repaintPlayerStageGlobal() {
   if (content) paintPlayerStage(content, playerState.chatRailLastStreams || []);
 }
 
+// ── Compact bar for short tiles ──────────────────────────────────────
+//
+// Below ~300px tall, the vendor's own control bar (rendered INSIDE its
+// iframe — Twitch logo · pause · volume · settings · fullscreen) and an
+// overlaid `.player-bar` land on the same pixels; at theater size that's
+// fine, but on a small grid tile the two visibly collide. Below the
+// threshold the bar docks BELOW the media instead of over it, drops
+// playback controls the vendor bar already covers (play/seek/rate/PiP/
+// fullscreen), and stays permanently visible rather than hover-gated.
+const COMPACT_HEIGHT_PX = 300;
+
+function isLeafCompact(leaf) {
+  if (document.fullscreenElement === leaf) return false; // never compact fullscreen
+  const h = leaf.getBoundingClientRect().height;
+  return h > 0 && h < COMPACT_HEIGHT_PX;
+}
+
+let _leafResizeObserver = null;
+function ensureLeafResizeObserver() {
+  if (_leafResizeObserver || typeof ResizeObserver === "undefined") return _leafResizeObserver;
+  _leafResizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const leaf = entry.target;
+      const compact = isLeafCompact(leaf);
+      if (leaf.classList.contains("is-compact") === compact) continue;
+      leaf.classList.toggle("is-compact", compact);
+      mountPlayerBar(leaf, _controllerForLeaf(leaf), { path: leaf.dataset.path || "" });
+    }
+  });
+  return _leafResizeObserver;
+}
+// Fullscreen exit/entry can change a tile's effective size (and always
+// forces compact off while entering) without necessarily firing a resize
+// on every browser — re-check every leaf explicitly on the transition.
+let _fullscreenCompactBound = false;
+function ensureFullscreenCompactWiring() {
+  if (_fullscreenCompactBound) return;
+  _fullscreenCompactBound = true;
+  document.addEventListener("fullscreenchange", () => {
+    document.querySelectorAll(".ms-leaf").forEach((leaf) => {
+      const compact = isLeafCompact(leaf);
+      if (leaf.classList.contains("is-compact") === compact) return;
+      leaf.classList.toggle("is-compact", compact);
+      mountPlayerBar(leaf, _controllerForLeaf(leaf), { path: leaf.dataset.path || "" });
+    });
+  });
+}
+
 function mountPlayerBar(leaf, ctl, { path }) {
   const bar = leaf.querySelector(".player-bar");
   if (!bar) return;
@@ -109,6 +221,11 @@ function mountPlayerBar(leaf, ctl, { path }) {
     try { prevUnsub(); } catch (_) { /* advisory */ }
     _playerBarUnsub.delete(leaf);
   }
+
+  ensureLeafResizeObserver()?.observe(leaf);
+  ensureFullscreenCompactWiring();
+  const compact = isLeafCompact(leaf);
+  leaf.classList.toggle("is-compact", compact);
 
   const caps = effectiveCapabilities(ctl);
   const muted = computeMuted(path);
@@ -126,16 +243,16 @@ function mountPlayerBar(leaf, ctl, { path }) {
     </span>`;
 
   const centerParts = [];
-  if (caps.play || caps.pause) {
+  if (!compact && (caps.play || caps.pause)) {
     centerParts.push(`<button class="icon-btn pb-play" type="button" title="Play/Pause (space)">${st && st.playing ? "❚❚" : "▶"}</button>`);
   }
-  if (caps.seek && caps.duration) {
+  if (!compact && caps.seek && caps.duration) {
     const pct = st && Number.isFinite(st.duration) && st.duration > 0
       ? Math.round((st.currentTime / st.duration) * 1000) : 0;
     centerParts.push(`<input class="pb-seek" type="range" min="0" max="1000" step="1" value="${pct}" aria-label="Seek">`);
     centerParts.push(`<span class="pb-time pg-cap-hint">${fmtClock((st && st.currentTime) || 0)} / ${fmtClock((st && st.duration) || 0)}</span>`);
   }
-  if (caps.live) centerParts.push(`<span class="pb-live-pill">● LIVE</span>`);
+  if (!compact && caps.live) centerParts.push(`<span class="pb-live-pill">● LIVE</span>`);
   const center = `<span class="pb-center">${centerParts.join("")}</span>`;
 
   const rightParts = [];
@@ -149,21 +266,21 @@ function mountPlayerBar(leaf, ctl, { path }) {
       ? `<button class="icon-btn ms-solo" title="Unmute — solo this tile" data-path="${htmlEscape(path)}">🔇</button>`
       : `<button class="icon-btn ms-unsolo" title="Mute this tile" data-path="${htmlEscape(path)}">🔊</button>`);
   }
-  if (caps.quality && st) {
+  if (!compact && caps.quality && st) {
     const opts = (st.qualities || []).map((q) =>
       `<option value="${htmlEscape(q.id)}" ${q.id === st.quality ? "selected" : ""}>${htmlEscape(q.label)}</option>`).join("");
     if (opts) {
       rightParts.push(`<select class="pb-quality" title="Quality"><option value="auto">Auto</option>${opts}</select>`);
     }
   }
-  if (caps.rate) {
+  if (!compact && caps.rate) {
     const curRate = (st && st.rate) || 1;
     rightParts.push(`<select class="pb-rate" title="Playback speed">
       ${[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => `<option value="${r}" ${r === curRate ? "selected" : ""}>${r}×</option>`).join("")}
     </select>`);
   }
-  if (caps.pip) rightParts.push(`<button class="icon-btn pb-pip" type="button" title="Picture-in-picture (p)">⧉</button>`);
-  rightParts.push(`<button class="icon-btn ms-fs" type="button" title="Fullscreen this tile (f)">⛶</button>`);
+  if (!compact && caps.pip) rightParts.push(`<button class="icon-btn pb-pip" type="button" title="Picture-in-picture (p)">⧉</button>`);
+  if (!compact) rightParts.push(`<button class="icon-btn ms-fs" type="button" title="Fullscreen this tile (f)">⛶</button>`);
   rightParts.push(`<button class="icon-btn ms-remove" type="button" title="Remove from layout" data-path="${htmlEscape(path)}">✕</button>`);
   const right = `<span class="pb-right">${rightParts.join("")}</span>`;
 
@@ -285,6 +402,7 @@ function unmountPlayerBar(leaf) {
     _playerBarUnsub.delete(leaf);
   }
   _playerBarAB.delete(leaf);
+  _leafResizeObserver?.unobserve(leaf);
 }
 
 // ── Per-tile keyboard map ────────────────────────────────────────────
@@ -386,12 +504,6 @@ function wireTileKeys(leaf, getCtl) {
         const dur = ctl.duration();
         if (Number.isFinite(dur)) ctl.seek(dur * (Number(k) / 10));
       } catch (_) { /* advisory */ }
-      e.preventDefault(); e.stopPropagation(); return;
-    }
-    if (k === "t" || k === "T") {
-      // Captions: no cross-controller API exists yet (only a <video>'s
-      // native textTracks would apply, and recordings rarely carry them).
-      // Reserved so a future caption source has a key that already works.
       e.preventDefault(); e.stopPropagation(); return;
     }
   });
