@@ -13,35 +13,49 @@
 .watch-stage { background: rgba(0,0,0,0.4); border-radius: 6px; overflow: hidden; }
 
 /* ── Player stage (multi-view collapsed into the player) ─────────── */
-/* `width: auto` + `aspect-ratio` lets a grid-regular preset (see
- * --stage-aspect, set in paintPlayerStage) derive its width from the
- * available height instead of always stretching to the viewport — that
- * stretch was the ~45% per-tile letterbox on a 1440x900 quadrant. Presets
- * without a uniform grid shape (single/focus-3/custom) leave
- * --stage-aspect unset, so `aspect-ratio: auto` is a no-op and the stage
- * fills the row exactly as it always did. */
 .ms-stage {
   position: relative;
   display: flex;
-  width: auto;
+  width: 100%;
   height: calc(100vh - 180px);
   min-height: 360px;
-  max-width: 100%;
-  aspect-ratio: var(--stage-aspect, auto);
-  margin: auto;
   background: rgba(0,0,0,0.5);
   border-radius: 6px;
   overflow: hidden;
 }
+/* `.has-aspect` (toggled in paintPlayerStage alongside --stage-aspect)
+ * opts a grid-regular preset (split-screen/quadrant/grid-6/grid-9) into
+ * deriving its width from height instead of always stretching to the
+ * viewport — that stretch was the ~45% per-tile letterbox on a 1440x900
+ * quadrant. Everything else (single/focus-3/custom) is left COMPLETELY
+ * alone: no class, so the base rule above and 020's
+ * `.watch-content .ms-stage { flex:1; height:auto }` / theater-mode
+ * override behave exactly as they did before this feature existed.
+ * `width: auto` only computes a real width when combined with
+ * `aspect-ratio` and a definite height — pairing it with the base rule's
+ * `flex: 1 1 auto` (equivalent to omitting flex-basis) rather than
+ * `flex: 1` avoids collapsing to a zero flex-basis before that height is
+ * known. The selector matches 020's `.watch-content .ms-stage` specificity
+ * (2 classes) plus this file's own class — same trick 020 uses for
+ * `.watch-root.is-theater .ms-stage` — so it wins regardless of load order. */
+.watch-content .ms-stage.has-aspect {
+  flex: none;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: var(--stage-aspect, auto);
+  align-self: center;
+  margin: auto;
+}
 /* Drag shield — CSS only, no DOM inserted into the tile markup. A
  * cross-origin iframe/video swallows dragover before it ever reaches this
- * document, so a plain transparent catcher over the media area is what
- * makes dropping onto a PLAYING tile possible at all. `.ms-mount` isn't
- * itself positioned, so give it one here rather than editing 020's rule —
- * `.ms-media` is Lane A's future wrapper, targeted in advance. */
-.ms-mount, .ms-media { position: relative; }
-.ms-stage.is-dnd .ms-media::after,
-.ms-stage.is-dnd .ms-mount::after {
+ * document, so a plain transparent catcher over the media area (already
+ * positioned by 020's `.ms-media { position: absolute; inset: 0 }`) is
+ * what makes dropping onto a PLAYING tile possible at all. `.player-bar`
+ * sits at z-index 20, above this shield, and stays interactive while
+ * `.ms-stage.is-dnd` (020's own rule). */
+.ms-stage.is-dnd .ms-media::after {
   content: "";
   position: absolute;
   inset: 0;

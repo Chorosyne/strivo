@@ -1806,10 +1806,8 @@ function sameLayoutShape(a, b) {
 // dragging only from a small handle inside the tile chrome sidesteps the
 // iframe entirely: the handle is never covered.
 //
-// Contract with Lane A (player frame): `.pb-grab[data-drag-handle]` is
-// the permanent handle once the player-bar lands. Until then this also
-// treats `.watch-tile-name` as a handle — one extra selector, removable
-// once the toolbar ships.
+// Contract with Lane A (player frame): `.pb-grab[data-drag-handle]` in
+// the player bar is the handle.
 function markStageDnd(on) {
   document.querySelectorAll(".ms-stage").forEach((s) => {
     s.classList.toggle("is-dnd", on);
@@ -1919,7 +1917,7 @@ function wireStageDnD(stage, watch, streams) {
   };
 
   stage.addEventListener("dragstart", (e) => {
-    const handle = e.target.closest && e.target.closest("[data-drag-handle], .watch-tile-name");
+    const handle = e.target.closest && e.target.closest("[data-drag-handle]");
     if (!handle) return;
     const leaf = handle.closest(".ms-leaf");
     if (!leaf || (!leaf.dataset.streamId && !leaf.dataset.recordingId)) return;
@@ -2176,17 +2174,6 @@ function wirePickerCard(tile, ctx) {
 // slot-picker / chrome on one tile. Drag-and-drop is delegated to the
 // stage (wireStageDnD) — it is wired once per paint, not per tile.
 function wireTileHandlers(tile, stage, watch, streams) {
-  // The handle itself must be draggable — a generic <span>/<button> isn't,
-  // by default, and neither Lane A's markup nor this file's template
-  // strings mark it so. Setting the property here (rather than in HTML)
-  // keeps this file the single place that owns "what starts a stage
-  // drag" without touching 019a's markup, and covers BOTH the full
-  // per-tile loop and the surgical single-tile swap in
-  // tryPatchPlayerStage — the latter never calls wireStageDnD again.
-  tile.querySelectorAll("[data-drag-handle], .watch-tile-name").forEach((el) => {
-    el.draggable = true;
-  });
-
   // Focus on background click (not on buttons / input / picker / iframe).
   tile.addEventListener("mousedown", (e) => {
     if (e.target.closest("button, select, input, .ms-picker, iframe")) return;
@@ -2232,24 +2219,10 @@ function tryPatchPlayerStage(watch, prev, curr, streams) {
       (prevNode.streamId || null) === (currNode.streamId || null) &&
       (prevNode.recordingId || null) === (currNode.recordingId || null);
     if (sameContent) {
-      // Same content. Mute may have flipped; the controller owns how that
-      // is applied, so this path no longer touches media elements at all.
-      const muted = computeMuted(path);
-      // Swap solo/unsolo button label.
-      const soloBtn = tile.querySelector(".ms-solo, .ms-unsolo");
-      if (soloBtn) {
-        if (muted && !soloBtn.classList.contains("ms-solo")) {
-          soloBtn.classList.remove("ms-unsolo");
-          soloBtn.classList.add("ms-solo");
-          soloBtn.textContent = "🔇";
-          soloBtn.title = "Unmute (solo this tile)";
-        } else if (!muted && !soloBtn.classList.contains("ms-unsolo")) {
-          soloBtn.classList.remove("ms-solo");
-          soloBtn.classList.add("ms-unsolo");
-          soloBtn.textContent = "🔊";
-          soloBtn.title = "Mute (mute-all)";
-        }
-      }
+      // Same content. Mute may have flipped; mountPlayerBar (via
+      // reconcileControllers below) repaints the whole bar from current
+      // state on every call, so there is nothing left for this branch to
+      // patch by hand.
       continue;
     }
     // Content changed. Render the new tile, swap it in, re-wire it.
@@ -2382,8 +2355,19 @@ function paintPlayerStage(watch, streams) {
   // no uniform grid shape, so they stay unconstrained.
   const geo = stageGeometry();
   const aspect = stageAspectFor(playerState.preset, geo.w, geo.h);
-  if (aspect) stage.style.setProperty("--stage-aspect", String(aspect));
-  else stage.style.removeProperty("--stage-aspect");
+  // `.has-aspect` (CSS) is what actually opts the stage out of the
+  // default fill-the-row sizing — see 004b's doc comment. Gating on a
+  // class rather than always setting --stage-aspect and letting
+  // `aspect-ratio: auto` be a no-op means single/focus-3/custom get ZERO
+  // touch from this feature, same specificity fight 020 already won for
+  // theater mode.
+  if (aspect) {
+    stage.style.setProperty("--stage-aspect", String(aspect));
+    stage.classList.add("has-aspect");
+  } else {
+    stage.style.removeProperty("--stage-aspect");
+    stage.classList.remove("has-aspect");
+  }
 
   // ── Preset menu ──
   watch.querySelectorAll(".ms-preset-opt").forEach((btn) => {
