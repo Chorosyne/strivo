@@ -4,13 +4,17 @@
 #![allow(clippy::too_many_arguments)]
 
 pub fn check_external_tools() {
-    // Resolve through the `which` crate rather than shelling out to the
-    // `which` binary: that binary does not exist on Windows, so the daemon
-    // reported every tool as missing there even when all of them were on
-    // PATH. The crate also honours %PATHEXT%, so `ffmpeg` resolves to
-    // `ffmpeg.exe`, and it saves three process spawns on every start.
+    // Resolve the same way the daemon spawns these tools: an exe-relative
+    // bundled binary first, then PATH via the `which` crate rather than
+    // shelling out to the `which` binary (that binary does not exist on
+    // Windows, so the daemon reported every tool as missing there even when
+    // all of them were on PATH; the crate also honours %PATHEXT%, so
+    // `ffmpeg` resolves to `ffmpeg.exe`, and it saves process spawns).
     for tool in &["ffmpeg", "streamlink", "yt-dlp"] {
-        if which::which(tool).is_err() {
+        // `resolve_tool` always returns *a* path, falling back to the bare
+        // name when nothing was found, so "found" has to be checked
+        // explicitly rather than trusting a non-empty result.
+        if !tools::resolve_tool(tool).is_file() {
             eprintln!("Warning: '{tool}' not found in PATH. Some features may not work.");
         }
     }
@@ -34,4 +38,5 @@ pub mod search;
 pub mod state;
 pub mod stream;
 pub mod tasks;
+pub mod tools;
 pub mod webhook;

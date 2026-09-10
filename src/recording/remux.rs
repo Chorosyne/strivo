@@ -65,7 +65,7 @@ pub async fn normalise_container(path: &Path) -> anyhow::Result<Outcome> {
     let input = path.to_path_buf();
     let tmp_for_ffmpeg = tmp.clone();
     let status = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("ffmpeg")
+        std::process::Command::new(crate::tools::resolve_tool("ffmpeg"))
             .args(["-y", "-hide_banner", "-loglevel", "warning"])
             .arg("-i")
             .arg(&input)

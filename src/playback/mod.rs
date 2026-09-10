@@ -76,7 +76,7 @@ impl MpvController {
         #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
 
-        let child = Command::new("mpv")
+        let child = Command::new(crate::tools::resolve_tool("mpv"))
             .args([
                 &format!("--input-ipc-server={}", self.socket_path),
                 "--no-terminal",
@@ -115,7 +115,7 @@ impl MpvController {
         self.quit().await.ok();
         #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket_path);
-        let child = Command::new("mpv")
+        let child = Command::new(crate::tools::resolve_tool("mpv"))
             .args([
                 &format!("--input-ipc-server={}", self.socket_path),
                 "--no-terminal",

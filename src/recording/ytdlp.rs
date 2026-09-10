@@ -151,7 +151,7 @@ pub async fn resolve_live_fields(
     channel_live_url: &str,
     cookies_path: Option<&std::path::Path>,
 ) -> Result<LiveFields> {
-    let mut cmd = Command::new("yt-dlp");
+    let mut cmd = Command::new(crate::tools::resolve_tool("yt-dlp"));
     cmd.args([
         "--print",
         "%(id)s\t%(title)s\t%(uploader,channel)s",
@@ -279,7 +279,7 @@ impl YtDlpProcess {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut cmd = Command::new("yt-dlp");
+        let mut cmd = Command::new(crate::tools::resolve_tool("yt-dlp"));
         if live_from_start {
             cmd.arg("--live-from-start");
             // YT-3 — grace period when the stream is just coming

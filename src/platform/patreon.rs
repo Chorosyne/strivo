@@ -546,7 +546,7 @@ impl PatreonClient {
         let page = format!("https://www.patreon.com/c/{vanity}/posts");
 
         // Pass 1: flat enumeration of the most recent post URLs.
-        let mut list = tokio::process::Command::new("yt-dlp");
+        let mut list = tokio::process::Command::new(crate::tools::resolve_tool("yt-dlp"));
         list.arg("-J")
             .arg("--flat-playlist")
             .arg("--playlist-end")
@@ -587,7 +587,7 @@ impl PatreonClient {
         // Pass 2: full metadata extraction against the canonical URLs. yt-dlp
         // does a per-post extraction, so bound the call: a hung request must
         // not stall the monitor poll.
-        let mut meta = tokio::process::Command::new("yt-dlp");
+        let mut meta = tokio::process::Command::new(crate::tools::resolve_tool("yt-dlp"));
         meta.arg("-J").arg("--ignore-errors").arg("--no-warnings");
         if let Some(cp) = cookies_path {
             meta.arg("--cookies").arg(cp);

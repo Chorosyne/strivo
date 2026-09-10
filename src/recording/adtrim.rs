@@ -33,7 +33,7 @@ pub enum TrimOutcome {
 /// Detect black regions in `input` longer than `min_secs` seconds. Returns
 /// ranges sorted by start time.
 pub async fn detect_black_ranges(input: &Path, min_secs: f64) -> Result<Vec<BlackRange>> {
-    let output = Command::new("ffmpeg")
+    let output = Command::new(crate::tools::resolve_tool("ffmpeg"))
         .args(["-hide_banner", "-nostats", "-i"])
         .arg(input)
         .args([
@@ -88,7 +88,7 @@ fn parse_field(line: &str, key: &str) -> Option<f64> {
 
 /// Probe the total duration in seconds via ffprobe.
 async fn probe_duration(input: &Path) -> Result<f64> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(crate::tools::resolve_tool("ffprobe"))
         .args([
             "-v",
             "error",
@@ -142,7 +142,7 @@ pub async fn trim_in_place(input: &Path, min_secs: f64) -> Result<TrimOutcome> {
         for (i, kr) in keep.iter().enumerate() {
             let seg = parent.join(format!(".{stem}.trim{i:03}.{ext}"));
             cleanup.push(seg.clone());
-            let status = Command::new("ffmpeg")
+            let status = Command::new(crate::tools::resolve_tool("ffmpeg"))
                 .args(["-hide_banner", "-loglevel", "error", "-y", "-ss"])
                 .arg(format!("{:.3}", kr.start))
                 .arg("-to")
@@ -180,7 +180,7 @@ pub async fn trim_in_place(input: &Path, min_secs: f64) -> Result<TrimOutcome> {
 
         let merged = parent.join(format!(".{stem}.trimmed.{ext}"));
         cleanup.push(merged.clone());
-        let status = Command::new("ffmpeg")
+        let status = Command::new(crate::tools::resolve_tool("ffmpeg"))
             .args([
                 "-hide_banner",
                 "-loglevel",

@@ -60,7 +60,7 @@ pub async fn extract(source: &Path, seek_secs: f64) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("create thumb cache dir {}", dir.display()))?;
     let dest = cache_path(source);
-    let status = tokio::process::Command::new("ffmpeg")
+    let status = tokio::process::Command::new(crate::tools::resolve_tool("ffmpeg"))
         .args([
             "-hide_banner",
             "-loglevel",

@@ -66,7 +66,7 @@ impl MediaInfo {
 
 /// Probe a media file using ffprobe and return structured info.
 pub async fn probe_file(path: &Path) -> Result<MediaInfo> {
-    let output = Command::new("ffprobe")
+    let output = Command::new(crate::tools::resolve_tool("ffprobe"))
         .args([
             "-v",
             "quiet",

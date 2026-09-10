@@ -331,7 +331,7 @@ async fn recording_probe(
         }
     }
     let probe_started = std::time::Instant::now();
-    let mut probe = tokio::process::Command::new("ffprobe");
+    let mut probe = tokio::process::Command::new(strivo_core::tools::resolve_tool("ffprobe"));
     probe.kill_on_drop(true);
     probe
         .args([
@@ -1271,7 +1271,7 @@ async fn extract_thumb_with_ffmpeg(
     // scale=440:-2 matches the cd-poster width and keeps an even height for
     // mjpeg. -q:v 5 is a good size/quality midpoint. -f image2 -update 1
     // pins the muxer to single-image jpeg.
-    let mut cmd = tokio::process::Command::new("ffmpeg");
+    let mut cmd = tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"));
     cmd.kill_on_drop(true);
     cmd.args(["-nostdin", "-y", "-ss", "10", "-i"])
         .arg(source)
@@ -1296,7 +1296,7 @@ async fn extract_thumb_with_ffmpeg(
     if !status.status.success() || tokio::fs::metadata(&tmp).await.is_err() {
         // Stream may be <10s; retry at 0s before giving up.
         let _ = tokio::fs::remove_file(&tmp).await;
-        let mut cmd = tokio::process::Command::new("ffmpeg");
+        let mut cmd = tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"));
         cmd.kill_on_drop(true);
         cmd.args(["-nostdin", "-y", "-ss", "0", "-i"])
             .arg(source)
@@ -1445,7 +1445,7 @@ async fn remux_recording(
             return crate::problem::Problem::unavailable("media worker pool closed").into_response()
         }
     };
-    let mut remux = tokio::process::Command::new("ffmpeg");
+    let mut remux = tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"));
     remux.kill_on_drop(true);
     remux
         .args(["-y", "-hide_banner", "-loglevel", "warning"])

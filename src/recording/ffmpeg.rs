@@ -205,7 +205,7 @@ impl FfmpegBuilder {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = Command::new(crate::tools::resolve_tool("ffmpeg"));
         cmd.args(["-y", "-hide_banner", "-loglevel", "warning"]);
 
         if self.from_start {

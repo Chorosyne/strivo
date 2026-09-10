@@ -100,7 +100,7 @@ async fn run_streamlink(
             extended_codecs: false,
         });
 
-    let mut cmd = Command::new("streamlink");
+    let mut cmd = Command::new(crate::tools::resolve_tool("streamlink"));
     cmd.args(["--stream-url", "--twitch-disable-ads"]);
     if let Some(token) = oauth_token {
         cmd.arg(format!("--twitch-api-header=Authorization=OAuth {token}"));
@@ -163,7 +163,7 @@ async fn resolve_with_ytdlp(
 ) -> Result<StreamInfo> {
     let format_sel = tier.map(|t| t.format_selector()).unwrap_or("best");
 
-    let mut cmd = Command::new("yt-dlp");
+    let mut cmd = Command::new(crate::tools::resolve_tool("yt-dlp"));
     cmd.args(["-g", "--no-warnings", "-f", format_sel]);
 
     if let Some(cookies) = cookies_path {

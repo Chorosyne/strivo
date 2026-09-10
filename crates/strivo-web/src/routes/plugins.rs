@@ -543,7 +543,7 @@ fn thumbnails_generate_blocking(
 
 /// Shell out to ffprobe for the duration in seconds.
 fn probe_duration(input: &std::path::Path) -> Option<f32> {
-    let out = std::process::Command::new("ffprobe")
+    let out = std::process::Command::new(strivo_core::tools::resolve_tool("ffprobe"))
         .args([
             "-v",
             "error",
@@ -561,7 +561,7 @@ fn probe_duration(input: &std::path::Path) -> Option<f32> {
 
 /// Shell out to ffprobe for the video resolution.
 fn probe_resolution(input: &std::path::Path) -> Option<(u32, u32)> {
-    let out = std::process::Command::new("ffprobe")
+    let out = std::process::Command::new(strivo_core::tools::resolve_tool("ffprobe"))
         .args([
             "-v",
             "error",
@@ -2546,7 +2546,7 @@ fn ab_render_variant(
     variant: &strivo_ab_render::RenderVariant,
 ) -> Result<(), String> {
     let filter = variant.audio_filter();
-    let mut cmd = std::process::Command::new("ffmpeg");
+    let mut cmd = std::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"));
     cmd.args(["-y", "-hide_banner", "-i"]).arg(input);
     if filter.is_empty() {
         cmd.args(["-c", "copy"]);
@@ -2606,7 +2606,7 @@ async fn ab_render_compare(
         tokio::task::spawn_blocking(move || -> Result<strivo_ab_render::QualityReport, String> {
             ab_render_variant(&render_input, &render_out_a, &a)?;
             ab_render_variant(&render_input, &render_out_b, &b)?;
-            let ssim = std::process::Command::new("ffmpeg")
+            let ssim = std::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"))
                 .args(["-hide_banner", "-i"])
                 .arg(&render_out_a)
                 .arg("-i")
@@ -2765,7 +2765,7 @@ async fn vad_run(
         "aresample=8000,asetnsamples=400:p=0,astats=metadata=1:reset=1,ametadata=print:file={}",
         tmp.display()
     );
-    let output = match tokio::process::Command::new("ffmpeg")
+    let output = match tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"))
         .args([
             "-hide_banner",
             "-loglevel",
@@ -2942,7 +2942,7 @@ async fn beat_detect_run(
         "aresample=8000,asetnsamples=400:p=0,astats=metadata=1:reset=1,ametadata=print:file={}",
         tmp.display()
     );
-    let output = match tokio::process::Command::new("ffmpeg")
+    let output = match tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"))
         .args([
             "-hide_banner",
             "-loglevel",
@@ -3507,7 +3507,7 @@ async fn loudness_measure(
     let plat = loudness_platform(q.platform.as_deref());
     let target = strivo_loudness::preset_for(plat);
     let filter = strivo_loudness::pass1_filter(target);
-    let output = match tokio::process::Command::new("ffmpeg")
+    let output = match tokio::process::Command::new(strivo_core::tools::resolve_tool("ffmpeg"))
         .args(["-hide_banner", "-i"])
         .arg(&input)
         .args(["-af", &filter, "-vn", "-sn", "-f", "null", "-"])

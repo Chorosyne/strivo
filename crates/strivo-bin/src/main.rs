@@ -895,9 +895,21 @@ async fn handle_doctor() -> Result<()> {
     println!("StriVo external tool check");
     println!("{}", "-".repeat(60));
     for (bin, purpose) in tools {
-        match which::which(bin) {
-            Ok(path) => println!("  ok      {:<12} {}  [{}]", bin, purpose, path.display()),
-            Err(_) => {
+        // `whisper` is Creator-only and stays on the plain PATH lookup;
+        // the other five are candidates for exe-relative bundling, so
+        // `resolve_tool` is checked first. It always returns *some* path
+        // (falling back to the bare name when nothing was found), so
+        // "found" has to be verified with `.is_file()` rather than
+        // trusting a non-empty result.
+        let resolved = if *bin == "whisper" {
+            which::which(bin).ok()
+        } else {
+            let p = strivo_core::tools::resolve_tool(bin);
+            p.is_file().then_some(p)
+        };
+        match resolved {
+            Some(path) => println!("  ok      {:<12} {}  [{}]", bin, purpose, path.display()),
+            None => {
                 println!("  MISSING {:<12} {}", bin, purpose);
                 if purpose.contains("required") {
                     missing_required += 1;
