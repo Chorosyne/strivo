@@ -27,12 +27,29 @@ limits.
 - Brotli/gzip response compression and a compact SVG application mark reduce
   transfer size.
 - Identical short-lived GET requests are coalesced in the browser and cached for
-  two seconds. Mutations invalidate that cache.
-- Recordings and durable history support cursor pagination. The UI incrementally
-  loads history and caps each DOM render, preserving responsiveness for large
-  libraries.
+  two seconds. Mutations and lifecycle events invalidate affected resources;
+  reads from an older generation retry through the current coalesced request.
+  Progress ticks patch shared records without repeatedly retiring pending reads.
+- Navigation keeps the application shell mounted and rejects abandoned route
+  commits. Shell hydration runs independently; Home's Patreon, schedule, and
+  health requests do not block its core content.
+- Recording progress patches affected keyed rows/cards. Table browsing uses a
+  200-row window; loading more data does not grow the rendered table indefinitely.
+  Lifecycle refreshes preserve loaded pages, unrelated menus, focus, and selection.
+- Recordings and durable history support bounded offset pagination. The API
+  field is named `cursor`, but it carries a numeric offset; it is not a
+  keyset cursor. The UI incrementally loads history and caps each DOM render,
+  preserving responsiveness for large libraries. Measure high-offset queries
+  before replacing this shape.
+- Recording list/detail/playback resolve the durable journal and overlay live
+  snapshot state, so daemon memory eviction does not make archives unplayable.
+  Snapshot-only active jobs participate in the numeric pagination offset.
 - Media probe results are fingerprinted by file size and modification time.
-  Probe and remux processes share a bounded interactive worker pool.
+  Probe, remux, and thumbnail processes share a two-slot worker pool. Thumbnails
+  additionally have a one-slot limit, coalesce by recording ID, and cache failures
+  briefly. Probe and individual thumbnail attempts have 30-second deadlines;
+  remux deadlines allow 120 seconds plus file size at 4 MiB/s. Cancelled media
+  processes are killed, and thumbnail temporary files are cleaned up.
 - Creator stages declare API, CPU, and disk resource locks. Generated artifacts
   are reused when source and transcript fingerprints still match.
 - SQLite job persistence uses WAL, normal synchronization, a busy timeout, and
@@ -49,8 +66,16 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features --locked
 cargo test --workspace --all-features --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-node --check crates/strivo-web/assets/spa.js
+cargo build -p strivo-web --locked
+(cd crates/strivo-web/e2e && npm run check:pvr-bundle)
+(cd crates/strivo-web/e2e && npm run test:performance)
 ```
+
+CI also runs the performance regressions against the exact PVR release assets,
+preserved before building Creator. Set `STRIVO_E2E_ASSETS_DIR` to that build's
+`out/assets` directory to repeat the release-asset lane locally. Results and
+measurement caveats for the September 8 remediation are in
+[the tranche report](audits/2026-09-08-performance-ux/TRANCHE.md).
 
 For representative production measurements, run a release binary against a
 copy of a large library and record API latency, resident memory, first-render

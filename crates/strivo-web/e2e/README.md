@@ -27,3 +27,21 @@ port 8199 and tears it down after the run.
 - `tests/smoke.spec.ts` — the journeys.
 
 `node_modules/` and reports are gitignored; only the source is checked in.
+
+The performance regression lane runs the three `performance-*.spec.ts`
+files against a separate PVR-only mock on port 8299:
+
+```sh
+npm run test:performance
+```
+
+It checks delayed navigation, live-update continuity, archive pagination,
+cache invalidation, and player loading/error state. It uses one worker to
+avoid competing browser tests distorting timing-sensitive interactions.
+The ordinary mock suite still uses the combined Creator/PVR source bundle.
+
+To validate minification and build-time module selection too, set
+`STRIVO_E2E_ASSETS_DIR` to the `out/assets` directory reported by the PVR
+release build's `build-script-executed` Cargo JSON message. CI preserves
+that exact directory as `target/pvr-release/assets` and runs this lane
+against it. A source-bundle pass alone does not validate the release bundle.

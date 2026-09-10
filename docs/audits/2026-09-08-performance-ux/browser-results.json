@@ -1,0 +1,83 @@
+{
+  "source": "PVR source bundle / deterministic mock / Chromium",
+  "errors": [],
+  "initial": {
+    "rows": 200,
+    "railRows": 1,
+    "count": "500 recordings · 500 match"
+  },
+  "repaint": {
+    "oldRowConnected": false,
+    "focusedElement": "BODY",
+    "openMenus": 0,
+    "synchronousMs": [
+      13.100000001490116,
+      15.700000002980232,
+      10.399999998509884,
+      10.899999998509884,
+      10.5,
+      9.799999997019768,
+      11.100000001490116,
+      10.700000002980232,
+      10.699999995529652,
+      11
+    ]
+  },
+  "routeRace": {
+    "hash": "#/settings",
+    "title": "Recordings"
+  },
+  "idlePlayer": {
+    "preload": "none",
+    "paused": true,
+    "error": "Can't play this recordingit never returned any playable dataThe file is on disk but its container is unreadable — an interrupted capture usually leaves it without an index."
+  },
+  "delayedHome": {
+    "injectedLatencyMs": 150,
+    "untilDashboardMs": 800,
+    "requests": [
+      {
+        "path": "/api/v1/health",
+        "startMs": 5
+      },
+      {
+        "path": "/api/v1/settings",
+        "startMs": 159
+      },
+      {
+        "path": "/api/v1/channels",
+        "startMs": 316
+      },
+      {
+        "path": "/api/v1/recordings",
+        "startMs": 316
+      },
+      {
+        "path": "/api/v1/patreon",
+        "startMs": 473
+      },
+      {
+        "path": "/api/v1/schedule",
+        "startMs": 627
+      },
+      {
+        "path": "/api/v1/health/checks",
+        "startMs": 794
+      }
+    ]
+  },
+  "lifecyclePagination": {
+    "afterLoadMore": 502,
+    "afterFinishedEvent": 500
+  },
+  "throttledRepaint": {
+    "cpuRate": 4,
+    "jsAndForcedLayoutMs": [
+      140.10000000149012,
+      170.60000000149012,
+      145.5,
+      159.29999999701977,
+      175.79999999701977
+    ]
+  }
+}

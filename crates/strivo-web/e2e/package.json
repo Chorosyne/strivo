@@ -9,6 +9,7 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:real": "playwright test -c playwright.real.config.ts",
+    "test:performance": "playwright test -c playwright.performance.config.ts",
     "install-browser": "playwright install chromium",
     "check:pvr-bundle": "node check-pvr-bundle.mjs"
   },

@@ -36,12 +36,13 @@ DAEMON_PID=""
 SERVE_PID=""
 
 cleanup() {
+  status=$?
   trap - EXIT INT TERM
   [ -n "$SERVE_PID" ] && kill "$SERVE_PID" 2>/dev/null || true
   [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" 2>/dev/null || true
   wait 2>/dev/null || true
   rm -rf "$WORKDIR"
-  exit 0
+  exit "$status"
 }
 trap cleanup EXIT INT TERM
 

@@ -469,6 +469,10 @@ test("Ctrl+Shift+ArrowRight nudges the split ratio and it survives reload", asyn
   await installFakePlayers(page);
   await page.reload();
   await waitForFakePlayers(page);
+  // The hook is installed while the module is loading, before renderWatch()
+  // restores localStorage into playerState. Wait for the restored layout,
+  // not merely for the factory hook, before reading its split ratio.
+  await page.waitForFunction(() => (window as any).__strivoTestHooks.playerState.layout != null);
   const ratioReloaded = await page.evaluate(() => (window as any).__strivoTestHooks.playerState.layout.ratio);
   expect(ratioReloaded).toBeCloseTo(0.55, 5);
 });

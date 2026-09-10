@@ -108,7 +108,24 @@ jobs:
         run: cargo test --workspace --all-targets --locked
 
       - name: build (PVR — default edition)
-        run: cargo build --release --locked
+        run: cargo build --release --locked --message-format=json > target/pvr-build.json
+
+      # The Creator build below writes the same `target/release/strivo` path.
+      # Keep the PVR executable separately so the real-server lane actually
+      # exercises the edition it is meant to guard.
+      - name: preserve PVR binary for real-server e2e
+        run: |
+          mkdir -p target/pvr-release
+          cp target/release/strivo target/pvr-release/strivo
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          records = [json.loads(line) for line in pathlib.Path("target/pvr-build.json").read_text().splitlines()]
+          outputs = {pathlib.Path(r["out_dir"]) / "assets" for r in records
+                     if r.get("reason") == "build-script-executed"
+                     and pathlib.Path(r["out_dir"]).parent.name.startswith("strivo-web-")}
+          assert len(outputs) == 1, f"expected one PVR web asset output, got {outputs}"
+          shutil.copytree(outputs.pop(), "target/pvr-release/assets", dirs_exist_ok=True)
+          PY
 
       # The default build/test above is the pure PVR (workspace default-members).
       # These steps exercise the Creator Edition feature-gated code paths in
@@ -118,6 +135,12 @@ jobs:
 
       - name: test (Creator Edition)
         run: cargo test --release -p strivo-web -p strivo-bin --features creator --all-targets --locked
+
+      # The Creator-only entitlement override deliberately exists only in
+      # debug builds. Its happy paths need a Creator-featured debug suite;
+      # the workspace debug suite above keeps the default PVR feature set.
+      - name: test (Creator Edition, debug)
+        run: cargo test -p strivo-web -p strivo-bin --features creator --all-targets --locked
 
       # Pin Node so the job does not inherit whatever npm this rolling-release
       # self-hosted runner happens to have. An npm change on the box broke the
@@ -141,6 +164,12 @@ jobs:
           npx playwright install chromium
           npm test
 
+      - name: Web UI performance regressions (PVR release assets)
+        working-directory: crates/strivo-web/e2e
+        env:
+          STRIVO_E2E_ASSETS_DIR: ${{ github.workspace }}/target/pvr-release/assets
+        run: npm run test:performance
+
       # S04 — the lane above drives the SPA against mock-server.mjs (a Node
       # stub), which proves nothing about the real strivo-web binary or its
       # auth wiring. This lane boots the actual compiled server (daemon +
@@ -151,5 +180,5 @@ jobs:
       - name: Web UI real-server e2e
         working-directory: crates/strivo-web/e2e
         env:
-          STRIVO_BIN: ${{ github.workspace }}/target/release/strivo
+          STRIVO_BIN: ${{ github.workspace }}/target/pvr-release/strivo
         run: npm run test:real

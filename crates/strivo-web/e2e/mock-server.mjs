@@ -4,7 +4,7 @@
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ASSETS = join(__dirname, "..", "assets");
@@ -24,11 +24,12 @@ const PORT = process.env.PORT || 8199;
 // without this override the 71-test mock lane would give a minified bundle
 // zero coverage, and a minifier that broke the SPA would still go green.
 const PREBUILT = process.env.STRIVO_E2E_ASSETS_DIR || "";
+const PVR_ONLY = process.env.STRIVO_E2E_EDITION === "pvr";
 
 async function readSpaJs() {
   if (PREBUILT) return readFile(join(PREBUILT, "spa.js"));
   const spaDir = join(ASSETS, "spa");
-  const names = (await readdir(spaDir)).filter((n) => n.endsWith(".js")).sort();
+  const names = (await readdir(spaDir)).filter((n) => n.endsWith(PVR_ONLY ? "-pvr.js" : ".js")).sort();
   const parts = await Promise.all(names.map((n) => readFile(join(spaDir, n))));
   return Buffer.concat(parts);
 }
@@ -40,7 +41,7 @@ async function readSpaJs() {
 async function readSpaCss() {
   if (PREBUILT) return readFile(join(PREBUILT, "spa.css"));
   const cssDir = join(ASSETS, "spa-css");
-  const names = (await readdir(cssDir)).filter((n) => n.endsWith(".css")).sort();
+  const names = (await readdir(cssDir)).filter((n) => n.endsWith(PVR_ONLY ? "-pvr.css" : ".css")).sort();
   const parts = await Promise.all(names.map((n) => readFile(join(cssDir, n))));
   return Buffer.concat(parts);
 }
@@ -210,6 +211,78 @@ const RESEARCH_RELATIONSHIPS = [
 const abRenderStore = new Map(); // recording_id -> { a, b }
 const submixStore = new Map(); // recording_id -> SubMix
 
+// Settings writes are stateful so the mock lane verifies the same persistence
+// and restart-required contract as the daemon rather than only request shape.
+const DEFAULT_SETTINGS = {
+  twitch_configured: true,
+  youtube_configured: true,
+  patreon_configured: false,
+  recording_dir: "/mnt/sda2/strivo",
+  recording: {
+    format: {
+      container: "matroska",
+      format: "bestvideo+bestaudio",
+      bitrate_kbps: null,
+      video_codec: null,
+      audio_codec: null,
+    },
+  },
+  auto_record_channels: [],
+  poll_interval_secs: 60,
+  schedule: [],
+  creator_enabled: !PVR_ONLY,
+  capture_profiles: [],
+  monitor_limits: {
+    max_concurrent_recordings: 3,
+    disk_budget_reserved_gb: 20,
+  },
+};
+let settingsState = structuredClone(DEFAULT_SETTINGS);
+
+function problem(res, detail) {
+  return json(res, 400, {
+    type: "about:blank",
+    title: "Bad Request",
+    status: 400,
+    detail,
+    instance: null,
+  });
+}
+
+function updateRestartRequiredSetting(path, value, res) {
+  const nullable = new Set([
+    "recording.format.format",
+    "recording.format.bitrate_kbps",
+    "recording.format.video_codec",
+    "recording.format.audio_codec",
+  ]);
+  if (path === "recording_dir") {
+    if (typeof value !== "string" || !value.trim()) return problem(res, "recording_dir must be a non-empty string");
+    if (/[\u0000-\u001F\u007F]/.test(value)) return problem(res, "recording_dir must not contain control characters");
+    // The real daemon probes its host filesystem. The mock exposes two known
+    // writable fixtures and uses its own host's path rules, just as the daemon does.
+    if (!isAbsolute(value.trim())) return problem(res, "recording_dir must be an absolute path");
+    if (!["/mnt/sda2/strivo", "/tmp/strivo-e2e-recordings"].includes(value.trim())) {
+      return problem(res, "recording_dir must be an existing writable directory");
+    }
+    settingsState.recording_dir = value.trim();
+  } else if (!nullable.has(path)) {
+    return problem(res, `unsupported setting path: ${path}`);
+  } else if (value === null) {
+    settingsState.recording.format[path.slice("recording.format.".length)] = null;
+  } else if (path === "recording.format.bitrate_kbps") {
+    if (!Number.isInteger(value) || value < 1 || value > 1_000_000) return problem(res, "bitrate_kbps must be an integer from 1 through 1000000");
+    settingsState.recording.format.bitrate_kbps = value;
+  } else if (path === "recording.format.format") {
+    if (typeof value !== "string" || !value.trim() || value.length > 512 || /[\u0000-\u001F\u007F]/.test(value)) return problem(res, "format selector must be a non-empty string up to 512 characters without control characters");
+    settingsState.recording.format.format = value.trim();
+  } else {
+    if (typeof value !== "string" || !value.trim() || value.length > 128 || !/^[A-Za-z0-9_-]+$/.test(value)) return problem(res, "codec override must be an ASCII alphanumeric, underscore, or hyphen token up to 128 characters");
+    settingsState.recording.format[path.slice("recording.format.".length)] = value.trim();
+  }
+  return json(res, 202, { ok: true, path, restart_required: true });
+}
+
 function fmtF(v) {
   if (Math.abs(v - Math.round(v)) < 1e-9) return v.toFixed(1);
   return String(v.toFixed(6)).replace(/0+$/, "").replace(/\.$/, "");
@@ -294,7 +367,10 @@ function readBody(req) {
   });
 }
 
-const CONTENT_TYPES = { ".js": "text/javascript", ".css": "text/css", ".html": "text/html" };
+const CONTENT_TYPES = {
+  ".js": "text/javascript", ".css": "text/css", ".html": "text/html",
+  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+};
 
 function json(res, code, body) {
   res.writeHead(code, { "Content-Type": "application/json" });
@@ -347,6 +423,7 @@ const server = createServer(async (req, res) => {
   if (path === "/__test__/reset" && req.method === "POST") {
     abRenderStore.clear();
     submixStore.clear();
+    settingsState = structuredClone(DEFAULT_SETTINGS);
     return json(res, 200, { status: "ok" });
   }
 
@@ -540,22 +617,20 @@ const server = createServer(async (req, res) => {
         ],
         auto_download: [],
       });
-    if (p === "/settings")
-      return json(res, 200, {
-        twitch_configured: true,
-        youtube_configured: true,
-        patreon_configured: false,
-        recording_dir: "/mnt/sda2/strivo",
-        auto_record_channels: [],
-        poll_interval_secs: 60,
-        schedule: [],
-        creator_enabled: true,
-        capture_profiles: [],
-        monitor_limits: {
-          max_concurrent_recordings: 3,
-          disk_budget_reserved_gb: 20,
-        },
-      });
+    if (p === "/settings" && req.method === "GET") return json(res, 200, settingsState);
+    if (p === "/settings/update" && req.method === "POST") {
+      const body = await readBody(req);
+      if ([
+        "recording_dir",
+        "recording.format.format",
+        "recording.format.bitrate_kbps",
+        "recording.format.video_codec",
+        "recording.format.audio_codec",
+      ].includes(body.path)) return updateRestartRequiredSetting(body.path, body.value, res);
+      // Preserve the mock's historical generic mutation fallback for the
+      // unrelated Settings controls covered elsewhere in the suite.
+      return json(res, 202, { status: "queued", path: p });
+    }
     if (p === "/pipelines/runs" && req.method === "GET")
       return json(res, 200, {
         runs: [{
