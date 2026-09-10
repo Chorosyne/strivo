@@ -168,17 +168,8 @@ impl PatreonMonitor {
 
                 if is_new && auto_pull {
                     tracing::info!("Patreon auto-pull: {} - {}", creator.name, post.title);
-                    // Monitor already holds the Patreon HTTP client's
-                    // live session; `CookieSource::Inherit` skips the
-                    // `--cookies` flag and lets the adapter carry the auth.
-                    let spec = crate::intents::DownloadVodSpec {
-                        url: embed_url.clone(),
-                        channel_name: creator.name.clone(),
-                        platform: PlatformKind::Patreon,
-                        post_title: Some(post.title.clone()),
-                        cookies: crate::intents::CookieSource::Inherit,
-                        output_policy: crate::intents::OutputPathPolicy::Fresh,
-                    };
+                    let spec =
+                        auto_pull_spec(embed_url, &creator.name, &post.title);
                     let _ = self
                         .recording_tx
                         .send(crate::intents::download_vod(spec, &self.config));
@@ -205,6 +196,33 @@ impl PatreonMonitor {
     }
 }
 
+/// Build the auto-pull `DownloadVodSpec` for a newly-seen Patreon post.
+///
+/// Uses `CookieSource::FromConfig`, which resolves `config.patreon
+/// .cookies_path` lazily at consumption time via `CookieSource::resolve()`
+/// (`src/intents/cookies.rs`) — the same way the listing call earlier in
+/// `poll()` already does. `CookieSource::Inherit` was tried here previously
+/// but is a guaranteed no-op: `PatreonClient` authenticates with a bearer
+/// token over a plain `Client::new()` with no cookie jar, so there is no
+/// live session for `Inherit` to carry over. Without real session cookies,
+/// yt-dlp's Patreon extractor silently succeeds against a public/teaser
+/// rendition instead of failing, producing a `Finished` recording whose
+/// playback is broken/wrong for patron-gated posts.
+fn auto_pull_spec(
+    embed_url: &str,
+    creator_name: &str,
+    post_title: &str,
+) -> crate::intents::DownloadVodSpec {
+    crate::intents::DownloadVodSpec {
+        url: embed_url.to_string(),
+        channel_name: creator_name.to_string(),
+        platform: PlatformKind::Patreon,
+        post_title: Some(post_title.to_string()),
+        cookies: crate::intents::CookieSource::FromConfig,
+        output_policy: crate::intents::OutputPathPolicy::Fresh,
+    }
+}
+
 fn load_state(path: &PathBuf) -> Option<HashMap<String, DateTime<Utc>>> {
     let content = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
@@ -217,4 +235,28 @@ fn save_state(path: &PathBuf, state: &HashMap<String, DateTime<Utc>>) -> anyhow:
     let content = serde_json::to_string_pretty(state)?;
     std::fs::write(path, content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The auto-pull path must resolve cookies from config, not `Inherit`
+    /// (which is a guaranteed no-op — see `auto_pull_spec`'s doc comment).
+    /// This is the regression test for the broken-Patreon-playback fix.
+    #[test]
+    fn auto_pull_spec_uses_cookie_source_from_config() {
+        let spec = auto_pull_spec(
+            "https://patreon.example/embed/123",
+            "Some Creator",
+            "Some Post",
+        );
+        assert!(matches!(
+            spec.cookies,
+            crate::intents::CookieSource::FromConfig
+        ));
+        assert_eq!(spec.platform, PlatformKind::Patreon);
+        assert_eq!(spec.channel_name, "Some Creator");
+        assert_eq!(spec.post_title.as_deref(), Some("Some Post"));
+    }
 }
