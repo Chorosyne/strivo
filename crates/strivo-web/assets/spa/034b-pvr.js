@@ -33,8 +33,8 @@
             "Adds extra status text to long-running operations. Useful on screen readers."),
         ].join("")),
         group("Scheduling", [
-          row("Scheduled recordings", `${(s.schedule || []).length}`,
-            "Cron-style fixed-time recordings. Edit via TUI."),
+          row("Scheduled recordings", `<a class="stg-linkbtn" href="#/schedule">${(s.schedule || []).length} →</a>`,
+            "Cron-style fixed-time recordings. View them in Monitor; edit [[schedule]] in config.toml."),
         ].join("")),
       ].join("");
 

@@ -118,14 +118,15 @@ function envOrDefault(_name, dflt) {
 
 // ── System (item 7) — version, daemon connectivity, severity-tiered
 // health checks, disk gauge, tasks. (research §E)
-async function renderSystem() {
+async function renderSystem(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   const [health, storage, checksResp, settings] = await Promise.all([
     API.health().catch(() => null),
     API.storage().catch(() => null),
     API.healthChecks().catch(() => null),
     API.settings().catch(() => null),
   ]);
-  root.removeAttribute("aria-busy");
+  if (!isRouteCurrent(context)) return;
 
   // Server-side health-check registry is the single source of truth
   // (roadmap item 13): {domain, name, severity, message, fix}.
@@ -197,7 +198,7 @@ async function renderSystem() {
     ? "warn"
     : "ok";
 
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">System</h1>
     <p class="page-subtitle">StriVo v${health ? htmlEscape(health.version || "?") : "?"} ·
       overall <span class="cfg-badge ${worst === "ok" ? "ok" : worst === "warn" ? "warn" : "err"}">${worst}</span></p>
@@ -217,6 +218,7 @@ async function renderSystem() {
           <button id="backup-now" class="sm">＋ Backup now</button>
         </div>
         <div id="backup-list"><div class="empty sm">Loading backups…</div></div>
+        <p class="pg-cap-hint">After restoring, <a href="https://github.com/revoydotdev/strivo/blob/main/docs/DAEMON.md#lifecycle" target="_blank" rel="noopener">restart the daemon manually</a> to apply the restored files.</p>
       </section>
       <section class="cfg-card" id="blocklist-card">
         <h2 class="cfg-title">Blocklist</h2>
@@ -259,7 +261,7 @@ async function renderSystem() {
         </div>
       </section>
     </div>
-  `);
+  `, context)) return;
   setupChromeHandlers();
   // Run-now duality: poll task enqueues the same command as the scheduled poll.
   document.getElementById("task-poll-now")?.addEventListener("click", async (e) => {
@@ -377,7 +379,7 @@ async function paintBackups() {
           return;
         try {
           const res = await API.backupRestore(name);
-          Toast.success(`Restored ${(res.restored || []).join(", ")} — restart the daemon to apply`);
+          Toast.success(`Restored ${(res.restored || []).join(", ")} — follow the restart steps below to apply`);
         } catch (err) {
           Toast.error(`Restore failed: ${err.message}`);
         }
@@ -423,7 +425,8 @@ function logSource(line) {
   return m ? m[1] : "";
 }
 
-async function renderLogs() {
+async function renderLogs(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   const levels = ["error", "warn", "info", "debug", "trace"];
   const options = levels
     .map((l) => `<option value="${l}"${l === logsLevel ? " selected" : ""}>${l.toUpperCase()}</option>`)
@@ -431,7 +434,7 @@ async function renderLogs() {
   // Stop any prior tail-follow timer before mounting the page (route
   // navigation, theme change, hot reload, etc.).
   if (logsFollowTimer) { clearInterval(logsFollowTimer); logsFollowTimer = null; }
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Logs</h1>
     <div class="logs-toolbar">
       <label>Min level <select id="logs-level">${options}</select></label>
@@ -456,7 +459,7 @@ async function renderLogs() {
       <span id="logs-file" class="logs-file"></span>
     </div>
     <div id="logs-output" class="logs-output" aria-live="polite">Loading…</div>
-  `);
+  `, context)) return;
   setupChromeHandlers();
 
   async function load() {
@@ -464,6 +467,7 @@ async function renderLogs() {
     const fileEl = document.getElementById("logs-file");
     try {
       const r = await API.logs(logsLevel, 500);
+      if (!isRouteCurrent(context)) return;
       const allLines = r.lines || [];
       const allEntries = parseLogEntries(allLines);
       // Build the source-filter chip set from what's currently in view.
@@ -549,6 +553,7 @@ async function renderLogs() {
         .join("\n");
       logsLastFile = r.file || "strivo.log";
     } catch (e) {
+      if (!isRouteCurrent(context)) return;
       out.textContent = `Failed to load logs: ${e.message}`;
     }
   }
@@ -663,7 +668,8 @@ function dayBucket(d) {
   return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
 }
 
-async function renderSchedule() {
+async function renderSchedule(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   // Page lives at #/schedule for back-compat with bookmarks, but is now
   // the Monitor page — record-when-live and auto-download new uploads
   // replace the cron form that 95% of users found foreign. (Power users
@@ -691,7 +697,7 @@ async function renderSchedule() {
     settings = st;
     health = h;
   } catch (_) {}
-  root.removeAttribute("aria-busy");
+  if (!isRouteCurrent(context)) return;
 
   // Build a channel lookup so we can show display_name + platform.
   const channelByKey = new Map(
@@ -836,7 +842,7 @@ async function renderSchedule() {
          <span>✓ ${activeCount} recording${activeCount === 1 ? "" : "s"} in flight${maxConcurrent ? ` / ${maxConcurrent}` : ""} · ${formatBytes(diskAvailBytes)} free</span>
        </div>`;
 
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Monitor</h1>
     <p class="page-subtitle">Channels StriVo is watching. Record live broadcasts as they happen, or auto-download new YouTube uploads.</p>
 
@@ -877,7 +883,7 @@ async function renderSchedule() {
     ${downloadSectionHtml}
 
     ${cronGroup}
-  `);
+  `, context)) return;
   setupChromeHandlers();
 
   // Capture-limit inputs — debounced save to /settings/update so each
@@ -954,4 +960,3 @@ async function renderSchedule() {
   window._monProfileTiers = Object.fromEntries(
     (settings?.capture_profiles || []).map((p) => [p.name, p.quality_tier || ""])
   );
-

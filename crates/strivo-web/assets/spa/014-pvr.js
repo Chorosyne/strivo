@@ -1040,13 +1040,14 @@ RAIL_CLICK_HANDLERS.chat = (channelKey, ev) => {
   return true;
 };
 
-async function renderChat() {
+async function renderChat(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   // The channel list used to be a second #chat-tabs aside painted beside
   // the always-present left rail. That's gone — the rail is the one
   // channel list on every route now, including #/chat (see
   // RAIL_CLICK_HANDLERS.chat + paintChatTabs above), so .chat-root is a
   // single column.
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <div id="chat-root" class="chat-root">
       <main class="chat-main">
         <div class="chat-main-head">
@@ -1062,7 +1063,7 @@ async function renderChat() {
         <div id="chat-compose-host" class="chat-compose-host"></div>
       </main>
     </div>
-  `);
+  `, context)) return;
   // renderChat() never called this (a latent bug predating this pass —
   // #/chat's left rail was rendering empty, since chrome() emits it
   // empty and only setupChromeHandlers() (012-pvr.js) fills it in via
@@ -1087,7 +1088,9 @@ async function renderChat() {
   let rooms;
   try {
     rooms = (await API.chatRooms()).rooms || [];
+    if (!isRouteCurrent(context)) return;
   } catch (e) {
+    if (!isRouteCurrent(context)) return;
     document.getElementById("chat-root").innerHTML =
       `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
@@ -1147,4 +1150,3 @@ async function renderChat() {
     compact: false,
   });
 }
-

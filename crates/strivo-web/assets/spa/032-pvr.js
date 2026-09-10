@@ -47,15 +47,14 @@ async function openRecordingPlayer(jobId, _opts = {}) {
 // through the controller interface instead of a raw <video> element.
 
 // ── Stub routes ──────────────────────────────────────────────────────
-function renderStub(title, msg) {
-  root.removeAttribute("aria-busy");
-  root.innerHTML = chrome(`
+function renderStub(title, msg, context = captureRouteContext()) {
+  if (!mountPage(`
     <h1 class="page-title">${htmlEscape(title)}</h1>
     <div class="empty">
       <div class="glyph">🚧</div>
       ${htmlEscape(msg)}
     </div>
-  `);
+  `, context)) return;
   setupChromeHandlers();
 }
 
@@ -78,7 +77,8 @@ const SETTINGS_SECTIONS = [
   { slug: "about", label: "About", icon: "ℹ" },
 ];
 
-async function renderSettings() {
+async function renderSettings(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   const parts = routeParts(); // ["settings", <slug?>]
   const slug = parts[1] || "general";
   let known = SETTINGS_SECTIONS.find((s) => s.slug === slug)
@@ -93,7 +93,7 @@ async function renderSettings() {
   } catch (e) {
     if (e.message && e.message.includes("unauthorized")) return;
   }
-  root.removeAttribute("aria-busy");
+  if (!isRouteCurrent(context)) return;
 
   const rail = SETTINGS_SECTIONS
     .filter((sec) => CREATOR_ENABLED || sec.slug !== "plugins")
@@ -106,7 +106,7 @@ async function renderSettings() {
 
   const pane = renderSettingsPane(known, s);
 
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Settings</h1>
     <p class="page-subtitle">Live daemon configuration. Toggles and numeric knobs persist to <code>~/.config/strivo/config.toml</code> on change.</p>
     <div class="stg-shell">
@@ -119,7 +119,7 @@ async function renderSettings() {
       </nav>
       <div class="stg-pane" id="stg-pane">${pane}</div>
     </div>
-  `);
+  `, context)) return;
   setupChromeHandlers();
   wireSettingsControls();
   wireSettingsSearch();

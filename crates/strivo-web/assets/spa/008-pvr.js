@@ -378,6 +378,31 @@ document.addEventListener("click", (e) => {
 // ── Render ───────────────────────────────────────────────────────────
 const root = document.getElementById("app");
 
+// A route owns every asynchronous commit it starts.  Hash changes can arrive
+// while a previous route is waiting for data, so matching just the route name
+// is insufficient (a channel selection can re-render the same route).
+let routeGeneration = 0;
+function captureRouteContext() {
+  return {
+    generation: routeGeneration,
+    route: currentRoute(),
+    hash: window.location.hash,
+  };
+}
+function isRouteCurrent(context) {
+  return !!context
+    && context.generation === routeGeneration
+    && context.route === currentRoute()
+    && context.hash === window.location.hash;
+}
+
+function announceNavigation(context) {
+  if (!isRouteCurrent(context)) return;
+  // `mountPage` owns the long-lived chrome.  It also gives a direct deep
+  // link a usable shell before any API request completes.
+  if (typeof mountRouteShell === "function") mountRouteShell(context);
+}
+
 // Per-route cache requirements. Every entry lists which module-scoped
 // caches the route's render needs hydrated before chrome() paints.
 // Routes that depend on the chrome's rail (channelCache + recCache)
@@ -400,34 +425,60 @@ const ROUTE_HYDRATION = {
   history:     ["recordings"],
 };
 
-async function ensureRouteHydration(route) {
-  const wants = ROUTE_HYDRATION[route] || ["channels"];
+// The rail is application chrome, not route data.  Keep an explicit loaded
+// bit: an empty account is successfully hydrated and must not refetch on
+// every navigation just because its array has length zero.
+const hydrationLoaded = {
+  channels: false,
+  recordings: false,
+  schedule: false,
+  patreon: false,
+};
+
+async function ensureRouteHydration(route, context = captureRouteContext()) {
+  const wants = new Set(["channels", "recordings", ...(ROUTE_HYDRATION[route] || [])]);
   const jobs = [];
   // A2/A3: track failed hydrations so the UI can surface a toast
   // instead of silently rendering an empty rail / 0-active-count.
   const failures = [];
-  if (wants.includes("channels") && !channelCache.length) {
+  if (wants.has("channels") && !hydrationLoaded.channels) {
     jobs.push(API.channels()
-      .then((r) => { channelCache = r.channels || []; })
+      .then((r) => {
+        if (!isRouteCurrent(context)) return;
+        channelCache = r.channels || [];
+        hydrationLoaded.channels = true;
+        if (isRouteCurrent(context)) paintChannelList();
+      })
       .catch((e) => { failures.push(`channels: ${e.message || e}`); }));
   }
-  if (wants.includes("recordings") && !recCache.length) {
+  if (wants.has("recordings") && !hydrationLoaded.recordings) {
     jobs.push(API.recordings()
-      .then((r) => { recCache = r.recordings || []; dashRecordings = recCache; })
+      .then((r) => {
+        if (!isRouteCurrent(context)) return;
+        recCache = r.recordings || [];
+        dashRecordings = recCache;
+        hydrationLoaded.recordings = true;
+        if (isRouteCurrent(context)) paintChannelList();
+      })
       .catch((e) => { failures.push(`recordings: ${e.message || e}`); }));
   }
-  if (wants.includes("schedule") && !dashSchedule.length) {
+  if (wants.has("schedule") && !hydrationLoaded.schedule) {
     jobs.push(API.schedule()
-      .then((r) => { dashSchedule = r.schedule || []; })
+      .then((r) => {
+        if (!isRouteCurrent(context)) return;
+        dashSchedule = r.schedule || []; hydrationLoaded.schedule = true;
+      })
       .catch((e) => { failures.push(`schedule: ${e.message || e}`); }));
   }
-  if (wants.includes("patreon") && !(patreonState.creators || []).length) {
-    jobs.push(typeof seedPatreon === "function" ? seedPatreon().catch(() => {}) : Promise.resolve());
+  if (wants.has("patreon") && !hydrationLoaded.patreon) {
+    jobs.push(typeof seedPatreon === "function"
+      ? seedPatreon(context).then((loaded) => { if (loaded) hydrationLoaded.patreon = true; }).catch(() => {})
+      : Promise.resolve());
   }
   if (jobs.length) await Promise.allSettled(jobs);
   // Suppress 401 noise (handled by the auth probe a few lines later).
   const real = failures.filter((s) => !/unauthorized/i.test(s));
-  if (real.length && typeof Toast !== "undefined") {
+  if (real.length && isRouteCurrent(context) && typeof Toast !== "undefined") {
     Toast.error?.(`Couldn't load: ${real.join(" · ")}`);
   }
 }
@@ -470,6 +521,8 @@ function teardownAcrossRoutes() {
 }
 
 async function render() {
+  routeGeneration += 1;
+  const context = captureRouteContext();
   const r = currentRoute();
   // Bounce Creator Edition deep-links to Home in the pure-PVR build (their
   // backend routes don't exist here). The hash change re-enters render().
@@ -477,6 +530,7 @@ async function render() {
     location.hash = "#/library";
     return;
   }
+  announceNavigation(context);
   teardownAcrossRoutes();
   // P0 perf: tear down per-route long-lived resources before painting
   // the next route. Chat WebSockets, chat buffers, and dataviz resize
@@ -498,35 +552,26 @@ async function render() {
   if (r !== "archive" && typeof teardownArchive === "function") {
     teardownArchive();
   }
-  // Universal pre-paint hydration. Every chrome-painting route gets
-  // its declared cache dependencies fetched in parallel before its
-  // renderer runs. Prevents the 'rail empty on deep-link' family of
-  // bugs across every Pro / Free / Util route.
+  // Shell and route data load concurrently.  The route painter commits its
+  // own placeholders immediately; neither a health probe nor a Patreon
+  // failure should hold the destination hostage.
   if (r !== "login") {
-    await ensureRouteHydration(r);
+    ensureRouteHydration(r, context).catch(() => {});
   }
-  // Probe auth — if /health returns 401-ish, we land on login.
   if (r !== "login") {
-    try {
-      await API.health();
-    } catch (e) {
-      // health is unauthenticated; this catch means real network/server
-      // issue. Surface and continue.
-      console.warn(e);
-    }
-    // The first real call that hits an auth check will redirect to
-    // /login on 401 via the API._fetch path.
+    API.health().catch((e) => console.warn(e));
   }
+  if (!isRouteCurrent(context)) return;
   switch (r) {
     case "login":
-      renderLogin();
+      renderLogin(undefined, context);
       break;
     case "library":
-      await renderHome();
+      await renderHome(context);
       break;
     case "recordings":
-      await renderRecordings();
+      await renderRecordings(context);
       break;
     case "schedule":
-      await renderSchedule();
+      await renderSchedule(context);
       break;

@@ -1,6 +1,6 @@
     case "watch":
-      await renderWatch();
+      await renderWatch(context);
       break;
     case "viewer":
-      await renderViewer();
+      await renderViewer(context);
       break;
