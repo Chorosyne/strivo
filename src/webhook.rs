@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::NotificationsConfig;
+use crate::config::{ChannelAlertEntry, NotificationsConfig};
 use crate::events::DaemonEvent;
 
 /// JSON body POSTed to the webhook endpoint.
@@ -140,12 +140,46 @@ pub fn build_payload(event: &DaemonEvent) -> Option<WebhookPayload> {
     }
 }
 
+/// Look up a per-channel override for one alert class.
+///
+/// `channel_key` is the event's `Platform:id` key when the caller was able
+/// to resolve one (not every `DaemonEvent` carries a channel identity —
+/// e.g. a generic `Notification` never does); `is_upload` distinguishes a
+/// VOD/upload auto-download completion from a live-capture event, since the
+/// two are gated by separate config fields (`on_upload` vs `on_live`).
+///
+/// Returns `None` when there is no channel key, or no matching entry, or
+/// the matching entry leaves the relevant field unset — in every such case
+/// the caller must fall through to today's global-only behaviour unchanged.
+/// Returns `Some(bool)` only when an explicit per-channel override applies.
+pub fn alert_allowed(
+    channel_alerts: &[ChannelAlertEntry],
+    channel_key: Option<&str>,
+    is_upload: bool,
+) -> Option<bool> {
+    let key = channel_key?;
+    let entry = channel_alerts.iter().find(|e| e.channel_key == key)?;
+    let flag = if is_upload { entry.on_upload } else { entry.on_live };
+    Some(flag.unwrap_or(true))
+}
+
 /// Dispatch an outbound webhook for a daemon event (fire-and-forget).
 ///
 /// If the webhook is disabled or no URL is configured this is a cheap
 /// synchronous no-op. When enabled, the POST is spawned onto a Tokio task and
 /// the function returns immediately — the event loop is never blocked.
-pub fn dispatch_webhook(cfg: &NotificationsConfig, event: &DaemonEvent) {
+///
+/// `channel_ctx`, when the caller could resolve one, is `(channel_key,
+/// is_upload)` for the event; it drives [`alert_allowed`]. Passing `None`
+/// (no channel context) preserves the pre-existing global-only behaviour
+/// exactly, matching every event type this function didn't previously have
+/// channel identity for.
+pub fn dispatch_webhook(
+    cfg: &NotificationsConfig,
+    channel_alerts: &[ChannelAlertEntry],
+    channel_ctx: Option<(&str, bool)>,
+    event: &DaemonEvent,
+) {
     if !cfg.webhook.enabled {
         return;
     }
@@ -155,6 +189,13 @@ pub fn dispatch_webhook(cfg: &NotificationsConfig, event: &DaemonEvent) {
     let Some(payload) = build_payload(event) else {
         return;
     };
+    let (channel_key, is_upload) = match channel_ctx {
+        Some((key, is_upload)) => (Some(key), is_upload),
+        None => (None, false),
+    };
+    if alert_allowed(channel_alerts, channel_key, is_upload) == Some(false) {
+        return;
+    }
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         match client.post(&url).json(&payload).send().await {
@@ -301,6 +342,80 @@ mod tests {
         let ch = make_channel();
         let event = DaemonEvent::ChannelWentLive(ch);
         // Must not panic or spawn (no Tokio runtime needed here).
-        dispatch_webhook(&cfg, &event);
+        dispatch_webhook(&cfg, &[], None, &event);
+    }
+
+    #[test]
+    fn alert_allowed_is_none_with_no_channel_key() {
+        // Critical regression check: callers that can't resolve a channel
+        // key (or events with no channel identity at all) must always fall
+        // through to unchanged behaviour, regardless of what's configured.
+        let alerts = vec![ChannelAlertEntry {
+            channel_key: "Twitch:1".to_string(),
+            on_live: Some(false),
+            on_upload: Some(false),
+        }];
+        assert_eq!(alert_allowed(&alerts, None, false), None);
+    }
+
+    #[test]
+    fn alert_allowed_is_none_with_no_matching_override() {
+        let alerts = vec![ChannelAlertEntry {
+            channel_key: "Twitch:1".to_string(),
+            on_live: Some(false),
+            on_upload: None,
+        }];
+        // Different channel — no override should apply.
+        assert_eq!(alert_allowed(&alerts, Some("Twitch:2"), false), None);
+        // Same channel, empty overrides list — no override should apply.
+        assert_eq!(alert_allowed(&[], Some("Twitch:1"), false), None);
+    }
+
+    #[test]
+    fn alert_allowed_on_live_false_suppresses_live_only() {
+        let alerts = vec![ChannelAlertEntry {
+            channel_key: "Twitch:1".to_string(),
+            on_live: Some(false),
+            on_upload: None,
+        }];
+        assert_eq!(alert_allowed(&alerts, Some("Twitch:1"), false), Some(false));
+        // on_upload is unset on this entry — falls through to "allowed".
+        assert_eq!(alert_allowed(&alerts, Some("Twitch:1"), true), Some(true));
+    }
+
+    #[test]
+    fn alert_allowed_on_upload_false_suppresses_upload_only() {
+        let alerts = vec![ChannelAlertEntry {
+            channel_key: "Patreon:vanity".to_string(),
+            on_live: None,
+            on_upload: Some(false),
+        }];
+        assert_eq!(
+            alert_allowed(&alerts, Some("Patreon:vanity"), true),
+            Some(false)
+        );
+        assert_eq!(
+            alert_allowed(&alerts, Some("Patreon:vanity"), false),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn dispatch_webhook_suppresses_when_override_says_no() {
+        // Enabled webhook + an explicit on_live:false override must not
+        // panic and must return before ever touching the network — with no
+        // Tokio runtime present, tokio::spawn would panic if reached, so a
+        // clean return here proves the suppression path was taken.
+        let mut cfg = NotificationsConfig::default();
+        cfg.webhook.enabled = true;
+        cfg.webhook.url = Some("https://example.invalid/hook".to_string());
+        let alerts = vec![ChannelAlertEntry {
+            channel_key: "Twitch:123456".to_string(),
+            on_live: Some(false),
+            on_upload: None,
+        }];
+        let ch = make_channel();
+        let event = DaemonEvent::ChannelWentLive(ch);
+        dispatch_webhook(&cfg, &alerts, Some(("Twitch:123456", false)), &event);
     }
 }

@@ -31,6 +31,14 @@ pub struct AppConfig {
     #[serde(default)]
     pub auto_record_channels: Vec<AutoRecordEntry>,
 
+    /// Per-channel overrides of the global notification/webhook switches
+    /// (`[notifications]` on_go_live / on_recording_finished). Absent
+    /// channel = follow the global default unchanged. Applies to both PVR
+    /// and Creator editions, so this lives in core rather than behind the
+    /// `archiver`/Creator plugin boundary.
+    #[serde(default)]
+    pub channel_alerts: Vec<ChannelAlertEntry>,
+
     /// Named capture profiles (roadmap item 21), referenced by
     /// `AutoRecordEntry::profile`.
     #[serde(default)]
@@ -298,6 +306,20 @@ pub struct ResolvedFormat {
     pub container: String,
     pub video_codec: String,
     pub audio_codec: String,
+}
+
+/// Per-channel override of the global live/upload alert switches.
+/// `channel_key` is the `Platform:id` string used everywhere else in the
+/// web API (`format!("{}:{}", platform, channel_id)`). `None` on either
+/// field means "follow the global `[notifications]` default"; only an
+/// explicit `Some(false)` suppresses that class of alert for this channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelAlertEntry {
+    pub channel_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_live: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_upload: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -718,6 +740,7 @@ impl Default for AppConfig {
             theme: ThemeRef::default(),
             ui: UiConfig::default(),
             auto_record_channels: Vec::new(),
+            channel_alerts: Vec::new(),
             capture_profiles: Vec::new(),
             auto_pull_creators: Vec::new(),
             schedule: Vec::new(),

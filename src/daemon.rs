@@ -1132,8 +1132,32 @@ pub async fn run_with_plugins_at(
                     dispatch_desktop_notification(&config.notifications, de);
 
                     // Outbound webhook — fire-and-forget POST on a spawned
-                    // task; never blocks the event loop.
-                    crate::webhook::dispatch_webhook(&config.notifications, de);
+                    // task; never blocks the event loop. Resolve a channel
+                    // key (and whether this is an upload/VOD pull vs a live
+                    // capture) for the event types that carry one, so a
+                    // per-channel alert override can apply; every other
+                    // event type passes `None`, which preserves today's
+                    // global-only behaviour exactly.
+                    let channel_ctx: Option<(String, bool)> = match de {
+                        DaemonEvent::ChannelWentLive(ch) => {
+                            Some((format!("{}:{}", ch.platform, ch.id), false))
+                        }
+                        DaemonEvent::RecordingFinished { job_id, .. } => {
+                            state.recordings.get(job_id).map(|job| {
+                                (
+                                    format!("{}:{}", job.platform, job.channel_id),
+                                    job.source_url.is_some(),
+                                )
+                            })
+                        }
+                        _ => None,
+                    };
+                    crate::webhook::dispatch_webhook(
+                        &config.notifications,
+                        &config.channel_alerts,
+                        channel_ctx.as_ref().map(|(k, u)| (k.as_str(), *u)),
+                        de,
+                    );
 
                     // Plugins are daemon residents: lifecycle events must reach
                     // them even when no web client is connected.

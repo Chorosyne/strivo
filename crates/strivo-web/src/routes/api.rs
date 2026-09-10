@@ -2237,6 +2237,94 @@ async fn put_auto_record(
         .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct ChannelAlertsPayload {
+    #[serde(default)]
+    on_live: Option<bool>,
+    #[serde(default)]
+    on_upload: Option<bool>,
+}
+
+/// `GET /api/v1/channels/<channel_key>/alerts` — current per-channel alert
+/// override, if any. Both fields are `null` when the channel follows the
+/// global `[notifications]` defaults unchanged.
+async fn get_channel_alerts(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(channel_key): Path<String>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+        Ok(c) => c,
+        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+    };
+    let entry = cfg
+        .channel_alerts
+        .iter()
+        .find(|c| c.channel_key == channel_key);
+    Json(json!({
+        "channel_key": channel_key,
+        "on_live": entry.and_then(|e| e.on_live),
+        "on_upload": entry.and_then(|e| e.on_upload),
+    }))
+    .into_response()
+}
+
+/// `PUT /api/v1/channels/<channel_key>/alerts` — set (or clear) a
+/// per-channel override of the global live/upload alert switches. `None`
+/// on both `on_live` and `on_upload` removes any existing override for the
+/// channel, reverting it to the global default; otherwise the entry is
+/// upserted with whatever fields were supplied (the other field stays
+/// `None`, i.e. still follows global default).
+async fn put_channel_alerts(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(channel_key): Path<String>,
+    Json(body): Json<ChannelAlertsPayload>,
+) -> impl IntoResponse {
+    if check_key(&headers, &state).is_err() {
+        return crate::problem::Problem::unauthorized().into_response();
+    }
+    let _config_guard = state.config_write_lock.lock().await;
+    let mut cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+        Ok(c) => c,
+        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+    };
+    if body.on_live.is_none() && body.on_upload.is_none() {
+        cfg.channel_alerts
+            .retain(|c| c.channel_key != channel_key);
+    } else if let Some(entry) = cfg
+        .channel_alerts
+        .iter_mut()
+        .find(|c| c.channel_key == channel_key)
+    {
+        entry.on_live = body.on_live;
+        entry.on_upload = body.on_upload;
+    } else {
+        cfg.channel_alerts
+            .push(strivo_core::config::ChannelAlertEntry {
+                channel_key: channel_key.clone(),
+                on_live: body.on_live,
+                on_upload: body.on_upload,
+            });
+    }
+    if let Err(e) = cfg.save(state.config_path()) {
+        return crate::problem::Problem::internal(e.to_string()).into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "channel_key": channel_key,
+            "on_live": body.on_live,
+            "on_upload": body.on_upload,
+        })),
+    )
+        .into_response()
+}
+
 #[cfg(feature = "creator")]
 #[derive(Debug, Deserialize)]
 struct TandemPayload {
@@ -2651,9 +2739,21 @@ async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> imp
     };
     #[cfg(not(feature = "creator"))]
     let auto_download: Vec<serde_json::Value> = Vec::new();
+    let alerts: Vec<serde_json::Value> = cfg
+        .channel_alerts
+        .iter()
+        .map(|c| {
+            json!({
+                "key": c.channel_key,
+                "on_live": c.on_live,
+                "on_upload": c.on_upload,
+            })
+        })
+        .collect();
     Json(json!({
         "auto_record": auto_record,
         "auto_download": auto_download,
+        "alerts": alerts,
     }))
     .into_response()
 }
@@ -3412,6 +3512,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/channels/{channel_key}/auto_record",
             put(put_auto_record),
+        )
+        .route(
+            "/api/v1/channels/{channel_key}/alerts",
+            get(get_channel_alerts).put(put_channel_alerts),
         )
         .route("/api/v1/monitor", get(monitor_state))
         // Task 1: capture-profile CRUD

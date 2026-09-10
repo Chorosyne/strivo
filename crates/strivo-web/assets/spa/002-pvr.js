@@ -118,6 +118,14 @@ const API = {
       method: "PUT",
       body: { enabled: true, format: format || "", profile: profile || "" },
     }),
+  // Per-channel override of the global live/upload alert switches. Pass
+  // `{on_live, on_upload}`; both undefined/null clears the override and
+  // reverts the channel to the global default.
+  setChannelAlerts: (channelKey, body) =>
+    API._fetch(`/channels/${encodeURIComponent(channelKey)}/alerts`, {
+      method: "PUT",
+      body,
+    }),
   pollNow: () => API._fetch("/poll_now", { method: "POST" }),
   health: () => API._fetch("/health"),
   healthChecks: () => API._fetch("/health/checks"),
