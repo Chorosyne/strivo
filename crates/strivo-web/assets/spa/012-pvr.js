@@ -1349,13 +1349,19 @@ function setVodButtonState(btn, state) {
 // "NN% · Xm Ys left · R MB/s" label. Bar gradient runs amber → green so the
 // rightmost fill colour shifts greener as the pull completes.
 function vodProgressHtml(pct, etaSecs, rateBps) {
-  const p = Math.max(0, Math.min(100, Math.round(pct == null ? 0 : pct)));
+  // Mirrors renderStatePill's convention (below, ~3149): an unknown
+  // percent is omitted from the label rather than shown as a literal
+  // "0%" — the bar fill can still default to empty, but the text must
+  // not lie about progress it hasn't actually observed yet.
+  const hasPct = pct != null && Number.isFinite(pct);
+  const p = hasPct ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
   const eta = etaSecs == null ? "" : fmtEta(etaSecs);
   const rate = rateBps == null ? "" : `${formatBytes(rateBps)}/s`;
   const meta = [eta && `${eta} left`, rate].filter(Boolean).join(" · ");
+  const label = hasPct ? `${p}%${meta ? " · " + meta : ""}` : (meta || "Downloading…");
   return `
     <span class="vod-dl-bar"><span class="vod-dl-fill" style="width:${p}%"></span></span>
-    <span class="vod-dl-label">${p}%${meta ? " · " + meta : ""}</span>
+    <span class="vod-dl-label">${label}</span>
   `;
 }
 
@@ -2804,7 +2810,14 @@ function recordingDisplayState(j) {
 function pctForDownload(j) {
   if (!j) return null;
   if (j.download_pct != null && Number.isFinite(j.download_pct)) {
-    return Math.max(0, Math.min(100, Number(j.download_pct)));
+    const raw = Math.max(0, Math.min(100, Number(j.download_pct)));
+    // Cap short of 100 unless the job's own state says it's actually
+    // done — mirrors the estimate-fallback branch below, which already
+    // reserves 100% for the real Finish transition. Without this, a
+    // backend-reported 100% mid-stream could paint a "Finished"-looking
+    // bar for a job that is still in the Recording/Downloading state.
+    const isActuallyFinished = typeof stateClassName === "function" && stateClassName(j.state) === "finished";
+    return isActuallyFinished ? raw : Math.min(99, raw);
   }
   const bw = Number(j.bytes_written) || 0;
   const elapsed = Number(j.duration_secs) || 0;

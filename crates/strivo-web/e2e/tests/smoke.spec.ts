@@ -62,7 +62,9 @@ test("past-broadcasts pills have a download button that flips to Downloading on 
   await expect(dlBtn).toHaveClass(/vod-dl-downloading/);
   await expect(dlBtn).toBeDisabled();
   await expect(dlBtn.locator(".vod-dl-bar")).toBeVisible();
-  await expect(dlBtn.locator(".vod-dl-label")).toContainText("%");
+  // No progress tick has landed yet in this mock flow, so the label omits
+  // a misleading "0%" and shows a neutral placeholder instead.
+  await expect(dlBtn.locator(".vod-dl-label")).toContainText("Downloading");
 });
 
 test("patreon creators appear in the left rail (seeded from /patreon)", async ({ page }) => {

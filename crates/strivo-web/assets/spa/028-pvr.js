@@ -32,6 +32,11 @@ function parseTimeInput(raw, max) {
 // `#rec-player-modal` (custom mpv-style HTML5 player). Both close on
 // Esc / backdrop click; opening one closes any other.
 
+// Tracks which recording's Info modal is currently open, so the SSE
+// RecordingProgress handler (036-pvr.js) can live-patch its percent
+// without a full modal re-render. null when no modal is open.
+let _openRecInfoJobId = null;
+
 function ensureModalContainer(id) {
   let el = document.getElementById(id);
   if (!el) {
@@ -47,6 +52,7 @@ function ensureModalContainer(id) {
 
 function closeRecordingModals() {
   document.getElementById("rec-info-modal")?.remove();
+  _openRecInfoJobId = null;
   const pl = document.getElementById("rec-player-modal");
   if (pl) {
     const v = pl.querySelector("video");
@@ -58,6 +64,28 @@ function closeRecordingModals() {
   // eaten by the modal's ESC handler, leaving it stranded.
   document.getElementById("kbd-help")?.classList.remove("open");
   document.body.classList.remove("modal-open");
+}
+
+// Live-patch the open Recording Info modal's header state pill from an
+// SSE RecordingProgress tick (036-pvr.js calls this unconditionally on
+// every tick; it no-ops when no modal is open or the tick is for a
+// different job). Mirrors updateVodProgressDom's surgical-patch style
+// (012-pvr.js) — this modal has no independent progress bar, just the
+// header renderStatePill, so patching that one element is enough.
+function updateRecInfoModalProgress(p) {
+  if (!_openRecInfoJobId || String(p.job_id) !== String(_openRecInfoJobId)) return;
+  const overlay = document.getElementById("rec-info-modal");
+  if (!overlay) { _openRecInfoJobId = null; return; }
+  const live = recCache.find((r) => r.id === _openRecInfoJobId);
+  if (!live) return;
+  if (p.bytes_written != null) live.bytes_written = p.bytes_written;
+  if (p.duration_secs != null) live.duration_secs = p.duration_secs;
+  if (p.download_pct != null) live.download_pct = p.download_pct;
+  if (p.download_eta_secs != null) live.download_eta_secs = p.download_eta_secs;
+  if (p.download_rate_bps != null) live.download_rate_bps = p.download_rate_bps;
+  const pillHost = overlay.querySelector(".rec-info-head");
+  const existing = pillHost && pillHost.querySelector(".state-pill");
+  if (existing) existing.outerHTML = renderStatePill(recordingDisplayState(live));
 }
 
 document.addEventListener("keydown", (e) => {
@@ -184,6 +212,19 @@ async function openRecordingInfo(jobId, opts = {}) {
       `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
   }
+
+  // recordingOne() is a point-in-time REST fetch; recCache carries
+  // whatever SSE RecordingProgress ticks have landed since. Merge so the
+  // modal opens with the freshest known percent instead of a
+  // potentially-stale/zeroed field, matching the Timeline merge in
+  // renderRecordingsTimeline (012-pvr.js).
+  const liveJob = recCache.find((r) => r.id === jobId);
+  if (liveJob) {
+    for (const k of ["download_pct", "download_eta_secs", "download_rate_bps", "bytes_written", "duration_secs"]) {
+      if (liveJob[k] != null) rec[k] = liveJob[k];
+    }
+  }
+  _openRecInfoJobId = jobId;
 
   // Routed through the canonical recordingDisplayState() (012-pvr.js)
   // instead of raw stateLabel/stateClassName, so this modal's pill agrees
