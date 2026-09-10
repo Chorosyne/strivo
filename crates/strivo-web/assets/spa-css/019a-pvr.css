@@ -47,3 +47,34 @@ body.route-watch:not(.watch-rail-open) .ch-plat {
 .watch-rail-toggle[aria-pressed="true"] {
   background: var(--overlay);
 }
+
+/* Persistent full-height grab tab on the collapsed left rail — the 56px
+   icon strip above is still easy to miss entirely; this gives the whole
+   left edge an obvious, high-contrast "there is more here" affordance
+   instead of a small toolbar button users have reported missing. */
+body.route-watch:not(.watch-rail-open) .watch-rail-grab {
+  position: fixed;
+  left: 0;
+  top: 56px; /* below the topbar */
+  bottom: 0;
+  width: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay, rgba(255,255,255,0.08));
+  border: 0;
+  border-right: 1px solid var(--border-light);
+  color: var(--fg);
+  font-size: 1rem;
+  cursor: pointer;
+  z-index: 15;
+  writing-mode: vertical-rl;
+  letter-spacing: 0.05em;
+}
+body.route-watch:not(.watch-rail-open) .watch-rail-grab:hover {
+  background: var(--accent-soft, rgba(176,124,255,0.18));
+}
+body.route-watch.watch-rail-open .watch-rail-grab,
+body:not(.route-watch) .watch-rail-grab {
+  display: none;
+}

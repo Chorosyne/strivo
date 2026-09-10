@@ -90,6 +90,25 @@
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.9rem;
 }
+/* Collapsed state: the head row's toggle stretches to fill the entire
+   32px-wide collapsed column, so the sliver itself reads as an obvious
+   clickable affordance rather than a small icon lost inside it. */
+.player-chat-rail[data-open="false"] .player-chat-rail-head {
+  height: 100%;
+  padding: 0;
+  border-bottom: 0;
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-toggle {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  background: var(--overlay, rgba(255,255,255,0.08));
+  border: 1px solid var(--border-light);
+  font-size: 1.1rem;
+}
+.player-chat-rail[data-open="false"] .player-chat-rail-toggle:hover {
+  background: var(--accent-soft, rgba(176,124,255,0.18));
+}
 .player-chat-rail-title {
   font-weight: 600;
   font-size: 0.85rem;

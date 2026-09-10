@@ -18,7 +18,22 @@
 // the toolbar toggle re-expands it, and the choice persists.
 const WATCH_RAIL_OPEN_KEY = "strivo-player-rail-open";
 function loadWatchRailOpen() {
-  try { return localStorage.getItem(WATCH_RAIL_OPEN_KEY) === "1"; } catch (_) { return false; }
+  try {
+    const leftStored = localStorage.getItem(WATCH_RAIL_OPEN_KEY);
+    if (leftStored === null && localStorage.getItem("strivo-player-chat-rail-open") === null) {
+      // Genuinely first-ever visit to #/watch — neither panel has been
+      // touched yet. Defaulting both to collapsed leaves the wall framed
+      // by two dead-looking slivers with no visible way out. Left rail
+      // opens by default here; the chat rail keeps its own (018-pvr.js)
+      // collapsed default — one obvious way in is enough, and both
+      // panels still get a full-height grab affordance either way (see
+      // 019a-pvr.css / 020-pvr.css).
+      return true;
+    }
+    return leftStored === "1";
+  } catch (_) {
+    return false;
+  }
 }
 let _watchRailOpen = loadWatchRailOpen();
 function isWatchRailOpen() { return _watchRailOpen; }
@@ -46,6 +61,21 @@ let _watchRouteWiringBound = false;
 function enterWatchRoute() {
   document.body.classList.add("route-watch");
   applyWatchRailBodyClass();
+  // Persistent grab-tab affordance for the collapsed left rail — the
+  // 56px toolbar toggle button is easy to miss entirely (reported as
+  // "stays stuck indefinitely"), so the whole left edge gets an obvious
+  // clickable strip whenever the rail is collapsed. Its visibility is
+  // driven entirely by CSS (`body.route-watch:not(.watch-rail-open)`),
+  // so this insert-once DOM node needs no show/hide logic here.
+  if (!document.querySelector(".watch-rail-grab")) {
+    const grab = document.createElement("button");
+    grab.type = "button";
+    grab.className = "watch-rail-grab";
+    grab.textContent = "☰ Channels";
+    grab.title = "Expand channel rail";
+    grab.setAttribute("aria-label", "Expand channel rail");
+    document.body.appendChild(grab);
+  }
   if (_watchRouteWiringBound) return;
   _watchRouteWiringBound = true;
   // Route away → drop both body classes. `teardownAcrossRoutes` (008) is
@@ -57,8 +87,9 @@ function enterWatchRoute() {
   });
   // Toggle button lives in the toolbar (018, rebuilt on every paint), so
   // it's wired once here via delegation rather than re-bound per repaint.
+  // The grab-tab above shares the same toggle — no duplicated logic.
   document.addEventListener("click", (e) => {
-    if (e.target.closest(".watch-rail-toggle")) toggleWatchRail();
+    if (e.target.closest(".watch-rail-toggle") || e.target.closest(".watch-rail-grab")) toggleWatchRail();
   });
   // Collapsed rows drop their visible name — surface it as a tooltip
   // instead of leaving a bare platform glyph with no way to identify

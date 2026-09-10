@@ -331,17 +331,18 @@ test("the rail toggle persists across reload", async ({ page }) => {
   await page.goto("/app#/watch");
   await page.waitForSelector(".ms-leaf");
 
-  // Default is collapsed — the toolbar toggle expands it.
-  await expect(page.locator("body")).not.toHaveClass(/watch-rail-open/);
-  await page.locator(".watch-rail-toggle").click();
+  // A genuinely first-ever visit (no stored rail preference at all) now
+  // defaults the left rail open, so it's never a dead end on first watch.
   await expect(page.locator("body")).toHaveClass(/watch-rail-open/);
+  await page.locator(".watch-rail-toggle").click();
+  await expect(page.locator("body")).not.toHaveClass(/watch-rail-open/);
   const stored = await page.evaluate(() => localStorage.getItem("strivo-player-rail-open"));
-  expect(stored).toBe("1");
+  expect(stored).toBe("0");
 
   await page.reload();
   await page.waitForSelector(".ms-leaf");
-  await expect(page.locator("body")).toHaveClass(/watch-rail-open/);
-  await expect(page.locator(".watch-rail-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("body")).not.toHaveClass(/watch-rail-open/);
+  await expect(page.locator(".watch-rail-toggle")).toHaveAttribute("aria-pressed", "false");
 });
 
 test("fullscreen clears compact mode even on a short tile", async ({ page }) => {
