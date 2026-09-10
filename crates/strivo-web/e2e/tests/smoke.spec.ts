@@ -126,6 +126,37 @@ test("settings page renders real config sections", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "YouTube" })).toBeVisible();
 });
 
+test("first run points platform setup at the in-app wizard", async ({ page }) => {
+  await page.route("**/api/v1/settings", async (route) => {
+    const response = await route.fetch();
+    const settings = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...settings,
+        twitch_configured: false,
+        youtube_configured: false,
+        patreon_configured: false,
+      },
+    });
+  });
+  await page.goto("/app#/library");
+  await expect(page.getByRole("heading", { name: "Welcome to StriVo" })).toBeVisible();
+  const platformStep = page.locator(".fr-detail", { has: page.locator('a[href="#/settings/platforms"]') });
+  await expect(platformStep.locator('a[href="#/settings/platforms"]')).toHaveText("Settings → Platforms");
+  await expect(platformStep).not.toContainText("in a terminal");
+});
+
+test("Settings hands PVR controls to the pages that edit them", async ({ page }) => {
+  await page.goto("/app#/settings/general");
+  await expect(page.locator('.stg-row', { hasText: "Channel poll interval" }).locator('a[href="#/system"]')).toBeVisible();
+
+  await page.goto("/app#/settings/interface");
+  const schedule = page.locator('.stg-row', { hasText: "Scheduled recordings" });
+  await expect(schedule.locator('a[href="#/schedule"]')).toBeVisible();
+  await expect(schedule).not.toContainText("TUI");
+});
+
 test("system page renders health + tasks", async ({ page }) => {
   await page.goto("/app#/system");
   await expect(page.getByRole("heading", { name: "System" })).toBeVisible();
@@ -134,6 +165,7 @@ test("system page renders health + tasks", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Backup" })).toBeVisible();
   await expect(page.locator("#backup-now")).toBeVisible();
   await expect(page.locator(".restore-backup").first()).toBeVisible();
+  await expect(page.locator('#backup-card a[href*="docs/DAEMON.md#lifecycle"]')).toHaveText("restart the daemon manually");
   await expect(page.getByRole("heading", { name: "Blocklist" })).toBeVisible();
   await expect(page.locator(".unblock").first()).toBeVisible();
   // Live-editable poll interval (item 14b).

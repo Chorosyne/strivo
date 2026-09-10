@@ -5,7 +5,7 @@
  "head": "bd17f6107c83e348162974fade941eb42f423ebc",
  "tree_dirty_paths": 1,
  "canonical_manifest": "MANIFEST.md",
- "canonical_sha256": "d50d59216db083b323ff15a7b77437ed73ae073a85e02e26737285f0eceaf817",
+ "canonical_sha256": "fbcb2f286a3646f0c001a1c447ab16134560a2fc9113e2b137f23727e8499a35",
  "evidence_index": "EVIDENCE.json",
  "supersedes": [
   "docs/audits/PHASE0-EXPERIENCE-AUDIT-2026-07-30.md"
@@ -45,6 +45,25 @@
   "NEW TARGET, not a measured SLO or existing promise: at least one CI lane drives the compiled strivo-web binary through a real browser.",
   "NEW TARGET, not a measured SLO or existing promise: the built PVR asset bundle contains zero Creator symbols, verified by a check over the emitted artifact rather than over source — S10 was invisible to every source-level review."
  ],
+ "current_reconciliation": {
+  "revision": "15",
+  "date": "2026-09-08",
+  "head": "84ba7cac901dfc8cc5ca17a40ef8e088246c61c2",
+  "scope": "F-05/F-07 settings implementation with isolated Rust route tests, mock browser checks, and reviewer-run real PVR browser persistence/reset validation. Other retained findings and issued IDs keep their prior scope.",
+  "still_actionable_retained_findings": [],
+  "remediated_with_mock_browser_evidence": "F-03 first-run platform setup, F-06 poll navigation, F-08 stale TUI scheduling copy/audit, and F-09 manual-restart guidance.",
+  "bounded_closed_retained_finding": "F-27 documentation terminology: corrected cursor-pagination wording to bounded offset pagination after confirming PageQuery.cursor is numeric and PersistDb::load_recording_jobs_page executes LIMIT/OFFSET. High-offset latency remains unmeasured.",
+  "retained_settings_findings": {
+   "F-05": {
+    "status": "closed",
+    "acceptance": "Existing writable absolute server-directory validation, persistence, rejection without config mutation, recording sentinel unchanged, and real-browser reload. Requires daemon restart; no file relocation."
+   },
+   "F-07": {
+    "status": "closed",
+    "acceptance": "Selector/bitrate/codec validation and null resets, persistence, rejection without mutation, real-browser reload/reset. Requires restart; encoder availability and live capture across all platforms not tested."
+   }
+  }
+ },
  "issues": [
   {
    "id": "S01",
@@ -1410,5 +1429,17 @@
     "crates/strivo-web/assets/spa.js"
    ]
   }
- ]
+ ],
+ "prior_reconciliation_14": {
+  "revision": "14",
+  "date": "2026-09-08",
+  "head": "84ba7cac901dfc8cc5ca17a40ef8e088246c61c2",
+  "scope": "Static re-read of retained non-Creator PHASE0 PVR findings; it does not alter the historical status of the 41 issued IDs.",
+  "still_actionable_retained_findings": [
+   "F-05: recording_dir is display-only and is excluded from the settings-update allowlist.",
+   "F-07: recording codec and bitrate controls remain TOML-only."
+  ],
+  "remediated_with_mock_browser_evidence": "F-03 first-run platform setup, F-06 poll navigation, F-08 stale TUI scheduling copy/audit, and F-09 manual-restart guidance.",
+  "bounded_closed_retained_finding": "F-27 documentation terminology: corrected cursor-pagination wording to bounded offset pagination after confirming PageQuery.cursor is numeric and PersistDb::load_recording_jobs_page executes LIMIT/OFFSET. High-offset latency remains unmeasured."
+ }
 }

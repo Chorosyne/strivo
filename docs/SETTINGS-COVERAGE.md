@@ -1,133 +1,84 @@
-# Settings Coverage Audit (M2 Phase 1)
+# PVR web settings coverage
 
-Walks every field in `src/config/`. Tags follow the ROADMAP M2 audit
-convention:
+Reviewed 2026-09-08 against the SPA modules and Rust configuration/update
+handlers in the F-05/F-07 remediation worktree based on `84ba7ca`. “Editable” means
+there is a browser control and a corresponding backend mutation. Verification
+for F-05/F-07 is recorded in the web-surface manifest; the other inventory rows
+remain source-level observations.
 
-| Tag | Meaning |
-|---|---|
-| `exposed` | Reachable from the TUI settings tab today |
-| `hidden` | Settable in `config.toml` only; not in the TUI |
-| `derived` | Computed from another field (not user-authored) |
-| `secret` | Credential — never displayed; masked everywhere |
+The previous M2 TUI audit is retained in
+[the historical snapshot](archive/SETTINGS-COVERAGE-M2.md). Its keyboard bindings,
+plugin ownership, defaults and field counts do not describe the current product.
+Creator plugin settings are outside this PVR review.
 
-The "Target group" column is where the field lands in the M2.2 redesign
-(Recording / Archiver / Crunchr / Notifications / Output / Theme /
-Keymap).
+| Coverage | Meaning |
+| --- | --- |
+| Editable | A control exists in the current web UI. |
+| Display only | Visible in the web UI, without an editor at that location. |
+| TOML only | No matching PVR browser editor was found. |
+| Runtime | Internal or generated state, not a settings control. |
 
----
+## Root configuration
 
-## `AppConfig` (root)
+| Configuration | Current surface and limits |
+| --- | --- |
+| `recording_dir` | Editable in Settings → Recording, linked from General and onboarding. Use an existing absolute directory on the server; the backend checks directory access and writability. Saving does not move existing files. Restart the daemon to use the new destination. |
+| `poll_interval_secs` | Editable on System, with a 15-second backend minimum; displayed in Settings → General. |
+| `twitch`, `youtube`, `patreon` | Settings → Platforms Configure/Reconfigure wizards accept client ID and secret. Secrets use password inputs; this does not imply a security review of every credential path. |
+| `recording` | Settings → Recording exposes the subset listed below. |
+| `theme` | Retained config type; no PVR theme editor found. The removed TUI theme picker is not a web feature. |
+| `ui` | Settings → Interface has Reduce motion and Verbose status toggles. Reduce motion also updates the root document class; downstream verbose-status behavior was not verified. |
+| `auto_record_channels` | Managed through Library channel actions; General displays the count. Per-channel configuration is not automatically derived state. |
+| `capture_profiles` | Recording can add a named quality tier and delete profiles. The Rust model also supports format overrides, transcode, audio-only, transcript and episode cutoff; the simple add form does not expose all of them. |
+| `auto_pull_creators` | Retained Patreon auto-pull list; no matching PVR browser mutation was found in this review. |
+| `schedule` | Monitor (`#/schedule`) displays advanced cron entries; add entries through `[[schedule]]` in TOML. Interface displays their count. |
+| `extensions` | Flattened plugin-owned tables preserved on config round trips. Core no longer has typed `crunchr` or `archiver` fields. |
+| `web.api_key`, `web.session_secret` | Generated/persisted authentication material; no general settings editor. |
+| `notifications` | Settings → Notifications exposes desktop master, go-live, recording-finished, recording-failed and VOD-ready toggles, plus webhook enable and URL. |
+| `monitor_limits` | Monitor exposes maximum concurrent recordings and reserved disk GB. Backend ranges are 0–64 and 0–100000 respectively; zero disables the cap. |
+| `plugin_toggles` | Retained in config; Settings → Plugins is excluded from PVR navigation. |
+| `config_path` | Runtime load/save location, skipped by serialization. |
 
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `recording_dir` | `PathBuf` | `~/Videos/StriVo` | hidden | Recording | Used by FFmpeg output and recording scanner. Path editor needed. |
-| `poll_interval_secs` | `u64` | `60` | hidden | Output | Min clamped to 15s by monitor. Int editor. |
-| `twitch` | `Option<TwitchConfig>` | absent | secret | — | Wizard owns; never shown in settings. |
-| `youtube` | `Option<YouTubeConfig>` | absent | secret | — | Same. |
-| `patreon` | `Option<PatreonConfig>` | absent | secret | — | Same. |
-| `recording` | `RecordingConfig` | default | partial | Recording | `transcode` exposed via row + `t`. Codec/bitrate/container hidden. |
-| `theme` | `ThemeRef` | `Named("neon")` | exposed | Theme | Ctrl+T picker exists. Settings row also cycles. |
-| `ui` | `UiConfig` | default | hidden | Output | `reduce_motion` + `verbose_status`. Bool toggles needed. |
-| `auto_record_channels` | `Vec<AutoRecordEntry>` | empty | derived | — | Maintained via Sidebar `a`. Not user-authored in the TUI. |
-| `schedule` | `Vec<ScheduleEntry>` | empty | exposed | — | Schedule pane (M1.3.a) renders / edits this. |
-| `crunchr` | `CrunchrConfig` | default | partial | Crunchr | Plugin config modal owns most fields. Settings tab will surface read-only summary. |
-| `archiver` | `ArchiverConfig` | default | hidden | Archiver | All fields hidden today. |
-| `config_path` | `Option<PathBuf>` | runtime | derived | — | `#[serde(skip)]` — not a user field. |
+## Recording and platform details
 
-## `RecordingConfig`
+| Configuration | Coverage |
+| --- | --- |
+| `recording.filename_template` | Editable text field with token browser. |
+| `recording.format.container` | Editable Container select; API path is `recording.container`, accepting `matroska`, `mp4`, `webm`. |
+| `recording.transcode` | Editable toggle. |
+| `recording.twitch_live_from_start` | Editable Record from start toggle. |
+| `recording.auto_vod_backfill`, `recording.auto_trim_ads` | Editable toggles. |
+| `recording.ad_min_secs`, `recording.vod_backfill_delay_secs` | TOML only. |
+| `recording.format.format`, `bitrate_kbps`, `video_codec`, `audio_codec` | Editable under Settings → Recording → Advanced. Empty/reset removes the global override (`null` in the update API); channel/profile overrides still take precedence. Restart the daemon after saving. Codec names are validated for shape, not availability in the installed FFmpeg build. |
+| `youtube.cookies_path`, `youtube.websub_callback_url` | Editable optional fields in the YouTube wizard. |
+| `patreon.cookies_path` | Editable optional field in the Patreon wizard. |
+| `patreon.poll_interval_secs` | No platform-wizard field found; distinct from the System channel poll interval. |
 
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `transcode` | `bool` | `false` | exposed | Recording | Settings row 3 + `t` hotkey. |
-| `filename_template` | `String` | `{channel}_{date}_{title}.mkv` | hidden | Recording | String editor needed. |
-| `format` | `RecordingFormat` | default | hidden | Recording | Nested — see below. |
+Interface layout order, grouping preferences and multi-view quality are
+browser-local controls. They should not be counted as fields persisted through
+the daemon configuration API.
 
-### `RecordingFormat` (nested under `[recording.format]`)
+## Evidence and remaining work
 
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `format` | `Option<String>` | `"best"` | hidden | Recording | yt-dlp `-f` selector. String editor. |
-| `bitrate_kbps` | `Option<u32>` | none | hidden | Recording | Int editor; only meaningful for transcode paths. |
-| `container` | `Option<String>` | `"mkv"` | hidden | Recording | Enum picker (mkv / mp4). |
-| `video_codec` | `Option<String>` | `"copy"` | hidden | Recording | Enum picker (copy / h264_nvenc / libx264 / …). |
-| `audio_codec` | `Option<String>` | `"copy"` | hidden | Recording | Enum picker (copy / aac / …). |
+The current inventory was traced through:
 
-## `CrunchrConfig`
+- [`src/config/mod.rs`](../src/config/mod.rs): configuration types and ownership.
+- [`032-pvr.js`](../crates/strivo-web/assets/spa/032-pvr.js): settings navigation and control wiring.
+- [`034-pvr.js`](../crates/strivo-web/assets/spa/034-pvr.js): General, Notifications, Recording and Platforms controls.
+- [`034b-pvr.js`](../crates/strivo-web/assets/spa/034b-pvr.js): Interface and Advanced controls.
+- [`034d-pvr.js`](../crates/strivo-web/assets/spa/034d-pvr.js): platform wizards, System and Monitor editors.
+- [`routes/api.rs`](../crates/strivo-web/src/routes/api.rs): setting allowlist and poll-interval persistence.
 
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `enabled` | `bool` | `false` | exposed | Crunchr | Plugin config modal. |
-| `configured` | `bool` | `false` | derived | — | Set by the first-run modal — not user-authored. |
-| `backend` | `String` | `"whisper-cli"` | exposed | Crunchr | Enum picker in plugin config modal. |
-| `api_key_env` | `Option<String>` | none | exposed | Crunchr | String in plugin config modal. |
-| `endpoint` | `Option<String>` | none | exposed | Crunchr | Same. |
-| `whisper_model` | `Option<String>` | none | hidden | Crunchr | String editor. |
-| `whisper_timeout_secs` | `u64` | `7200` | hidden | Crunchr | Int editor. |
-| `analysis` | `CrunchrAnalysisConfig` | default | partial | Crunchr | Sub-table — see below. |
-| `tandem_channels` | `Vec<String>` | empty | exposed | Crunchr | Plugin config modal — multi-select. |
-| `tandem_playlists` | `Vec<String>` | empty | exposed | Crunchr | Same. |
+Recording workers retain their startup configuration. The directory and new
+advanced fields return `restart_required: true` when saved; reload the daemon
+using [the lifecycle instructions](DAEMON.md#lifecycle), after finishing or
+stopping active captures. A browser reload only reads the saved values.
 
-### `CrunchrAnalysisConfig` (nested under `[crunchr.analysis]`)
+The bitrate is a yt-dlp selection preference and an FFmpeg encoding target for
+the supported H.264 paths (`libx264` / `h264_nvenc`), not a promise that every
+capture or codec will produce that bitrate. The yt-dlp selector is passed to
+yt-dlp; an unavailable format or encoder may still fail when capture starts.
 
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `enabled` | `bool` | `false` | hidden | Crunchr | Bool toggle. |
-| `openrouter_api_key_env` | `Option<String>` | none | hidden | Crunchr | String editor. |
-| `model` | `String` | `mistralai/mistral-7b-instruct` | hidden | Crunchr | String editor. |
-
-## `ArchiverConfig`
-
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `enabled` | `bool` | `false` | hidden | Archiver | Bool toggle. |
-| `configured` | `bool` | `false` | derived | — | Same as Crunchr. |
-| `archive_dir` | `PathBuf` | `~/Videos/StriVo/Archives` | hidden | Archiver | Path editor. |
-| `format` | `String` | `"best"` | hidden | Archiver | yt-dlp selector. String editor. |
-| `concurrent_fragments` | `u32` | `4` | hidden | Archiver | Int editor; clamp 1..=16. |
-| `rate_limit` | `String` | `""` | hidden | Archiver | yt-dlp rate-limit (`"5M"`); string editor. |
-| `tandem_channels` | `Vec<String>` | empty | hidden | Archiver | Multi-select. |
-| `tandem_playlists` | `Vec<String>` | empty | hidden | Archiver | Same. |
-
-## `UiConfig`
-
-| Field | Type | Default | Today | Target group | Notes |
-|---|---|---|---|---|---|
-| `reduce_motion` | `bool` | `false` | exposed | Output | Settings row 5. Also `STRIVO_REDUCE_MOTION` env. |
-| `verbose_status` | `bool` | `false` | hidden | Output | Bool toggle. |
-
-## `TwitchConfig` / `YouTubeConfig` / `PatreonConfig` (secret)
-
-All credential structs (`client_id`, `client_secret`, `cookies_path`,
-`poll_interval_secs`) are managed by the wizard or via env-var fallback.
-The settings tab will show a per-platform connection-state row with a
-"reconnect" action that re-runs device-code, but never displays the
-secret values.
-
----
-
-## Decisions falling out of the audit
-
-1. **State vs config split** (M2.1.b) — `auto_record_channels` is
-   derived (user toggles via Sidebar `a`), so it stays in `config.toml`
-   but its mutation site has to keep the file in sync. Watch flags +
-   last-used theme + recording-list cursor are TUI-managed; move them
-   to `state.json`.
-2. **Plugin sub-configs stay in plugin modals.** Settings tab gets a
-   read-only summary row per plugin (`Crunchr: voxtral-api, analysis
-   on`) that opens the plugin config modal on Enter.
-3. **`configured: bool` fields** are derived and never user-edited.
-   Hide them from the TUI but keep them in TOML.
-4. **`config_path`** is `#[serde(skip)]` — a runtime placeholder.
-
-## Counts
-
-- `AppConfig`: 13 fields (3 secret, 1 derived skip-field, 9 candidates for the tab)
-- `RecordingConfig` + `RecordingFormat`: 8 fields
-- `CrunchrConfig` + `analysis`: 13 fields
-- `ArchiverConfig`: 8 fields
-- `UiConfig`: 2 fields
-- Credential structs: 7 fields (all secret)
-
-**Total ~51 user-authored fields.** TUI surfaces ~5 today; M2 closes
-the gap by category, not by row count — the Crunchr modal already does
-most of its 13 fields via a dedicated modal, for instance.
+This replaces the obsolete exposure claims in F-08 and records the F-05/F-07
+controls. It does not assert exhaustive coverage of nested capture-profile and
+plugin fields or validate every platform/encoder combination.

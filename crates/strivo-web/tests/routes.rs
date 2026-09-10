@@ -13,6 +13,7 @@
 use axum::body::to_bytes;
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 use strivo_web::auth::ApiKey;
@@ -26,6 +27,32 @@ fn key() -> ApiKey {
 /// stack from `server::build_router`), backed by a disconnected IPC client.
 fn app() -> axum::Router {
     build_router(AppState::test_state("route-shape-test-key"))
+}
+
+/// A real router bound to a test-only config file. Settings tests must never
+/// fall through to the user's XDG configuration directory.
+fn app_with_config(api_key: &str, config_path: std::path::PathBuf) -> axum::Router {
+    let mut state = AppState::test_state(api_key);
+    state.config_path = Some(Arc::new(config_path));
+    build_router(state)
+}
+
+async fn update_setting_request(
+    app: axum::Router,
+    api_key: &str,
+    path: &str,
+    value: serde_json::Value,
+) -> axum::response::Response {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/settings/update")
+        .header("x-api-key", api_key)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::json!({ "path": path, "value": value }).to_string(),
+        ))
+        .unwrap();
+    app.oneshot(request).await.unwrap()
 }
 
 /// Send `method path` through `router` with an `X-Api-Key: bogus-key-value`
@@ -106,6 +133,141 @@ async fn body_to_bytes_helper_compiles() {
     let body = Body::from("hello");
     let bytes = to_bytes(body, usize::MAX).await.unwrap();
     assert_eq!(&bytes[..], b"hello");
+}
+
+#[tokio::test]
+async fn settings_update_persists_recording_destination_and_format_overrides() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let config_path = sandbox.path().join("config.toml");
+    let original_dir = sandbox.path().join("original-recordings");
+    let new_dir = sandbox.path().join("new-recordings");
+    std::fs::create_dir_all(&original_dir).unwrap();
+    std::fs::create_dir_all(&new_dir).unwrap();
+    let existing_recording = new_dir.join("existing-recording.mkv");
+    std::fs::write(&existing_recording, b"recording bytes").unwrap();
+    let cfg = strivo_core::config::AppConfig {
+        recording_dir: original_dir,
+        ..Default::default()
+    };
+    cfg.save(Some(&config_path)).unwrap();
+
+    let api_key = "settings-persistence-test-key";
+    let app = app_with_config(api_key, config_path.clone());
+    for (path, value) in [
+        ("recording_dir", serde_json::json!(new_dir)),
+        (
+            "recording.format.format",
+            serde_json::json!("bestvideo[height<=720]+bestaudio/best"),
+        ),
+        ("recording.format.bitrate_kbps", serde_json::json!(4500)),
+        ("recording.format.video_codec", serde_json::json!("libx264")),
+        ("recording.format.audio_codec", serde_json::json!("aac")),
+    ] {
+        let response = update_setting_request(app.clone(), api_key, path, value).await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{path}");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["restart_required"], true, "{path}");
+    }
+
+    let saved = strivo_core::config::AppConfig::load(Some(&config_path)).unwrap();
+    assert_eq!(saved.recording_dir, new_dir);
+    assert_eq!(
+        saved.recording.format.format.as_deref(),
+        Some("bestvideo[height<=720]+bestaudio/best")
+    );
+    assert_eq!(saved.recording.format.bitrate_kbps, Some(4500));
+    assert_eq!(
+        saved.recording.format.video_codec.as_deref(),
+        Some("libx264")
+    );
+    assert_eq!(saved.recording.format.audio_codec.as_deref(), Some("aac"));
+    assert_eq!(
+        std::fs::read(&existing_recording).unwrap(),
+        b"recording bytes"
+    );
+    assert_eq!(std::fs::read_dir(&new_dir).unwrap().count(), 1);
+
+    for path in [
+        "recording.format.format",
+        "recording.format.bitrate_kbps",
+        "recording.format.video_codec",
+        "recording.format.audio_codec",
+    ] {
+        let response =
+            update_setting_request(app.clone(), api_key, path, serde_json::Value::Null).await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "reset {path}");
+    }
+    let reset = strivo_core::config::AppConfig::load(Some(&config_path)).unwrap();
+    assert!(reset.recording.format.format.is_none());
+    assert!(reset.recording.format.bitrate_kbps.is_none());
+    assert!(reset.recording.format.video_codec.is_none());
+    assert!(reset.recording.format.audio_codec.is_none());
+}
+
+#[tokio::test]
+async fn settings_update_rejects_invalid_recording_values_without_mutating_config() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let config_path = sandbox.path().join("config.toml");
+    let recording_dir = sandbox.path().join("recordings");
+    let missing_dir = sandbox.path().join("missing-recordings");
+    let regular_file = sandbox.path().join("not-a-directory");
+    std::fs::create_dir_all(&recording_dir).unwrap();
+    std::fs::write(&regular_file, b"not a directory").unwrap();
+    let cfg = strivo_core::config::AppConfig {
+        recording_dir,
+        recording: strivo_core::config::RecordingConfig {
+            format: strivo_core::config::RecordingFormat {
+                format: Some("best".into()),
+                bitrate_kbps: Some(1000),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    cfg.save(Some(&config_path)).unwrap();
+    let before = std::fs::read(&config_path).unwrap();
+
+    let api_key = "settings-rejection-test-key";
+    let app = app_with_config(api_key, config_path.clone());
+    let unauthorized = update_setting_request(
+        app.clone(),
+        "wrong-settings-rejection-test-key",
+        "recording.format.format",
+        serde_json::json!("bestaudio"),
+    )
+    .await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(std::fs::read(&config_path).unwrap(), before);
+    for (path, value) in [
+        ("recording_dir", serde_json::Value::Null),
+        ("recording_dir", serde_json::json!("")),
+        ("recording_dir", serde_json::json!("/tmp/recordings\n")),
+        ("recording_dir", serde_json::json!("relative/recordings")),
+        ("recording_dir", serde_json::json!(missing_dir)),
+        ("recording_dir", serde_json::json!(regular_file)),
+        ("recording.format.format", serde_json::json!("\n")),
+        ("recording.format.bitrate_kbps", serde_json::json!(0)),
+        (
+            "recording.format.video_codec",
+            serde_json::json!("libx264 -crf 18"),
+        ),
+        (
+            "recording.format.video_codec",
+            serde_json::json!("libx264\n"),
+        ),
+        ("recording.format.audio_codec", serde_json::json!("")),
+    ] {
+        let response = update_setting_request(app.clone(), api_key, path, value).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(
+            std::fs::read(&config_path).unwrap(),
+            before,
+            "{path} mutated config"
+        );
+    }
 }
 
 // ── S01/S02 acceptance: bogus X-Api-Key must yield 401, specifically ─────
@@ -758,5 +920,93 @@ async fn shared_jobs_db_handle_is_initialised_by_a_real_route() {
         resp2.status(),
         StatusCode::OK,
         "second /api/v1/history call must succeed"
+    );
+}
+
+/// A terminal job can be evicted from the daemon snapshot while its journal
+/// row and media file remain.  Drive the real HTTP router with its IPC
+/// deliberately disconnected to prove archive list/detail and range playback
+/// resolve from the durable DB rather than accidentally falling back to the
+/// bounded live snapshot.
+#[tokio::test]
+async fn durable_archive_entry_lists_details_and_range_downloads_without_snapshot() {
+    use strivo_core::platform::PlatformKind;
+    use strivo_core::recording::job::{RecordingJob, RecordingState};
+    use strivo_core::recording::persist::{PersistDb, PersistedJob};
+
+    let api_key = "durable-archive-test-key";
+    let dir = tempfile::tempdir().unwrap();
+    let recording_dir = dir.path().join("recordings");
+    std::fs::create_dir_all(&recording_dir).unwrap();
+    let media = recording_dir.join("evicted.mkv");
+    std::fs::write(&media, b"durable archive bytes").unwrap();
+    let config_path = dir.path().join("config.toml");
+    let cfg = strivo_core::config::AppConfig {
+        recording_dir: recording_dir.clone(),
+        ..Default::default()
+    };
+    cfg.save(Some(&config_path)).unwrap();
+
+    let mut job = RecordingJob::new(
+        "archive-channel".into(),
+        "Archive channel".into(),
+        PlatformKind::Twitch,
+        media,
+        false,
+        Some("Evicted archive".into()),
+    );
+    job.state = RecordingState::Finished;
+    job.bytes_written = 21;
+    let db_path = dir.path().join("jobs.db");
+    PersistDb::open(&db_path)
+        .unwrap()
+        .upsert_job(&PersistedJob {
+            id: job.id.to_string(),
+            kind: "Recording".into(),
+            payload: serde_json::to_string(&job).unwrap(),
+            state: "finished".into(),
+            attempts: 0,
+            last_error: None,
+            episode_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let mut state = AppState::test_state(api_key);
+    state.config_path = Some(Arc::new(config_path));
+    state.jobs_db_path = Arc::new(db_path);
+    let router = build_router(state);
+    for path in [
+        "/api/v1/recordings?limit=1".to_string(),
+        format!("/api/v1/recordings/{}", job.id),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("x-api-key", api_key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/recordings/{}/download", job.id))
+                .header("x-api-key", api_key)
+                .header(header::RANGE, "bytes=8-14")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+        b"archive"
     );
 }

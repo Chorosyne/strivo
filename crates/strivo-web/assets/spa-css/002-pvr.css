@@ -522,6 +522,16 @@ body.modal-open { overflow: hidden; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .stg-text:focus { outline: 0; border-color: var(--accent2); }
+.stg-field { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2, 8px); }
+.stg-field .stg-text { flex: 1 1 280px; }
+.stg-field-error { width: 100%; color: var(--recording); font-size: var(--text-caption, 13px); margin-top: 2px; }
+.stg-reset { white-space: nowrap; }
+.stg-effect-note {
+  margin: var(--space-3, 12px) var(--space-4, 16px);
+  color: var(--muted);
+  font-size: var(--text-caption, 13px);
+  line-height: 1.45;
+}
 .stg-select {
   padding: 0.35rem 0.55rem;
   border: 1px solid var(--border-light);

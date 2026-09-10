@@ -1,85 +1,77 @@
 # Daemon mode
 
-strivo runs as a single foreground TUI by default. For unattended recording
-on a server, or to keep monitoring alive while you close the terminal, run
-the daemon in the background and attach a TUI client when you want one.
-
-> **Daemon mode is Unix-only in 0.3.0.** Linux and macOS work; Windows
-> users can run the TUI as a self-contained foreground process but cannot
-> attach to a daemon yet — the IPC layer uses Unix sockets. Named-pipe
-> support is on the roadmap.
+Plain `strivo` runs the daemon and browser-served web UI together. For separate
+processes, run `strivo daemon` in the foreground and `strivo serve` for the web
+server. The application has no terminal UI. Unix uses a local socket; Windows
+uses a named pipe.
 
 ## Lifecycle
 
-```bash
-strivo daemon start      # spawn the background service
-strivo status            # report running / not running, pid, socket
-strivo daemon stop       # graceful shutdown (SIGTERM)
-strivo daemon install    # write a systemd --user unit file
+```sh
+strivo                 # daemon + web UI
+strivo daemon          # foreground daemon only, for a supervisor
+strivo serve           # web server for an existing daemon
+strivo status          # report liveness, PID, IPC endpoint and auth state
+strivo enable          # install/start background service (Linux or Windows)
+strivo disable         # stop/remove the installed service
 ```
 
-`strivo daemon start` forks a background process that opens the IPC socket
-and begins polling configured channels. When the daemon is running,
-launching `strivo` (no subcommand) connects as a TUI client; multiple
-clients can attach concurrently.
+`strivo daemon` has no `start`, `stop`, `restart` or `install` subcommands.
+Use the supervisor that launched it to stop or restart it.
 
-Shutdown is graceful: `stop` sends SIGTERM, the daemon finishes any
-in-flight network requests, snapshots its recording journal, and unlinks
-the socket and pid file. Active ffmpeg processes are **not** killed —
-they continue writing to disk, but the post-recording event chain
-(transcribe, archive) is interrupted and resumes on the next start.
+For a Linux service installed by `strivo enable`:
 
-## Socket and pid
+```sh
+systemctl --user restart strivo.service
+strivo status
+```
 
-| Resource | Default path |
-|----------|--------------|
-| Unix socket | `${XDG_RUNTIME_DIR:-~/.cache/strivo}/strivo/daemon.sock` |
-| Pid file | `${XDG_RUNTIME_DIR:-~/.cache/strivo}/strivo/daemon.pid` |
-| Log | `~/.local/state/strivo/strivo.log` |
+For a foreground instance, stop it with Ctrl+C in its terminal, wait for it to
+exit, then run the same command again (including any `--config` argument).
+For Docker, Windows Task Scheduler or another supervisor, restart the existing
+instance through that supervisor. Restart the process running the daemon, not
+only a separate `strivo serve` process.
 
-Stale sockets and pid files are swept on start; a pid is treated as stale
-when `kill(pid, 0)` succeeds but `connect(2)` to the socket fails.
+Recording-directory and advanced format changes saved in Settings require a
+daemon restart: recording workers retain their startup configuration. Finish or
+stop active captures before restarting; restarting is not a seamless handoff
+for an in-flight recording. Saving a different recording directory does not
+move or delete existing files. After restoring a backup, restart the daemon to
+load the restored configuration and database state.
 
-The socket is created with the process umask (typically `0600`), so only
-the user that started the daemon can attach.
+## State and IPC
+
+On Linux, the daemon socket and PID file are `strivo.sock` and `strivo.pid`
+under `${XDG_STATE_HOME:-~/.local/state}/strivo`. Paths on other platforms use
+`directories::ProjectDirs`; `strivo status` reports the current IPC endpoint.
+Configuration, state and recordings are separate locations; see
+[FIRST-RUN.md](FIRST-RUN.md).
+
+IPC uses newline-delimited JSON defined in [`src/ipc.rs`](../src/ipc.rs), with
+`ClientMessage` requests and `ServerMessage` responses. The `Hello` handshake
+carries a protocol version; use matching daemon and web/CLI binaries.
 
 ## systemd integration
 
-```bash
-strivo daemon install
-systemctl --user enable --now strivo.service
-journalctl --user -u strivo -f
+`strivo enable` installs and starts a `strivo.service` user unit. By default it
+runs the combined daemon and web UI; `strivo enable --daemon-only` selects the
+daemon-only process. The unit uses `Restart=always`, a five-second restart delay
+and a 30-second stop timeout.
+
+```sh
+journalctl --user -u strivo.service -f
 ```
 
-The generated unit is a `Type=simple` user service that execs
-`strivo daemon start` and restarts on failure with a 30-second back-off.
-It does **not** require `linger`; if you want the daemon to survive logout,
-enable linger separately:
+To keep a user service running after logout, enable lingering separately:
 
-```bash
+```sh
 loginctl enable-linger "$USER"
 ```
 
-## IPC protocol
-
-The protocol is a length-prefixed JSON stream defined in
-[`src/ipc.rs`](../src/ipc.rs). The two top-level frames are
-`ClientMessage` (TUI → daemon) and `ServerMessage` (daemon → TUI),
-both `#[derive(Serialize, Deserialize)]` so they round-trip via
-`serde_json`. There is no version handshake yet; the protocol is
-considered unstable until 0.5.0 and may break between alpha releases.
-Pin the daemon and the TUI to the same commit if you build either from
-source.
-
 ## Health checks
 
-```bash
-strivo status               # exits 0 if running, 3 if not
-```
-
-Use that exit code in monitoring scripts. For Prometheus / observability
-integration the recommended pattern today is to tail `strivo.log` and
-match on `daemon: ` lines — a metrics endpoint is not yet exposed.
+`strivo status` exits 0 when the daemon is running and 3 when it is not.
+The web UI's System page also exposes health and log information.
 
 ### Platform auth state
 
@@ -125,13 +117,10 @@ device-code login on its own.
 
 ## Troubleshooting
 
-- **`failed to bind socket: Address already in use`** — a previous
-  `strivo daemon` crashed without unlinking. Run `strivo daemon stop`
-  (it sweeps stale sockets even when the daemon is gone) and retry.
-- **TUI shows "daemon disconnected — retrying in 5s"** — the daemon
-  exited or its socket disappeared. The TUI reconnects with exponential
-  back-off (1 / 2 / 5 / 10 / 30 s); check `journalctl --user -u strivo`
-  for the crash reason.
-- **`failed to register SIGTERM handler`** — extremely rare; usually a
-  seccomp filter blocks `sigaction(2)`. Run the daemon without the
-  filter or report the platform.
+- **Address already in use:** check `strivo status` and the supervisor before
+  starting another instance. Do not delete the socket of a running daemon.
+- **Web UI cannot reach the daemon:** check that both processes use the same
+  user and state-directory environment, then inspect the daemon logs.
+- **Saved recording settings have not taken effect:** restart the daemon using
+  the lifecycle instructions above. A browser reload alone does not replace
+  the recording workers' startup configuration.

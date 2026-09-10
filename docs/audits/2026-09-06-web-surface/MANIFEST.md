@@ -1,5 +1,74 @@
 # StriVo web-surface remediation manifest — 2026-09-06
 
+## Current reconciliation — revision 15 (2026-09-08)
+
+**F-05 and F-07 are closed with validated settings controls and executed
+persistence evidence.** Settings → Recording now edits an existing writable
+absolute directory on the server, plus the yt-dlp format selector, optional
+bitrate preference, and video/audio codec overrides. Reset or empty optional
+fields remove their global override. General and onboarding link to this editor.
+Invalid values are rejected without changing configuration; the browser shows
+an inline error and restores the last saved value after server rejection.
+
+These changes require a **daemon restart** because recording workers retain
+startup configuration. Saving never moves existing recordings or changes an
+active capture. The response includes `restart_required: true`, and persistent
+UI guidance links to the corrected [daemon lifecycle guide](../../DAEMON.md#lifecycle).
+The directory must already exist. Codec/selector validation checks input shape,
+not whether every encoder/format is available; channel/profile overrides retain
+precedence. Bitrate is a yt-dlp selection preference or a supported H.264
+encoding target, not a universal output-size cap.
+
+Acceptance: default route tests passed 16/16 and Creator route tests 21/21;
+removing the five update handlers made the persistence regression fail (400
+instead of 202), and restoring them made it pass. Browser mock tests passed
+147 with 1 existing skip. The reviewer built the PVR binary and ran all six
+real-server tests successfully, including a new browser round trip that saves
+all five values, reloads them, resets the four optional fields, and reloads
+again. All config/recording fixtures were temporary; no production daemon or
+recordings were used. Formatting and focused Clippy checks in both feature
+configurations pass. Exact commands and source fingerprints are in EVIDENCE.json.
+
+The issued-ID register remains 40 closed / 1 open (CE03), without renumbering.
+Closing these two retained PHASE0 findings does not adjudicate every older
+finding, reverify all prior CI jobs, or change Creator release scope. Revision
+14 below records the earlier pass, when F-05/F-07 were still open.
+
+## Prior reconciliation — revision 14 (2026-09-08)
+
+**The issued register is 40 closed / 1 open (CE03).** That count describes
+the 41 stable IDs in this manifest; it does not close the 21 PHASE0 findings
+this audit deliberately left unadjudicated. A fresh source re-read at
+`84ba7ca` found five retained PVR gaps: F-03 first-run platform setup was stale;
+F-05 leaves `recording_dir` display-only and outside the update allowlist; F-06
+split polling display from its editor; F-07 leaves advanced recording
+codecs/bitrate TOML-only; and F-09 gave an unlinked restart instruction after
+backup restore. F-03/F-06/F-09 now have mock-browser acceptance evidence
+(31 passing smoke tests at the current worktree); F-08's stale TUI audit and
+Scheduling copy were corrected in the same pass. F-05 and F-07 remain actual
+open product gaps.
+
+F-27's documentation correction is complete: the API field named `cursor` is a
+numeric offset and durable history executes `LIMIT ... OFFSET`, not keyset
+pagination. High-offset latency remains unmeasured, so changing the pagination
+shape is still a bounded performance decision. Release-check instructions now
+build the web artifact and run its emitted-bundle guard rather than
+syntax-checking the deleted `assets/spa.js` source file.
+
+Final local verification: release workspace tests, Creator debug tests, formatting
+and both CI Clippy configurations pass. The mock browser suite passed 145 tests
+with 1 skipped; the real PVR lane passed 5/5. Its new edition assertion rejects
+the Creator executable in an executed negative control. The emitted-bundle guard
+passes over 183 Creator-only names and 11 vocabulary terms. Licence backend
+typechecking and all 22 tests pass. MSRV and Windows checks were not rerun, and
+these local results do not claim a new green GitHub Actions run.
+
+The historical assessment and revision record follow. They preserve the
+evidence at the revisions where it was collected; they are not claims about the
+current working tree unless revision 14 says so.
+
+## Historical assessment and revisions
+
 **Assessment: the PVR core is well-built and the web surface is not release-ready, because HTTP
 authentication is enforced per-handler with no route-level invariant and at least four registered
 routes reach real behaviour without it.** The largest remaining risks are (1) an unauthenticated

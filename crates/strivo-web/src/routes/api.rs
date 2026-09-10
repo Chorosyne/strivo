@@ -1570,11 +1570,11 @@ struct SettingsUpdatePayload {
 /// `POST /api/v1/settings/update` — persist a single config knob.
 ///
 /// Strict allow-list: anything not enumerated here is rejected with 400.
-/// Each entry validates type, applies it to the loaded AppConfig, and
-/// saves. None of these need a live daemon-side apply — they're read
-/// at the start of each new recording / archive job, or by the SPA on
-/// next /settings fetch. The poll-interval knob keeps its own endpoint
-/// because it has to be re-armed in the monitor immediately.
+/// Each entry validates type, applies it to the loaded AppConfig, and saves.
+/// The daemon owns a startup-time config snapshot, so recording destination
+/// and format changes take effect only after it restarts; the response makes
+/// that fact explicit. The poll-interval knob keeps its own endpoint because
+/// it has to be re-armed in the monitor immediately.
 async fn update_setting(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -1589,10 +1589,37 @@ async fn update_setting(
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     };
 
-    // Allow-list. Booleans and small ints only — anything that could
-    // break recordings on a typo (paths, templates, format strings)
-    // stays out until phase 2c adds proper validation + a wizard.
+    // Allow-list. Every entry owns its type and safety validation here;
+    // recording paths and process arguments have stricter validators below.
+    let restart_required = matches!(
+        body.path.as_str(),
+        "recording_dir"
+            | "recording.format.format"
+            | "recording.format.bitrate_kbps"
+            | "recording.format.video_codec"
+            | "recording.format.audio_codec"
+    );
     let result: Result<(), String> = match body.path.as_str() {
+        // The daemon keeps a config snapshot while it is running. Persisting
+        // this never moves existing recordings or changes an active capture;
+        // a restart is required before newly-started captures use it.
+        "recording_dir" => take_recording_dir(&body.value).map(|dir| cfg.recording_dir = dir),
+        // These are yt-dlp/ffmpeg arguments. Validate their shape enough to
+        // reject accidental controls or argument injection, but do not claim
+        // an allowlist of codecs: available encoders depend on the user's
+        // ffmpeg build. JSON null resets an optional global override.
+        "recording.format.format" => {
+            take_optional_format_selector(&body.value).map(|v| cfg.recording.format.format = v)
+        }
+        "recording.format.bitrate_kbps" => {
+            take_optional_positive_u32(&body.value).map(|v| cfg.recording.format.bitrate_kbps = v)
+        }
+        "recording.format.video_codec" => {
+            take_optional_codec(&body.value).map(|v| cfg.recording.format.video_codec = v)
+        }
+        "recording.format.audio_codec" => {
+            take_optional_codec(&body.value).map(|v| cfg.recording.format.audio_codec = v)
+        }
         "recording.transcode" => take_bool(&body.value).map(|v| cfg.recording.transcode = v),
         "recording.twitch_live_from_start" => {
             take_bool(&body.value).map(|v| cfg.recording.twitch_live_from_start = v)
@@ -1719,7 +1746,7 @@ async fn update_setting(
     }
     (
         StatusCode::ACCEPTED,
-        Json(json!({"ok": true, "path": body.path})),
+        Json(json!({"ok": true, "path": body.path, "restart_required": restart_required})),
     )
         .into_response()
 }
@@ -1741,6 +1768,104 @@ fn take_nonempty_str(v: &serde_json::Value) -> Result<String, String> {
         return Err("value must not be empty".into());
     }
     Ok(t.to_string())
+}
+
+/// Accept a real server-side recording directory. We deliberately don't
+/// create a missing directory: a typo must not silently scatter a new folder
+/// on the daemon host. The tiny create/remove probe gives a useful answer for
+/// ACL and mounted-volume failures that `metadata().permissions()` cannot
+/// express. It creates no recording and leaves no durable file behind.
+fn take_recording_dir(v: &serde_json::Value) -> Result<std::path::PathBuf, String> {
+    let raw = take_nonempty_str(v)?;
+    if raw.chars().any(char::is_control) {
+        return Err("recording_dir must not contain control characters".into());
+    }
+    let dir = std::path::PathBuf::from(raw);
+    if !dir.is_absolute() {
+        return Err("recording_dir must be an absolute server path".into());
+    }
+    let metadata =
+        std::fs::metadata(&dir).map_err(|e| format!("recording_dir is not accessible: {e}"))?;
+    if !metadata.is_dir() {
+        return Err("recording_dir must be an existing directory".into());
+    }
+    let probe = dir.join(format!(
+        ".strivo-write-check-{}-{}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    let mut probe_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|e| format!("recording_dir is not writable: {e}"))?;
+    // Keep a cleanup guard armed until removal succeeds, so an early return
+    // from cleanup still gets one final best-effort removal while unwinding.
+    let mut cleanup = RecordingDirWriteProbe(Some(probe));
+    let write_result = std::io::Write::write_all(&mut probe_file, b"x");
+    drop(probe_file);
+    write_result.map_err(|e| format!("recording_dir write check failed: {e}"))?;
+    std::fs::remove_file(cleanup.0.as_ref().expect("write probe path exists"))
+        .map_err(|e| format!("recording_dir write check cleanup failed: {e}"))?;
+    cleanup.0 = None;
+    Ok(dir)
+}
+
+/// Owns only a file created by `take_recording_dir` with `create_new`, and
+/// makes cleanup robust if an error interrupts the validation path.
+struct RecordingDirWriteProbe(Option<std::path::PathBuf>);
+
+impl Drop for RecordingDirWriteProbe {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn take_optional_format_selector(v: &serde_json::Value) -> Result<Option<String>, String> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let raw = v.as_str().ok_or_else(|| "expected string".to_string())?;
+    if raw.chars().any(char::is_control) {
+        return Err("format selector must not contain control characters".into());
+    }
+    let selector = take_nonempty_str(v)?;
+    if selector.len() > 512 {
+        return Err("format selector must be at most 512 characters".into());
+    }
+    Ok(Some(selector))
+}
+
+fn take_optional_positive_u32(v: &serde_json::Value) -> Result<Option<u32>, String> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let bitrate = take_u32(v)?;
+    if !(1..=1_000_000).contains(&bitrate) {
+        return Err("bitrate_kbps must be an integer from 1 to 1000000".into());
+    }
+    Ok(Some(bitrate))
+}
+
+fn take_optional_codec(v: &serde_json::Value) -> Result<Option<String>, String> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    let raw = v.as_str().ok_or_else(|| "expected string".to_string())?;
+    if raw.chars().any(char::is_control) {
+        return Err("codec must not contain control characters".into());
+    }
+    let codec = take_nonempty_str(v)?;
+    if codec.len() > 128
+        || !codec
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("codec must be 1..=128 ASCII letters, digits, underscores, or hyphens".into());
+    }
+    Ok(Some(codec))
 }
 
 fn take_str_in(v: &serde_json::Value, allowed: &[&str]) -> Result<String, String> {

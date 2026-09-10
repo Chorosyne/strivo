@@ -88,7 +88,8 @@ These rules apply to every phase:
   cargo check --workspace --all-targets --all-features --locked
   cargo test --workspace --all-features --locked
   cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-  node --check crates/strivo-web/assets/spa.js
+  cargo build -p strivo-web --locked
+  (cd crates/strivo-web/e2e && npm run check:pvr-bundle)
   ```
 
   Changed user journeys also require Playwright coverage, migration fixtures,

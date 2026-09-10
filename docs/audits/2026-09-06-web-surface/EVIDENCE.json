@@ -3,6 +3,21 @@
   "review_date": "2026-09-06",
   "window": "2026-07-30 through 2026-09-06. Later reports and current source take precedence over earlier claims within it; every retained prior finding recorded as still-open was re-read against current source rather than carried on the earlier report's authority. Revision 2 (same day) adds a built-artifact reproduction and the CE-series coupling survey.",
   "method": "Static read of current source at HEAD bd17f61 with an uncommitted README.md, plus three commands actually run (recorded under fresh_tests). Route auth was assessed by a regex scan over .route(...) registrations cross-referenced against handler bodies, then by hand-reading the handlers the scan flagged. Membership in this index is NOT adjudication of every claim inside an indexed artifact: the 2026-07-30 audit is indexed and six of its findings were re-verified, but 21 of its findings were not re-examined. Source hashes fingerprint the tree so later drift is detectable — they are not evidence of line-by-line review. No HTTP request was made against a running strivo-web; every auth finding is a code-reading inference, not an executed request. Revision 2 additionally BUILT the PVR web assets (`cargo build -p strivo-web`) and inspected the emitted bundle directly — that artifact, not the stripper's source, is the evidence for S10. The source spa.js in the build worktree hashes identically to the baseline fingerprint (e46d9a08…), binding the artifact to unmodified source. The CE-series rests on reading Cargo manifests and counting cfg sites; no split was attempted, not even as a spike.",
+  "revision_14_reconciliation": {
+    "date": "2026-09-08",
+    "head": "84ba7cac901dfc8cc5ca17a40ef8e088246c61c2",
+    "static_commands": [
+      "rg -n -C 3 'cursor|LIMIT.*OFFSET|OFFSET' src/recording/persist.rs crates/strivo-web/src/routes/api.rs",
+      "rg -n -C 3 'recording_dir|poll_interval_secs|restart|video_codec|audio_codec|bitrate_kbps' crates/strivo-web/assets/spa crates/strivo-web/src/routes/api.rs"
+    ],
+    "observed": "PageQuery.cursor is Option<usize> and is used as an array/database offset; PersistDb::load_recording_jobs_page executes LIMIT ?1 OFFSET ?2. Before the current worktree's F-03/F-06/F-09 fixes, first-run platform text and recording-dir text were terminal/TOML-only, General displayed the poll interval while System edited it, and restore gave an unlinked restart instruction. The Settings update allowlist still excludes recording_dir and advanced codec/bitrate/selector fields; filename_template and the container selector are already accepted.",
+    "external_verification": [
+      "Browser agent final worktree verification: npx playwright test -> 145 passed, 1 skipped in 26.9s. Explicit target/pvr-release/strivo real-server lane -> 5 passed in 3.3s. Running the served-bundle assertion against target/creator-release/strivo failed as intended on renderProApp. npm run check:pvr-bundle -> exit 0, 183 Creator-only names checked, no surviving call sites/symbol leaks, 11 vocabulary denylist terms with no unallowlisted hits. real-server.sh with STRIVO_BIN=/bin/false and isolated temporary directory -> exit 1 and nested sandbox cleaned. Licence backend root-run npm run typecheck passed; npm test -> 2 files, 22 tests passed outside sandbox.",
+      "Browser agent at this HEAD: npx playwright test tests/pvr-edition-gating.spec.ts tests/ux-budget.spec.ts -> 38 passed in 15.3s. Node mock only; direct npx bypassed npm pretest, so this is not emitted-bundle evidence.",
+      "Browser agent after the revision-14 source fixes: cd crates/strivo-web/e2e && npx playwright test tests/smoke.spec.ts -> 31 passed in 5.7s. New assertions cover the first-run Settings→Platforms link/no terminal copy (F-03), General→System poll link (F-06), Interface→Schedule/no-TUI copy (F-08), and the System backup card's DAEMON lifecycle link (F-09). Mock-server only; this does not exercise an emitted binary or real daemon. The separate real-PVR lane passed 5/5 and included its artifact check.",
+      "CI agent at this HEAD, outside the AF_UNIX-restricted sandbox: cargo test --workspace --release --all-targets --locked passed, including ipc_handshake 4/4; cargo fmt --all -- --check and both CI clippy commands passed. cargo test -p strivo-web -p strivo-bin --features creator --all-targets --locked also passed (web 69, plugins_data 4, routes 19, bin 10; totals overlap and must not be summed). The full all-features MSRV 1.88 check was not re-run in this pass, so this is not a claim that every hosted-CI job passed."
+    ]
+  },
   "exclusions": [
     "Credentials, API keys, session secrets and OAuth tokens — none read, none recorded, none quoted.",
     "The user's real config.toml, keyring entries and recording library — not read; no live daemon was contacted.",
@@ -311,5 +326,43 @@
     "S17's user-visible effect (a PVR chat page rendering an error) was traced through the source's catch handlers, not observed in a running PVR build.",
     "The README rewrite's claims were checked against source only; no documented behaviour was executed to confirm it works as described."
   ],
-  "local_artifact_notice": "The PVR bundle above is a gitignored build output produced in a temporary worktree at /home/revelri/Dev/revoy/strivo-wt/web-perf. A fresh clone will not have it; it is reproducible by running `cargo build -p strivo-web` at the recorded source revision, and the source spa.js it was built from is fingerprinted below (e46d9a08…). Identity is preserved here, not content. Durable archival would be required before calling this evidence independently reproducible without a rebuild."
+  "local_artifact_notice": "The PVR bundle above is a gitignored build output produced in a temporary worktree at /home/revelri/Dev/revoy/strivo-wt/web-perf. A fresh clone will not have it; it is reproducible by running `cargo build -p strivo-web` at the recorded source revision, and the source spa.js it was built from is fingerprinted below (e46d9a08…). Identity is preserved here, not content. Durable archival would be required before calling this evidence independently reproducible without a rebuild.",
+  "revision_15_settings": {
+    "date": "2026-09-08",
+    "base_head": "84ba7cac901dfc8cc5ca17a40ef8e088246c61c2",
+    "tree": "Uncommitted F-05/F-07 remediation on top of the prior dirty CI/browser remediation; source hashes identify tested implementation.",
+    "environment": "Linux; rustc 1.98.0 (88d9e12ae 2026-08-18); Node v22.23.2; isolated temporary config and recording directories.",
+    "backend_agent_evidence": [
+      "cargo test --workspace -p strivo-web --test routes: 16 passed.",
+      "Temporarily removing the five new update match arms: cargo test --workspace -p strivo-web --test routes settings_update_persists_recording_destination_and_format_overrides failed on 400 instead of 202; restored test passed.",
+      "cargo test --workspace -p strivo-web --test routes --features creator: 21 passed.",
+      "cargo fmt --all -- --check and cargo clippy --workspace -p strivo-web --test routes -- -D warnings passed; same Clippy with --features creator passed."
+    ],
+    "ui_agent_evidence": [
+      "cd crates/strivo-web/e2e && npx playwright test: 147 passed, 1 skipped. Covers persistence/reload, reset, codec fields, API rejection rollback, Windows-shaped path reaches backend, and no fractional bitrate truncation."
+    ],
+    "reviewer_executed_evidence": [
+      "Reviewed Rust handlers/validators, UI request parsing and save/reset behavior, config snapshot and runtime format consumers; corrected issues through implementation agents.",
+      "cargo build -p strivo-bin --locked: passed.",
+      "cd crates/strivo-web/e2e && STRIVO_BIN=/home/revelri/Dev/revoy/strivo/target/debug/strivo npm run test:real: 6 passed in 4.8s, including reviewer-authored all-five-field browser save/reload and four-field reset/reload against real Rust server.",
+      "cd crates/strivo-web/e2e && npm run check:pvr-bundle: exit 0; 183 Creator-only names checked with zero surviving call sites/symbol occurrences; 11 vocabulary denylist terms with zero unallowlisted hits."
+    ],
+    "source_sha256": {
+      "crates/strivo-web/src/routes/api.rs": "3791e2e152fcbbeda022c3b4565fea0534929bd47862eed097585ac2ba856ae0",
+      "crates/strivo-web/tests/routes.rs": "616e828ff48f8b778b1a491269d6cd7f74d78a5a33ea720fb658711dddf733b4",
+      "crates/strivo-web/assets/spa/012-pvr.js": "cba9f31da62d390ccf30bcfe7dac917ede2e2f338cf4244296c065d43589b1c9",
+      "crates/strivo-web/assets/spa/034-pvr.js": "04808214a9ec77a1ee09f8e51f788ab0127a671365b53891859d38abc89da478",
+      "crates/strivo-web/assets/spa-css/002-pvr.css": "8cb0c94028e780850ad4a48f47d954e65015d90c44e53be3a9be287349f80c3c",
+      "crates/strivo-web/e2e/mock-server.mjs": "9c319aadfd18673f280e0b0e10e6e10a58380eb0bffa21c2a6846f908dc37a13",
+      "crates/strivo-web/e2e/tests/settings-recording.spec.ts": "dc625e86c78ae752a2785651782cc86c221a9ee676c02dbc5289006dc95610a4",
+      "crates/strivo-web/e2e/tests-real/real-server.spec.ts": "2c5c508f703f4d37d1c666b75bd93f725deb4ec15743619095012dd94b145e95",
+      "docs/SETTINGS-COVERAGE.md": "af2571681fcae6e61ef785fe58c1353cd8e6df757e21c0d8970ac648b0cdb7f7",
+      "docs/DAEMON.md": "be78b4a234792db485d205ea3bcc0f6a7cd54796c3488d4e58abc4fcf68a17ee"
+    },
+    "limits": [
+      "No new production capture or codec/platform compatibility matrix executed; daemon restart is required to apply saved configuration.",
+      "Directory must already exist and be writable at validation time; validation does not promise future disk availability.",
+      "MSRV, Windows target and hosted GitHub Actions not rerun for revision 15. Prior verification records remain historical."
+    ]
+  }
 }
