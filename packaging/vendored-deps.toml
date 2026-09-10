@@ -102,10 +102,21 @@ notes = "Same gap as ffmpeg's macOS row — no official standalone build; only H
 status = "resolved"
 version = "8.5.0-1"
 license = "BSD-2-Clause"
-url = "https://github.com/streamlink/windows-builds/releases/download/8.5.0-1/streamlink-8.5.0-1-py314-x86_64.exe"
-sha256 = "d6a4f98c81cea16f000850165d4c70e91fe1488b160ee6ccc365fb0105efdd24"
+url = "https://github.com/streamlink/windows-builds/releases/download/8.5.0-1/streamlink-8.5.0-1-py314-x86_64.zip"
+sha256 = "86409e93774ec59928ed289d291c48766f9c7535ea41085255404f219875b5f3"
 source_url = "https://github.com/streamlink/windows-builds"
-notes = "Official installer; embeds its own Python + ffmpeg — extract just the streamlink executable from its install layout, do not run the bundled installer's ffmpeg since we vendor ffmpeg separately via BtbN."
+notes = """
+Portable zip, not the NSIS installer (same release, simpler/safer to
+extract — plain Expand-Archive, no NSIS-specific 7z quirks). Contains
+`bin/streamlink.exe`, which is NOT self-contained: verified via `strings`
+that it's a shebang-style stub (`#!<launcher_dir>\\..\\Python\\python.exe`)
+requiring its sibling `Python/` and `pkgs/` directories one level up from
+`bin/`. Bundle all three (bin/streamlink.exe, Python/, pkgs/) preserving
+that relative layout — do NOT extract streamlink.exe alone, it will fail
+to find its interpreter. Also contains its own `ffmpeg/` folder; skip it,
+StriVo vendors ffmpeg separately via BtbN so there is one ffmpeg
+build/license per install, not two.
+"""
 
 [streamlink.linux_x86_64]
 status = "resolved"

@@ -198,6 +198,24 @@ jobs:
             dist/${{ steps.stage.outputs.pkg }}.zip
             dist/${{ steps.stage.outputs.pkg }}.zip.sha256
 
+      # Bundles ffmpeg/mpv/streamlink/yt-dlp per packaging/vendored-deps.toml
+      # into a step-through Inno Setup wizard -- see
+      # docs/adr/0003-installer-packaging-and-bundled-dependencies.md. Kept
+      # alongside the raw zip above, not replacing it: the zip stays useful
+      # for a portable/no-install run, matching the Linux job's
+      # tarball-plus-AppImage shape.
+      - name: Build Windows installer
+        shell: powershell
+        run: packaging\windows\build-installer.ps1
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-installer
+          path: |
+            dist/windows-installer/*.exe
+            dist/windows-installer/*.exe.sha256
+
   publish:
     name: Publish GitHub release
     needs: [build-linux, build-macos, build-windows]
@@ -222,6 +240,7 @@ jobs:
             dist/linux-appimage/*
             dist/macos-tarball/*
             dist/windows-zip/*
+            dist/windows-installer/*
           generate_release_notes: true
           body: |
             # strivo ${{ github.ref_name }}
