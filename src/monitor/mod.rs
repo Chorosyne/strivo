@@ -124,7 +124,7 @@ impl ChannelMonitor {
         let mut wrote = false;
         for job in jobs {
             let cur = self.last_live.get(&job.channel_id).copied();
-            if cur.map_or(true, |t| job.started_at > t) {
+            if cur.is_none_or(|t| job.started_at > t) {
                 self.last_live.insert(job.channel_id, job.started_at);
                 wrote = true;
             }

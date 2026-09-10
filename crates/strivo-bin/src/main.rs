@@ -181,7 +181,7 @@ async fn import_browser_cookies(
         );
     }
     anyhow::ensure!(
-        profile.map_or(true, |value| !value.trim().is_empty()),
+        profile.is_none_or(|value| !value.trim().is_empty()),
         "--profile cannot be empty"
     );
 

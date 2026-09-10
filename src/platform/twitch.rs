@@ -626,7 +626,7 @@ impl Platform for TwitchPlatform {
                     platform: PlatformKind::Twitch,
                     name: stream.user_login,
                     display_name: stream.user_name,
-                    is_live: stream.stream_type.as_deref().map_or(true, |t| t == "live"),
+                    is_live: stream.stream_type.as_deref().is_none_or(|t| t == "live"),
                     stream_title: stream.title,
                     game_or_category: stream.game_name,
                     viewer_count: stream.viewer_count,

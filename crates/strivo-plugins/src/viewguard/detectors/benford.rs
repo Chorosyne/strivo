@@ -136,7 +136,7 @@ mod tests {
             (8901, 16),
             (9012, 15),
         ] {
-            vs.extend(std::iter::repeat(val).take(count));
+            vs.extend(std::iter::repeat_n(val, count));
         }
         // duplicates to hit MIN_SAMPLES
         vs.extend(vs.clone());

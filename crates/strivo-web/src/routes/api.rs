@@ -1768,7 +1768,7 @@ async fn logs(
     let cap = q.lines.unwrap_or(200).clamp(1, 2000);
     let mut filtered: Vec<&str> = body
         .lines()
-        .filter(|l| line_level(l).map_or(true, |lv| level_rank(lv) >= min))
+        .filter(|l| line_level(l).is_none_or(|lv| level_rank(lv) >= min))
         .collect();
     if filtered.len() > cap {
         filtered = filtered.split_off(filtered.len() - cap);
