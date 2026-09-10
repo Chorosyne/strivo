@@ -2,6 +2,18 @@
 const API = {
   _inflight: new Map(),
   _cache: new Map(),
+  // A cache invalidation also retires reads which began before it.  Keeping
+  // this separate from expiry matters for SSE: an old in-flight response must
+  // never put its snapshot back after an authoritative lifecycle event.
+  _allGeneration: 0,
+  _resourceGenerations: new Map(),
+  _generationFor(path) {
+    let generation = API._allGeneration;
+    for (const [prefix, value] of API._resourceGenerations) {
+      if (path.startsWith(prefix)) generation = Math.max(generation, value);
+    }
+    return generation;
+  },
   _cacheTtlMs: 2000,
   async _fetch(path, opts = {}) {
     const method = String(opts.method || "GET").toUpperCase();
@@ -9,18 +21,30 @@ const API = {
     // A short stale window absorbs navigation churn without making live state
     // feel cached; SSE still patches the active screen immediately.
     if (method === "GET" && !opts.__direct) {
+      const generation = API._generationFor(path);
       const cached = API._cache.get(path);
-      if (cached && performance.now() - cached.at < API._cacheTtlMs) {
+      if (cached && cached.generation === generation && performance.now() - cached.at < API._cacheTtlMs) {
         return cached.value;
       }
-      if (API._inflight.has(path)) return API._inflight.get(path);
+      const inflightKey = `${generation}:${path}`;
+      if (API._inflight.has(inflightKey)) return API._inflight.get(inflightKey);
       const pending = API._fetch(path, { ...opts, __direct: true })
         .then((value) => {
-          API._cache.set(path, { at: performance.now(), value });
-          return value;
+          // An earlier read may still resolve after a mutation/SSE refresh.
+          // Return it to its original caller, but do not make it current.
+          if (API._generationFor(path) === generation) {
+            API._cache.set(path, { at: performance.now(), value, generation });
+            return value;
+          }
+          // A caller may still be on the same route when an SSE event
+          // invalidates its read. Do not hand that caller an obsolete
+          // snapshot which it could commit into its own local cache.
+          const retry = { ...opts };
+          delete retry.__direct;
+          return API._fetch(path, retry);
         })
-        .finally(() => API._inflight.delete(path));
-      API._inflight.set(path, pending);
+        .finally(() => API._inflight.delete(inflightKey));
+      API._inflight.set(inflightKey, pending);
       return pending;
     }
     const direct = { ...opts };
@@ -83,6 +107,12 @@ const API = {
     return value;
   },
   invalidate(prefix = "") {
+    // Scope the epoch to the resource family. Recording lifecycle events
+    // should not evict an unrelated settings/health read, but they must make
+    // every older /recordings response unable to refill its cache.
+    const next = Math.max(API._allGeneration, ...API._resourceGenerations.values(), 0) + 1;
+    if (prefix) API._resourceGenerations.set(prefix, next);
+    else API._allGeneration = next;
     for (const key of API._cache.keys()) {
       if (!prefix || key.startsWith(prefix)) API._cache.delete(key);
     }
