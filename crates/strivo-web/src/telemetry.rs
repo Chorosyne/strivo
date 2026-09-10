@@ -423,6 +423,9 @@ mod tests {
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             probe_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            thumbnail_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            thumbnail_locks: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            thumbnail_failures: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             jobs_db: std::sync::Arc::new(tokio::sync::OnceCell::new()),
             jobs_db_path: std::sync::Arc::new(
                 strivo_core::config::AppConfig::data_dir().join("jobs.db"),

@@ -508,6 +508,41 @@ impl PersistDb {
         .await
     }
 
+    /// Resolve one recording from the durable journal.  This deliberately has
+    /// no recovery cap: an archived item must remain addressable after the
+    /// daemon has evicted it from its bounded in-memory snapshot.
+    pub async fn load_recording_job(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<crate::recording::job::RecordingJob>> {
+        self.with_conn(move |conn| {
+            let row = conn
+                .query_row(
+                    "SELECT payload, state, last_error FROM jobs WHERE kind = 'Recording' AND id = ?1",
+                    params![id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            Ok(row.and_then(|(payload, state, err)| {
+                let mut job = serde_json::from_str::<crate::recording::job::RecordingJob>(&payload).ok()?;
+                if let Some(mapped) = map_journal_state(&state) {
+                    job.state = mapped;
+                }
+                if job.error.is_none() {
+                    job.error = err;
+                }
+                Some(job)
+            }))
+        })
+        .await
+    }
+
     /// Load a bounded durable-history page directly in SQLite. The legacy
     /// `load_recording_jobs` remains capped at 500 for daemon recovery, while
     /// web clients can walk the complete journal without allocating it all.

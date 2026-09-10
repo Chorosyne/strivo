@@ -18,7 +18,6 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
-use strivo_core::ipc::ServerMessage;
 use tokio::io::AsyncSeekExt;
 use uuid::Uuid;
 
@@ -27,14 +26,9 @@ use crate::routes::login::check_dual;
 use crate::server::AppState;
 
 async fn lookup_path(state: &AppState, id: Uuid) -> Result<PathBuf, String> {
-    let snap = state.ipc.snapshot().await.map_err(|e| e.to_string())?;
-    let ServerMessage::StateSnapshot { recordings, .. } = snap else {
-        return Err("unexpected ServerMessage".into());
-    };
-    recordings
-        .get(&id)
-        .map(|j| j.output_path.clone())
-        .ok_or_else(|| "recording not found".into())
+    crate::routes::api::resolve_recording(state, id)
+        .await
+        .map(|job| job.output_path)
 }
 
 /// Reject any path that, once canonicalised, escapes the recording root.

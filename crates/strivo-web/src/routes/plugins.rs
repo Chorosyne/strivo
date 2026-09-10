@@ -5717,6 +5717,13 @@ mod research_route_tests {
                 std::collections::HashMap::new(),
             )),
             probe_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            thumbnail_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            thumbnail_locks: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            thumbnail_failures: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             jobs_db: std::sync::Arc::new(tokio::sync::OnceCell::new()),
             jobs_db_path: std::sync::Arc::new(
                 strivo_core::config::AppConfig::data_dir().join("jobs.db"),

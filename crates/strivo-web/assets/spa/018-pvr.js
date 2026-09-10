@@ -4,10 +4,19 @@
 // embed + chat), plus a real player bar instead of vendor-only chrome —
 // so this route just resolves the requested room and redirects rather
 // than maintaining a second, thinner watch surface.
-async function renderViewer() {
+async function renderViewer(ctx) {
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
   const room = params.get("room") || "";
-  const c = (channelCache || []).find((x) =>
+  if (!channelCache.length) {
+    try {
+      const response = await API.channels();
+      if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
+      channelCache = response.channels || [];
+    } catch (_) {
+      if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
+    }
+  }
+  const c = channelCache.find((x) =>
     x.platform === "Twitch" && (x.name || x.display_name || "").toLowerCase() === room.toLowerCase());
   if (c) {
     location.replace(`#/watch?focus=${encodeURIComponent(`${c.platform}:${c.id}`)}&fresh=1`);
@@ -310,37 +319,64 @@ function makeRecordingController(spec) {
   // browser then hunts forever for an index that was never written. Without
   // this the tile just sits there looking like it is still loading, which is
   // indistinguishable from a slow network.
-  const fail = (why) => {
-    if (el.dataset.failed) return;
-    el.dataset.failed = "1";
+  let watchdog = null;
+  let errorNote = null;
+  let loadingRequested = false;
+  const clearFailure = () => {
+    delete el.dataset.failed;
+    errorNote?.remove();
+    errorNote = null;
+  };
+  const cancelWatchdog = () => {
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = null;
+  };
+  const startWatchdog = () => {
+    cancelWatchdog();
+    if (!loadingRequested) return;
+    watchdog = setTimeout(() => {
+      if (loadingRequested && el.isConnected && el.readyState === 0) {
+        fail("loading", "it never returned media metadata");
+      }
+    }, 15000);
+  };
+  const fail = (kind, why) => {
+    if (el.dataset.failed === kind) return;
+    cancelWatchdog();
+    el.dataset.failed = kind;
+    errorNote?.remove();
     const note = document.createElement("div");
     note.className = "ms-media-error";
     note.innerHTML =
       `<strong>Can't play this recording</strong><span>${htmlEscape(why)}</span>` +
-      `<span class="pg-cap-hint">The file is on disk but its container is unreadable — ` +
-      `an interrupted capture usually leaves it without an index.</span>`;
+      (kind === "decode" ? `<span class="pg-cap-hint">The file may need repair or remuxing.</span>` : "") +
+      `<button type="button" class="btn btn-ghost btn-sm">Retry</button>`;
+    note.querySelector("button")?.addEventListener("click", () => {
+      clearFailure();
+      loadingRequested = true;
+      el.load();
+      startWatchdog();
+      el.play().catch(() => {});
+    });
     el.parentElement?.appendChild(note);
+    errorNote = note;
   };
   el.addEventListener("error", () => {
     const codes = {
-      1: "playback aborted",
-      2: "network error",
-      3: "the file could not be decoded",
-      4: "the format is not supported",
+      1: ["aborted", "playback was aborted"],
+      2: ["network", "a network error interrupted playback"],
+      3: ["decode", "the file could not be decoded"],
+      4: ["unsupported", "this format is not supported by this browser"],
     };
-    fail(codes[el.error?.code] || "the media failed to load");
+    const [kind, message] = codes[el.error?.code] || ["media", "the media failed to load"];
+    fail(kind, message);
   });
   // `error` never fires for a file that merely never finishes loading its
   // metadata, which is exactly the truncated-MP4 case, so time it out too.
-  let settled = false;
-  const seen = () => { settled = true; };
+  const seen = () => { cancelWatchdog(); clearFailure(); };
   el.addEventListener("loadedmetadata", seen);
   el.addEventListener("playing", seen);
-  setTimeout(() => {
-    if (!settled && el.isConnected && el.readyState === 0) {
-      fail("it never returned any playable data");
-    }
-  }, 15000);
+  if (playing) { loadingRequested = true; startWatchdog(); }
 
   const subs = new Set();
   let lastEmit = 0;
@@ -378,6 +414,9 @@ function makeRecordingController(spec) {
       if (el.parentElement !== container) container.appendChild(el);
     },
     destroy() {
+      cancelWatchdog();
+      loadingRequested = false;
+      clearFailure();
       try {
         el.pause();
       } catch (_) {
@@ -396,13 +435,18 @@ function makeRecordingController(spec) {
       /* the file is the file */
     },
     repoint(next) {
-      if (next && next.src && next.src !== el.getAttribute("src")) el.src = next.src;
+      if (next && next.src && next.src !== el.getAttribute("src")) {
+        cancelWatchdog(); clearFailure();
+        loadingRequested = !!next.playing;
+        el.src = next.src;
+        if (loadingRequested) startWatchdog();
+      }
     },
     isReady() {
       return true;
     },
-    play() { el.play().catch(() => {}); },
-    pause() { el.pause(); },
+    play() { loadingRequested = true; startWatchdog(); el.play().catch(() => {}); },
+    pause() { loadingRequested = false; cancelWatchdog(); el.pause(); },
     togglePlay() { el.paused ? controller.play() : controller.pause(); },
     seek(sec) { try { el.currentTime = Math.max(0, sec); } catch (_) { /* advisory */ } },
     currentTime() { return el.currentTime; },
@@ -422,7 +466,7 @@ function makeRecordingController(spec) {
         quality: null,
         qualities: [],
         live: false,
-        error: el.dataset.failed ? "media error" : null,
+        error: el.dataset.failed || null,
       };
     },
     onState(fn) {
@@ -1703,7 +1747,7 @@ function loadPlayerLayout() {
   playerState.soloPath = "";
 }
 
-async function renderWatch() {
+async function renderWatch(ctx) {
   // teardownAcrossRoutes() in render() already cleared any prior refresh
   // poll (playerState.refreshTimer + the legacy _watchRefreshTimer
   // alias). A12 consolidation — don't duplicate the clear here.
@@ -1761,7 +1805,7 @@ async function renderWatch() {
   const railToggleGlyph = playerState.chatRailOpen ? "▶" : "◀";
   const railTitle = playerState.chatRailOpen ? "Collapse chat rail" : "Open chat rail";
   const theaterClass = countLeaves(playerState.layout) === 1 ? "is-theater" : "";
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <div id="watch" class="watch-root ${playerState.chatRailOpen ? "has-chat-rail" : ""} ${theaterClass}" role="main">
       <div class="watch-content"><div class="empty">Loading…</div></div>
       <aside class="player-chat-rail" id="player-chat-rail" data-open="${railOpen}">
@@ -1777,10 +1821,24 @@ async function renderWatch() {
         <div class="player-chat-rail-compose" id="player-chat-rail-compose"></div>
       </aside>
     </div>
-  `);
-  setupChromeHandlers();
+  `, ctx)) return;
   const watch = document.getElementById("watch");
   const watchContent = watch.querySelector(".watch-content");
+  // Router hydration is intentionally non-blocking. Start the picker data at
+  // the same time as the tile request, then reconcile once both are ready so
+  // a direct watch entry never mounts an empty, permanent picker.
+  const watchData = Promise.all([
+    hydrationLoaded.channels ? Promise.resolve(channelCache) : API.channels().then((response) => {
+      const channels = response.channels || [];
+      if (isRouteCurrent(ctx)) { channelCache = channels; hydrationLoaded.channels = true; }
+      return channels;
+    }),
+    hydrationLoaded.recordings ? Promise.resolve(recCache) : API.recordings().then((response) => {
+      const recordings = response.recordings || [];
+      if (isRouteCurrent(ctx)) { recCache = recordings; hydrationLoaded.recordings = true; }
+      return recordings;
+    }),
+  ]);
 
   // Rail toggle — flip persisted state, sync class + glyph, reconcile.
   document.getElementById("player-chat-rail-toggle")?.addEventListener("click", () => {
@@ -1804,9 +1862,20 @@ async function renderWatch() {
     // we ignore its tile geometry and lay things out via the layout tree.
     resp = await API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host);
   } catch (e) {
+    if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
     watchContent.innerHTML = `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`;
     return;
   }
+  if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
+  try {
+    const [channels, recordings] = await watchData;
+    if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
+    channelCache = channels;
+    recCache = recordings;
+  } catch (_) {
+    // Existing cache contents are still useful when this refresh fails.
+  }
+  if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
   // `let`, not `const`: the background refresh below updates this baseline
   // in place when the live-set changes, so a one-off go-live/offline doesn't
   // make every subsequent tick compare against a stale set.
@@ -1837,6 +1906,7 @@ async function renderWatch() {
     if (document.hidden) return;
     try {
       const r = await API.multistreamTiles(stageGeometry().w, stageGeometry().h, { mode: "auto" }, window.location.host);
+      if (typeof isRouteCurrent === "function" && !isRouteCurrent(ctx)) return;
       const byId = new Map((r.streams || []).map((s) => [s.stream_id, s]));
       const have = new Set(streams.map((s) => s.stream_id));
       const got = new Set([...byId.keys()]);
@@ -3210,5 +3280,5 @@ Object.assign(TEST_HOOK_EXTENSIONS, {
   candidateGridShapes,
   gridFitArea,
   paintPlayerStage,
+  makeRecordingController,
 });
-

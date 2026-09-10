@@ -1,14 +1,14 @@
     case "chat":
-      await renderChat();
+      await renderChat(context);
       break;
     case "settings":
-      await renderSettings();
+      await renderSettings(context);
       break;
     case "system":
-      await renderSystem();
+      await renderSystem(context);
       break;
     case "logs":
-      await renderLogs();
+      await renderLogs(context);
       break;
     case "history":
       // History folded into Recordings as a Timeline view (see the
@@ -150,6 +150,7 @@ function chrome(content) {
         <span id="rec-slot-pill" class="storage-pill" style="display:none"
               title="Active recordings / concurrent cap — click to manage"
               role="status"></span>
+        <span id="route-status" class="conn-status" role="status" aria-live="polite" hidden></span>
         <span class="spacer"></span>
         <nav class="topnav" aria-label="Main navigation">${nav}</nav>
         <button id="add-channel" title="Add a channel to monitor"
@@ -166,7 +167,55 @@ function chrome(content) {
   `;
 }
 
+// Keep the navigation chrome alive between route paints.  Apart from making
+// navigation feel immediate, this preserves the rail's scroll position and
+// keyboard focus instead of recreating all of its controls after each fetch.
+function mountRouteShell(context) {
+  if (!isRouteCurrent(context)) return false;
+  if (!root.querySelector(":scope > .chrome")) {
+    root.innerHTML = chrome('<div class="route-placeholder" role="status">Loading…</div>');
+    setupChromeHandlers();
+  }
+  root.setAttribute("aria-busy", "true");
+  const status = document.getElementById("route-status");
+  if (status) {
+    status.textContent = `Loading ${context.route === "library" ? "Home" : context.route}…`;
+    status.hidden = false;
+  }
+  return true;
+}
+
+function mountPage(content, context = captureRouteContext()) {
+  if (!isRouteCurrent(context)) return false;
+  if (!root.querySelector(":scope > .chrome")) {
+    root.innerHTML = chrome(content);
+    setupChromeHandlers();
+  } else {
+    const main = document.getElementById("content");
+    if (!main) return false;
+    main.innerHTML = content;
+    document.querySelectorAll(".topnav-link").forEach((link) => {
+      link.classList.toggle("active", link.dataset.route === context.route);
+    });
+    paintChannelList();
+  }
+  root.removeAttribute("aria-busy");
+  const status = document.getElementById("route-status");
+  if (status) {
+    status.textContent = "";
+    status.hidden = true;
+  }
+  return true;
+}
+
 function setupChromeHandlers() {
+  const shell = root.querySelector(":scope > .chrome");
+  if (!shell) return;
+  if (shell.dataset.chromeWired === "1") {
+    paintChannelList();
+    return;
+  }
+  shell.dataset.chromeWired = "1";
   // Brand → home: clear any selected channel and go to the dashboard.
   document.getElementById("brand-home")?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -341,6 +390,16 @@ function paintChannelList() {
   const recordingChannelIds = new Set(
     recCache.filter((r) => isInProgress(r.state)).map((r) => r.channel_id),
   );
+  // Route commits call this to make the rail available, but recreating an
+  // already-correct rail discards focus and an open section.  Repaint only
+  // when its visible model actually changed.
+  const railSignature = JSON.stringify({
+    selectedChannelKey,
+    sort: railSort(),
+    channels: channels.map((c) => [c.platform, c.id, c.display_name || c.name, c.is_live, c.viewer_count, c.last_live_at, c.stream_title]),
+    recordingChannelIds: [...recordingChannelIds].sort(),
+  });
+  if (rail.dataset.modelSignature === railSignature) return;
 
   const row = (c) => {
     const key = `${c.platform}:${c.id}`;
@@ -410,6 +469,7 @@ function paintChannelList() {
       : railSortControlHtml() +
         section("live", `● LIVE`, live) +
         section("offline", "OFFLINE", offline);
+  rail.dataset.modelSignature = railSignature;
 
   rail.querySelectorAll(".ch-row").forEach((el) => {
     el.addEventListener("click", (e) => {
@@ -444,9 +504,10 @@ function platformGlyph(p) {
 // Seed patreonState from the daemon snapshot (/patreon) so Patreon shows
 // immediately on load, instead of only after the next ~5-min poll's
 // patreon-state SSE event. Idempotent; refreshed live by SSE thereafter.
-async function seedPatreon() {
+async function seedPatreon(context = captureRouteContext()) {
   try {
     const p = await API.patreon();
+    if (!isRouteCurrent(context)) return false;
     patreonState.creators = p.creators || [];
     patreonState.posts = {};
     for (const post of p.posts || []) {
@@ -455,8 +516,10 @@ async function seedPatreon() {
     for (const list of Object.values(patreonState.posts)) {
       list.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
     }
+    return true;
   } catch (_) {
     /* non-fatal — SSE still refreshes it */
+    return false;
   }
 }
 
@@ -481,7 +544,8 @@ function selectChannel(key, ev) {
 }
 
 // ── Login ────────────────────────────────────────────────────────────
-function renderLogin(errorMsg) {
+function renderLogin(errorMsg, context = captureRouteContext()) {
+  if (!isRouteCurrent(context)) return;
   root.removeAttribute("aria-busy");
   // "Remember me" pre-fills the API key from localStorage on a returning
   // visit. The session cookie itself already persists across reloads via
@@ -553,11 +617,12 @@ function renderLogin(errorMsg) {
 // ── Home: channel detail (if selected) + recordings dashboard ─────────
 // First-run gate (item 20): a fresh install with no platform connected gets
 // a guided setup checklist instead of an empty/half-configured dashboard.
-// (Platform auth + config writes happen in the TUI/CLI, not the webui, so
-// this screen reports live status and tells the user what to do.)
+// Platform setup and recording storage are available from the Settings editor,
+// so this screen can hand users directly to the relevant controls.
 let firstRunDismissed = false;
 
-function renderFirstRun(setup) {
+function renderFirstRun(setup, context = captureRouteContext()) {
+  if (!isRouteCurrent(context)) return;
   root.removeAttribute("aria-busy");
   const step = (done, label, detail) => `
     <div class="fr-step ${done ? "done" : "todo"}">
@@ -574,15 +639,15 @@ function renderFirstRun(setup) {
   const recDir = setup.recording_dir || "(unset)";
   const chanCount = (setup.auto_record_channels || []).length;
 
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Welcome to StriVo</h1>
     <p class="page-subtitle">Finish setup before the dashboard fills in.</p>
     <div class="cfg-card fr-card">
       ${step(
         anyPlatform,
         "1 · Connect a platform",
-        `Authenticate Twitch / YouTube / Patreon by running <code>strivo</code>
-         in a terminal (device-code login). Then re-check below.
+        `Open <a class="stg-linkbtn" href="#/settings/platforms">Settings → Platforms</a>
+         to connect Twitch, YouTube, or Patreon. Then re-check below.
          <div class="fr-pills">${plat("Twitch", setup.twitch_configured)}
            ${plat("YouTube", setup.youtube_configured)}
            ${plat("Patreon", setup.patreon_configured)}</div>`,
@@ -591,7 +656,7 @@ function renderFirstRun(setup) {
         !!setup.recording_dir,
         "2 · Recording directory",
         `Where captures are written: <code>${htmlEscape(recDir)}</code>.
-         Change it in <code>~/.config/strivo/config.toml</code> if needed.`,
+         <a class="stg-linkbtn" href="#/settings/recording">Edit it in Settings → Recording</a> if needed.`,
       )}
       ${step(
         chanCount > 0,
@@ -604,27 +669,47 @@ function renderFirstRun(setup) {
         <button id="fr-continue" class="primary">${anyPlatform ? "Continue to dashboard" : "Continue anyway"}</button>
       </div>
     </div>
-  `);
+  `, context)) return;
   setupChromeHandlers();
-  document.getElementById("fr-recheck")?.addEventListener("click", () => renderHome());
+  document.getElementById("fr-recheck")?.addEventListener("click", () => renderHome(captureRouteContext()));
   document.getElementById("fr-continue")?.addEventListener("click", () => {
     firstRunDismissed = true;
-    renderHome();
+    renderHome(captureRouteContext());
   });
 }
 
-async function renderHome() {
+async function renderHome(context = captureRouteContext()) {
+  if (!mountRouteShell(context)) return;
   let setup = null;
-  try {
-    setup = await API.settings();
-  } catch (e) {
-    if (e.message.includes("unauthorized")) return;
-  }
+  // These dashboard sources do not depend on one another.  Starting them
+  // together removes the settings → channels/recordings → Patreon → schedule
+  // waterfall that made a warm Home transition wait several RTTs.
+  const patreonTask = typeof seedPatreon === "function" ? seedPatreon(context) : Promise.resolve();
+  const scheduleTask = API.schedule();
+  // Ancillary sections update after the dashboard is available.  A slow
+  // Patreon integration or schedule endpoint must never delay Home.
+  patreonTask.then((loaded) => {
+    if (!loaded) return;
+    hydrationLoaded.patreon = true;
+    if (isRouteCurrent(context)) paintChannelList();
+  }).catch(() => {});
+  scheduleTask.then((result) => {
+    if (!isRouteCurrent(context)) return;
+    dashSchedule = result.schedule || [];
+    hydrationLoaded.schedule = true;
+    if (currentRoute() === "library") paintDashboard();
+  }).catch(() => {});
+  const [setupRes, chRes, recRes] = await Promise.allSettled([
+    API.settings(), API.channels(), API.recordings(),
+  ]);
+  if (!isRouteCurrent(context)) return;
+  if (setupRes.status === "fulfilled") setup = setupRes.value;
+  else if (setupRes.reason?.message?.includes("unauthorized")) return;
   const anyPlatform =
     setup &&
     (setup.twitch_configured || setup.youtube_configured || setup.patreon_configured);
   if (setup && !anyPlatform && !firstRunDismissed) {
-    renderFirstRun(setup);
+    renderFirstRun(setup, context);
     return;
   }
   // Refresh the channel + recordings caches that feed the left rail and
@@ -636,24 +721,19 @@ async function renderHome() {
   // caught at the outer try/catch, leaving both caches stale — visually
   // that surfaced as "rail vanished" because the unauth check at the top
   // already returned for genuine 401s.
-  const [chRes, recRes] = await Promise.allSettled([API.channels(), API.recordings()]);
   if (chRes.status === "fulfilled") {
     channelCache = chRes.value.channels || [];
+    hydrationLoaded.channels = true;
   } else if (chRes.reason && chRes.reason.message && chRes.reason.message.includes("unauthorized")) {
     return;
   }
   if (recRes.status === "fulfilled") {
     recCache = recRes.value.recordings || [];
     dashRecordings = recCache;
+    hydrationLoaded.recordings = true;
     seedVodDownloadStateFromRecCache();
   } else if (recRes.reason && recRes.reason.message && recRes.reason.message.includes("unauthorized")) {
     return;
-  }
-  await seedPatreon();
-  try {
-    dashSchedule = (await API.schedule()).schedule || [];
-  } catch (_) {
-    dashSchedule = [];
   }
   // A14: prune bulkStatus entries whose channel is no longer in the
   // current channelCache. Without this the bulkStatus map grew across
@@ -676,9 +756,9 @@ async function renderHome() {
   // the home view; opening a channel shows just its detail.
   const center = selected
     ? channelDetailHtml(selected)
-    : `<div id="dash">${recordingsDashboardHtml(false)}</div>`;
+    : `<div id="dash" data-dashboard-signature="${htmlEscape(dashboardSignature(false))}">${recordingsDashboardHtml(false)}</div>`;
 
-  root.innerHTML = chrome(center);
+  if (!mountPage(center, context)) return;
   setupChromeHandlers();
 
   if (selected) {
@@ -691,11 +771,64 @@ async function renderHome() {
 // Repaint ONLY the recordings dashboard subtree (#dash) — never the chrome,
 // left rail, or channel-detail iframe. Driven by high-frequency recording
 // events so they don't reload the live preview or reset rail scroll.
-function paintDashboard() {
+function paintDashboard(dirtyIds = null) {
   const el = document.getElementById("dash");
   if (!el) return;
-  el.innerHTML = recordingsDashboardHtml(!!selectedChannelKey);
-  wireDashboard();
+  // Progress events only change a card's live fields.  Do not replace this
+  // subtree: it contains focusable play/stop controls and horizontal scroll
+  // strips that users may be browsing while a capture is active.
+  const signature = dashboardSignature(!!selectedChannelKey);
+  if (el.dataset.dashboardSignature !== signature) {
+    el.innerHTML = recordingsDashboardHtml(!!selectedChannelKey);
+    el.dataset.dashboardSignature = signature;
+    wireDashboard();
+    return;
+  }
+  const cards = el.querySelectorAll("[data-dashboard-recording]");
+  const wanted = dashboardCardIds(!!selectedChannelKey);
+  const structureChanged = cards.length !== wanted.length ||
+    Array.from(cards).some((card, index) => card.dataset.dashboardRecording !== wanted[index]);
+  if (structureChanged) {
+    el.innerHTML = recordingsDashboardHtml(!!selectedChannelKey);
+    wireDashboard();
+    return;
+  }
+  let patched = 0;
+  for (const card of cards) {
+    const recording = dashRecordings.find((r) => r.id === card.dataset.dashboardRecording);
+    if (!recording) continue;
+    if (!dirtyIds || dirtyIds.has(String(recording.id))) patchDashboardRecording(card, recording);
+    patched++;
+  }
+  // A record absent from the normalized cache means lifecycle structure
+  // changed while this paint was queued; the next lifecycle refresh repairs
+  // it without disturbing cards that still have stable identities.
+}
+
+function dashboardCardIds(compact) {
+  return [
+    ...dashRecordings.filter((r) => isInProgress(r.state)),
+    ...dashRecordings
+      .filter((r) => !isInProgress(r.state))
+      .sort((a, b) => recordingTime(b) - recordingTime(a))
+      .slice(0, compact ? 12 : 24),
+  ].map((r) => String(r.id));
+}
+
+function dashboardSignature(compact) {
+  return JSON.stringify({
+    cards: dashboardCardIds(compact),
+    live: (channelCache || []).filter((c) => c.is_live).map((c) => `${c.platform}:${c.id}:${c.viewer_count || 0}`),
+    upcoming: (dashSchedule || []).filter((s) => s.next_fire).map((s) => `${s.channel}:${s.next_fire}`),
+  });
+}
+
+function patchDashboardRecording(card, recording) {
+  const size = card.querySelector("[data-rec-size]");
+  if (size) size.textContent = formatBytes(recording.bytes_written || 0);
+  const state = card.querySelector("[data-rec-state]");
+  if (state) state.innerHTML = isNoteworthyState(recordingDisplayState(recording))
+    ? renderStatePill(recordingDisplayState(recording)) : "";
 }
 
 // ── Home dashboard (Jellyfin-style horizontal carousels) ─────────────
@@ -764,14 +897,14 @@ function recordingsDashboardHtml(compact) {
     : "";
   return `${heading}
     ${liveRow}
-    ${rowEl("In progress", inProgress.length, inProgress.map(recordingPillHtml).join(""), "Nothing recording")}
-    ${rowEl("Recent", null, recent.map(recordingPillHtml).join(""), "No recordings yet — start one from the rail.")}
+    ${rowEl("In progress", inProgress.length, inProgress.map((r) => recordingPillHtml(r, true)).join(""), "Nothing recording")}
+    ${rowEl("Recent", null, recent.map((r) => recordingPillHtml(r, true)).join(""), "No recordings yet — start one from the rail.")}
     ${upcomingRow}`;
 }
 
 // Shared recording media-pill (used by the home dashboard + History): cover
 // thumbnail + title + channel·date + state/size, with a Stop on active rows.
-function recordingPillHtml(j) {
+function recordingPillHtml(j, dashboard = false) {
   const when = j.started_at ? new Date(j.started_at).toLocaleString() : "—";
   const stop = isInProgress(j.state)
     ? `<button class="danger sm" data-action="stop" data-job-id="${htmlEscape(j.id)}">Stop</button>`
@@ -804,7 +937,7 @@ function recordingPillHtml(j) {
   const statePill = isNoteworthyState(state) ? renderStatePill(state) : "";
   const title = htmlEscape(niceTitle(j.stream_title) || j.channel_name || "(recording)");
   return `
-    <div class="media-pill mp-card${j.file_exists === false ? " mp-broken" : ""}${playable ? " mp-clickable" : ""}"${playAttrs}>
+    <div class="media-pill mp-card${j.file_exists === false ? " mp-broken" : ""}${playable ? " mp-clickable" : ""}"${dashboard ? ` data-dashboard-recording="${htmlEscape(j.id)}"` : ""}${playAttrs}>
       <div class="mp-title" title="${title}">${title} ${sourceBadge}</div>
       <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" alt=""
         src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
@@ -812,8 +945,8 @@ function recordingPillHtml(j) {
         <span class="mp-channel">${htmlEscape(j.channel_name || "")}</span>
         <span class="mp-when" title="${htmlEscape(when)}">${htmlEscape(shortWhen(j.started_at))}</span>
         <span class="mp-spacer"></span>
-        ${statePill}
-        <span class="mp-size">${formatBytes(j.bytes_written || 0)}</span>
+        <span data-rec-state>${statePill}</span>
+        <span class="mp-size" data-rec-size>${formatBytes(j.bytes_written || 0)}</span>
         ${stop}
       </div>
     </div>`;
@@ -1809,7 +1942,31 @@ function wireRecordingsViewToggle() {
   });
 }
 
-async function renderRecordings() {
+// The API's first page is a current snapshot, not ownership of the entire
+// client library.  Keep rows reached through Load more and overlay the
+// refreshed records by ID, so lifecycle events cannot collapse a 502-row
+// browse back to its first 500 rows.
+function reconcileRecordingSnapshot(records, nextCursor) {
+  const incoming = new Map((records || []).map((r) => [String(r.id), r]));
+  const seen = new Set();
+  const merged = recCache.map((old) => {
+    const id = String(old.id);
+    seen.add(id);
+    return incoming.get(id) || old;
+  });
+  // New active jobs usually arrive on the first page. Put them first; normal
+  // table sorting decides their final visual position.
+  const additions = (records || []).filter((record) => !seen.has(String(record.id)));
+  recCache = [...additions, ...merged];
+  dashRecordings = recCache;
+  if (nextCursor !== undefined && !recHasLoadedPages) {
+    recNextCursor = nextCursor ?? null;
+  }
+  seedVodDownloadStateFromRecCache();
+}
+
+async function renderRecordings(context = captureRouteContext()) {
+  if (!isRouteCurrent(context)) return;
   // Allow sidebar links / external bookmarks to seed the search box
   // via #/recordings?channel=NAME (audit M2), and pick Table vs Timeline
   // via #/recordings?view=timeline (also what #/history now redirects to).
@@ -1825,41 +1982,38 @@ async function renderRecordings() {
     } catch (_) {}
   }
   if (view === "timeline") {
-    await renderRecordingsTimeline();
+    await renderRecordingsTimeline(context);
     return;
   }
   let recordings = [];
   try {
     const data = await API.recordings();
+    if (!isRouteCurrent(context)) return;
     recordings = data.recordings || [];
     recNextCursor = data.next_cursor ?? null;
   } catch (e) {
     if (e.message.includes("unauthorized")) return;
-    root.innerHTML = chrome(
-      `<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`,
-    );
-    setupChromeHandlers();
+    mountPage(`<div class="empty"><div class="glyph">⚠</div>${htmlEscape(e.message)}</div>`, context);
     return;
   }
+  if (!isRouteCurrent(context)) return;
   root.removeAttribute("aria-busy");
   if (recordings.length === 0) {
-    root.innerHTML = chrome(`
+    if (!mountPage(`
       <h1 class="page-title">Recordings</h1>
       ${recordingsViewToggleHtml("table")}
       <div class="empty">
         <div class="glyph">📁</div>
         No recordings yet. Start one from the Library tab.
       </div>
-    `);
-    setupChromeHandlers();
+    `, context)) return;
     wireRecordingsViewToggle();
     return;
   }
-  recCache = recordings;
-  seedVodDownloadStateFromRecCache();
+  reconcileRecordingSnapshot(recordings, recNextCursor);
   // W4-alt: sortable + filterable data grid. Column headers toggle sort;
   // the filter box narrows by channel/title live without refetching.
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Recordings</h1>
     ${recordingsViewToggleHtml("table")}
     <div class="rec-toolbar">
@@ -1902,25 +2056,28 @@ async function renderRecordings() {
       <tbody id="rec-body"></tbody>
     </table>
     ${recNextCursor != null ? `<button id="rec-load-more" class="button secondary" type="button">Load more recordings</button>` : ""}
-  `);
-  setupChromeHandlers();
+  `, context)) return;
   wireRecordingsViewToggle();
   paintRecordings();
 
   document.getElementById("rec-filter")?.addEventListener("input", (e) => {
     recFilter = e.target.value;
+    recWindowOffset = 0;
     paintRecordings();
   });
   document.getElementById("rec-from")?.addEventListener("change", (e) => {
     recDateFrom = e.target.value;
+    recWindowOffset = 0;
     paintRecordings();
   });
   document.getElementById("rec-to")?.addEventListener("change", (e) => {
     recDateTo = e.target.value;
+    recWindowOffset = 0;
     paintRecordings();
   });
   document.getElementById("rec-clear-range")?.addEventListener("click", () => {
     recDateFrom = ""; recDateTo = "";
+    recWindowOffset = 0;
     const f = document.getElementById("rec-from"); const t = document.getElementById("rec-to");
     if (f) f.value = ""; if (t) t.value = "";
     paintRecordings();
@@ -1990,8 +2147,9 @@ async function renderRecordings() {
     button.textContent = "Loading…";
     try {
       const page = await API.recordings({ cursor: recNextCursor, limit: 500 });
-      recCache.push(...(page.recordings || []));
+      reconcileRecordingSnapshot(page.recordings || []);
       recNextCursor = page.next_cursor ?? null;
+      recHasLoadedPages = true;
       seedVodDownloadStateFromRecCache();
       if (recNextCursor == null) button.remove();
       else {
@@ -2030,7 +2188,8 @@ let histNextCursor = null;
 let histTotal = 0;
 let histRenderLimit = 200;
 
-async function renderRecordingsTimeline() {
+async function renderRecordingsTimeline(context = captureRouteContext()) {
+  if (!isRouteCurrent(context)) return;
   // Fetch history alongside the live /recordings snapshot so we can
   // overlay file_exists state (audit B4). Without this, Timeline happily
   // reports 'Finished, 9 GB' for files the Recordings table knows are
@@ -2041,36 +2200,49 @@ async function renderRecordingsTimeline() {
       API.history().catch(() => ({ history: [] })),
       API.recordings().catch(() => ({ recordings: [] })),
     ]);
+    if (!isRouteCurrent(context)) return;
     hist = h.history || [];
     histNextCursor = h.next_cursor ?? null;
     histTotal = h.total ?? hist.length;
     recs = r.recordings || [];
   } catch (_) {}
+  if (!isRouteCurrent(context)) return;
   const liveById = new Map(recs.map((r) => [r.id, r]));
   histCache = hist.map((row) => {
     const live = liveById.get(row.id);
     if (live && live.file_exists === false) {
       return { ...row, file_exists: false, state: "Failed" };
     }
+    // Carry over SSE-only progress fields the /history snapshot never
+    // has (it's a point-in-time REST fetch of the durable journal, while
+    // RecordingProgress patches only the in-memory recCache array).
+    // Without this a Timeline row for an in-progress job is stuck
+    // showing whatever /history happened to return, however stale.
+    if (live) {
+      const merged = { ...row };
+      for (const k of ["download_pct", "download_eta_secs", "download_rate_bps", "bytes_written", "duration_secs"]) {
+        if (live[k] != null) merged[k] = live[k];
+      }
+      return merged;
+    }
     return row;
   });
   root.removeAttribute("aria-busy");
 
   if (histCache.length === 0) {
-    root.innerHTML = chrome(`
+    if (!mountPage(`
       <h1 class="page-title">Recordings</h1>
       ${recordingsViewToggleHtml("timeline")}
       <div class="empty">
         <div class="glyph">🗂</div>
         No recording history yet. Captures land here automatically.
       </div>
-    `);
-    setupChromeHandlers();
+    `, context)) return;
     wireRecordingsViewToggle();
     return;
   }
 
-  root.innerHTML = chrome(`
+  if (!mountPage(`
     <h1 class="page-title">Recordings</h1>
     ${recordingsViewToggleHtml("timeline")}
     <p class="page-subtitle" id="hist-count"></p>
@@ -2089,8 +2261,7 @@ async function renderRecordingsTimeline() {
     <div id="hist-state-chips" class="rec-state-chips" role="group" aria-label="Filter by state"></div>
     <div id="hist-list" class="media-list"></div>
     ${histNextCursor != null ? `<button id="hist-load-more" class="button secondary" type="button">Load more history</button>` : ""}
-  `);
-  setupChromeHandlers();
+  `, context)) return;
   wireRecordingsViewToggle();
   paintHistHeatmap();
   paintHistChips();
@@ -2134,6 +2305,21 @@ async function renderRecordingsTimeline() {
       Toast.error(`History load failed: ${error.message}`);
     }
   });
+}
+
+// Surgical DOM patch for a single Timeline (`.hist-pill`) row's progress
+// state pill, mirroring patchRecordingRow's role for the Recordings
+// table. Called from the RecordingProgress SSE handler (036-pvr.js) so a
+// live download's percent updates without a full
+// renderRecordingsTimeline re-fetch/re-paint.
+function patchHistPillProgress(job) {
+  if (!job || !job.id) return;
+  const pill = document.querySelector(`.hist-pill[data-job-id="${CSS.escape(job.id)}"]`);
+  if (!pill) return;
+  const meta = pill.querySelector(".mp-meta");
+  if (!meta) return;
+  const existing = meta.querySelector(".state-pill");
+  if (existing) existing.outerHTML = renderStatePill(recordingDisplayState(job));
 }
 
 function paintRecStateChips() {
@@ -2243,10 +2429,78 @@ if (!document.body.dataset.recMenuBound) {
   });
 }
 
-// Apply the live filter + sort to recCache and repaint the table body.
-function paintRecordings() {
+// Normalize display/search/sort values once per record revision.  Progress
+// updates only revise the numeric fields they change, so typing and sorting a
+// long library do not repeatedly run title cleanup/regex work in comparators.
+const recIndexCache = new WeakMap();
+function recordingIndex(r) {
+  const revision = [r.state, r.channel_name, r.stream_title, r.started_at, r.bytes_written].join("\u0001");
+  const cached = recIndexCache.get(r);
+  if (cached && cached.revision === revision) return cached;
+  const index = {
+    revision,
+    state: stateLabel(r.state).toLowerCase(),
+    channel: (r.channel_name || "").toLowerCase(),
+    title: niceTitle(r.stream_title).toLowerCase(),
+    started: recordingTime(r),
+    size: r.bytes_written || 0,
+  };
+  recIndexCache.set(r, index);
+  return index;
+}
+
+function patchRecordingRow(row, recording) {
+  const before = row.dataset.recState;
+  const display = recordingDisplayState(recording);
+  // State transitions change available actions and may move a row between
+  // groups, so use the full keyed reconciliation path for those rare events.
+  if (before !== display.className) return false;
+  if (row.dataset.recSignature !== recordingRowSignature(recording)) return false;
+  row.classList.toggle("rec-sel", recSelected.has(recording.id));
+  const stateCell = row.querySelector("td:nth-child(2)");
+  const stateHtml = renderStatePill(display);
+  if (stateCell.innerHTML !== stateHtml) stateCell.innerHTML = stateHtml;
+  const size = row.querySelector("td:nth-child(6)");
+  if (size) size.textContent = formatBytes(recording.bytes_written || 0);
+  const checkbox = row.querySelector(".rec-row-check");
+  if (checkbox) checkbox.checked = recSelected.has(recording.id);
+  return true;
+}
+
+function updateRecPager(body, totalRows, rendered) {
+  let pager = body.querySelector("[data-rec-pager]")?.closest("tr");
+  if (totalRows <= recRenderLimit) {
+    pager?.remove();
+    return;
+  }
+  if (!pager) {
+    body.insertAdjacentHTML("beforeend", '<tr data-rec-pager><td colspan="7" class="empty sm"></td></tr>');
+    pager = body.lastElementChild;
+  }
+  const signature = `${recWindowOffset}:${recRenderLimit}:${totalRows}:${rendered}`;
+  if (pager.dataset.pageSignature === signature) return;
+  pager.dataset.pageSignature = signature;
+  pager.firstElementChild.innerHTML = `
+    <button id="rec-page-prev" type="button" ${recWindowOffset === 0 ? "disabled" : ""}>Previous ${recRenderLimit}</button>
+    <button id="rec-page-next" type="button" ${recWindowOffset + recRenderLimit >= totalRows ? "disabled" : ""}>Next ${recRenderLimit}</button>
+    <span class="pg-cap-hint"> ${recWindowOffset + 1}–${recWindowOffset + rendered} of ${totalRows}</span>`;
+  pager.querySelector("#rec-page-prev")?.addEventListener("click", () => {
+    recWindowOffset = Math.max(0, recWindowOffset - recRenderLimit);
+    paintRecordings();
+  });
+  pager.querySelector("#rec-page-next")?.addEventListener("click", () => {
+    recWindowOffset = Math.min(totalRows - 1, recWindowOffset + recRenderLimit);
+    paintRecordings();
+  });
+}
+
+// Apply the live filter + sort to recCache. Stable rows are patched in place
+// so SSE progress preserves focused controls, open row menus, selection, and
+// the scroll anchor.
+function paintRecordings(dirtyIds = null) {
   const body = document.getElementById("rec-body");
   if (!body) return;
+  const focusedElement = document.activeElement;
   const q = recFilter.trim().toLowerCase();
   let rows = recCache.filter((r) => {
     if (recStateFilter.size > 0 && !recStateFilter.has(stateClassName(r.state))) return false;
@@ -2259,28 +2513,32 @@ function paintRecordings() {
     }
     if (!q) return true;
     return (
-      (r.channel_name || "").toLowerCase().includes(q) ||
-      niceTitle(r.stream_title).toLowerCase().includes(q)
+      recordingIndex(r).channel.includes(q) || recordingIndex(r).title.includes(q)
     );
   });
   const dir = recSort.dir === "asc" ? 1 : -1;
-  const key = (r) => {
-    switch (recSort.col) {
-      case "state": return stateLabel(r.state).toLowerCase();
-      case "channel": return (r.channel_name || "").toLowerCase();
-      case "title": return niceTitle(r.stream_title).toLowerCase();
-      case "size": return r.bytes_written || 0;
-      case "started":
-      default: return new Date(r.started_at).getTime() || 0;
-    }
-  };
+  const key = (r) => recordingIndex(r)[recSort.col] ?? recordingIndex(r).started;
   rows.sort((a, b) => {
     const ka = key(a), kb = key(b);
     return ka < kb ? -dir : ka > kb ? dir : 0;
   });
   const totalRows = rows.length;
-  const renderRows = rows.slice(0, recRenderLimit);
+  if (recWindowOffset >= rows.length) recWindowOffset = Math.max(0, rows.length - recRenderLimit);
+  const renderRows = rows.slice(recWindowOffset, recWindowOffset + recRenderLimit);
   recVisible = renderRows;
+  const existing = Array.from(body.querySelectorAll("tr[data-rec-row]"));
+  const stableRows = existing.length === renderRows.length &&
+    existing.every((row, i) => row.dataset.recRow === String(renderRows[i].id));
+  if (stableRows && existing.every((row, i) => !dirtyIds || dirtyIds.has(String(renderRows[i].id))
+    ? patchRecordingRow(row, renderRows[i]) : true)) {
+    const count = document.getElementById("rec-count");
+    if (count) count.textContent = `${recCache.length} recordings · ${totalRows} match`;
+    updateRecPager(body, totalRows, renderRows.length);
+    const all = document.getElementById("rec-select-all");
+    if (all) all.checked = renderRows.length > 0 && renderRows.every((r) => recSelected.has(r.id));
+    updateMassbar();
+    return;
+  }
   if (recGroupBy === "channel") {
     // Cluster rows by channel_name while preserving the active sort order
     // within each cluster. Each cluster gets a heading row spanning every
@@ -2293,33 +2551,77 @@ function paintRecordings() {
       if (!byChannel.has(k)) { byChannel.set(k, []); order.push(k); }
       byChannel.get(k).push(r);
     }
-    const html = order.map((ch) => {
+    const existingById = new Map(existing.map((row) => [row.dataset.recRow, row]));
+    const wanted = new Set(renderRows.map((recording) => String(recording.id)));
+    // Group headers are presentation-only. Retire those, then reconcile the
+    // keyed data rows in the still-connected tbody.
+    body.querySelectorAll("tr.rec-group-head, tr[data-rec-pager]").forEach((row) => row.remove());
+    let cursor = body.firstElementChild;
+    for (const ch of order) {
       const list = byChannel.get(ch);
       const totalBytes = list.reduce((a, b) => a + (b.bytes_written || 0), 0);
-      return `<tr class="rec-group-head"><td colspan="7">
+      const template = document.createElement("template");
+      template.innerHTML = `<tr class="rec-group-head"><td colspan="7">
         <span class="rec-group-name">${htmlEscape(ch)}</span>
         <span class="rec-group-meta">${list.length} recording${list.length === 1 ? "" : "s"} · ${formatBytes(totalBytes)}</span>
-      </td></tr>${list.map(recordingRow).join("")}`;
-    }).join("");
-    body.innerHTML = html;
+      </td></tr>`;
+      const header = template.content.firstElementChild;
+      body.insertBefore(header, cursor);
+      for (const recording of list) {
+        let row = existingById.get(String(recording.id));
+        if (!row || !patchRecordingRow(row, recording)) {
+          const previous = row;
+          const rowTemplate = document.createElement("template");
+          rowTemplate.innerHTML = recordingRow(recording).trim();
+          row = rowTemplate.content.firstElementChild;
+          if (previous) {
+            if (cursor === previous) cursor = row;
+            previous.replaceWith(row);
+          }
+        }
+        if (row !== cursor) body.insertBefore(row, cursor);
+        cursor = row.nextElementSibling;
+      }
+    }
+    for (const row of Array.from(body.querySelectorAll("tr[data-rec-row]"))) {
+      if (!wanted.has(row.dataset.recRow)) row.remove();
+    }
   } else {
-    body.innerHTML = renderRows.map(recordingRow).join("");
+    // Reconcile in the connected tbody. `replaceChildren(fragment)` would
+    // briefly disconnect every focused row; insertBefore moves only rows
+    // whose position changed and leaves an unrelated open menu in place.
+    const existingById = new Map(existing.map((row) => [row.dataset.recRow, row]));
+    const wanted = new Set(renderRows.map((recording) => String(recording.id)));
+    let cursor = body.firstElementChild;
+    for (const recording of renderRows) {
+      let row = existingById.get(String(recording.id));
+      if (!row || !patchRecordingRow(row, recording)) {
+        const previous = row;
+        const template = document.createElement("template");
+        template.innerHTML = recordingRow(recording).trim();
+        row = template.content.firstElementChild;
+        if (previous) {
+          if (cursor === previous) cursor = row;
+          previous.replaceWith(row);
+        }
+      }
+      if (row !== cursor) body.insertBefore(row, cursor);
+      cursor = row.nextElementSibling;
+    }
+    for (const row of Array.from(body.querySelectorAll("tr[data-rec-row]"))) {
+      if (!wanted.has(row.dataset.recRow)) row.remove();
+    }
+    // Footer/group rows are derived presentation and are rebuilt below.
+    body.querySelectorAll("tr[data-rec-pager]").forEach((row) => row.remove());
   }
-  if (renderRows.length < totalRows) {
-    body.insertAdjacentHTML("beforeend", `<tr><td colspan="7" class="empty sm">
-      <button id="rec-show-more" type="button">Show ${Math.min(200, totalRows - renderRows.length)} more</button>
-      <span class="pg-cap-hint"> ${renderRows.length} of ${totalRows} rendered</span>
-    </td></tr>`);
-    body.querySelector("#rec-show-more")?.addEventListener("click", () => {
-      recRenderLimit += 200;
-      paintRecordings();
-    });
-  }
+  updateRecPager(body, totalRows, renderRows.length);
   const count = document.getElementById("rec-count");
   if (count) {
     count.textContent = `${recCache.length} recordings · ${totalRows} match`;
   }
   body.querySelectorAll("[data-action=stop]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", async () => {
       if (!(await confirmDialog("Stop this recording?", { ok: "Stop", danger: true })))
         return;
@@ -2331,6 +2633,8 @@ function paintRecordings() {
     });
   });
   body.querySelectorAll("[data-action=rec-play]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const id = btn.dataset.jobId;
@@ -2338,18 +2642,26 @@ function paintRecordings() {
     });
   });
   body.querySelectorAll("[data-action=rec-info]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       openRecordingInfo(btn.dataset.jobId);
     });
   });
   body.querySelectorAll("[data-action=rec-rescan]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", (e) => { e.stopPropagation(); reScanRecording(btn); });
   });
   body.querySelectorAll("[data-action=rec-locate]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", (e) => { e.stopPropagation(); showRecordingPath(btn.dataset.path); });
   });
   body.querySelectorAll("[data-action=rec-delete]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!(await confirmDialog("Delete this recording? The file moves to the 7-day trash.", { ok: "Delete", danger: true })))
@@ -2365,6 +2677,8 @@ function paintRecordings() {
     });
   });
   body.querySelectorAll("[data-action=rec-rerecord]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       closeAllRecRowMenus();
@@ -2385,6 +2699,8 @@ function paintRecordings() {
     });
   });
   body.querySelectorAll("[data-action=rec-remux]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       closeAllRecRowMenus();
@@ -2401,6 +2717,8 @@ function paintRecordings() {
   // closes it. Delegated on body rather than per-row so N rows cost one
   // listener, matching the rest of this table's wiring.
   body.querySelectorAll("[data-action=rec-menu-toggle]").forEach((btn) => {
+    if (btn.dataset.recBound) return;
+    btn.dataset.recBound = "1";
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const list = btn.nextElementSibling;
@@ -2445,6 +2763,8 @@ function paintRecordings() {
     });
   }
   body.querySelectorAll("tr[data-rec-row]").forEach((tr) => {
+    if (tr.dataset.recBound) return;
+    tr.dataset.recBound = "1";
     if (!tr.hasAttribute("tabindex")) tr.tabIndex = 0;
     tr.addEventListener("click", (e) => {
       if (e.target.closest("button, input, a")) return;
@@ -2478,20 +2798,12 @@ function paintRecordings() {
   //   Ctrl/Cmd+click row body   → toggle this row (without opening Info)
   //   Plain click row body      → open Info modal (handled below)
   body.querySelectorAll(".rec-row-check").forEach((cb) => {
-    // C4/C11/C18: native checkbox toggles on Space BEFORE our click
-    // listener can preventDefault, so we'd see the native flip then
-    // our handler ran a second toggle. Intercept Space in keydown
-    // (with preventDefault) so only the click-path semantics decide.
-    cb.addEventListener("keydown", (e) => {
-      if (e.key === " " || e.code === "Space") {
-        e.preventDefault();
-        cb.click();
-      }
-    });
-    // Suppress the native `change`; a `click` handler with
-    // `preventDefault` implements range semantics.
-    cb.addEventListener("click", (e) => {
-      e.preventDefault();
+    if (cb.dataset.recBound) return;
+    cb.dataset.recBound = "1";
+    // Let the native input commit first, then synchronize our selection on
+    // change. This keeps programmatic `.check()` and keyboard Space truthful
+    // while retaining the range-selection extension.
+    cb.addEventListener("change", (e) => {
       const id = cb.dataset.jobId;
       if (e.shiftKey && recAnchorId) {
         const ids = visibleRecordingIds();
@@ -2502,8 +2814,8 @@ function paintRecordings() {
           for (let k = lo; k <= hi; k++) recSelected.add(ids[k]);
         }
       } else {
-        if (recSelected.has(id)) recSelected.delete(id);
-        else recSelected.add(id);
+        if (cb.checked) recSelected.add(id);
+        else recSelected.delete(id);
         recAnchorId = id;
       }
       paintRecordings();
@@ -2515,11 +2827,19 @@ function paintRecordings() {
     all.checked = vis.length > 0 && vis.every((id) => recSelected.has(id));
   }
   updateMassbar();
+  if (focusedElement?.isConnected && document.activeElement !== focusedElement) {
+    focusedElement.focus({ preventScroll: true });
+  }
 }
 
 // IDs currently visible after filter/sort (for select-all + mass actions).
 let recVisible = [];
 let recRenderLimit = 200;
+let recWindowOffset = 0;
+// `null` cursor means either an initial page has no continuation or every
+// page has been loaded. Keep that distinction so an SSE first-page refresh
+// cannot reintroduce a Load more control after exhaustive browsing.
+let recHasLoadedPages = false;
 function visibleRecordingIds() {
   return recVisible.map((r) => r.id);
 }
@@ -2541,6 +2861,7 @@ function updateMassbar() {
     bar.hidden = true;
     bar.classList.remove("massbar-empty");
     bar.innerHTML = "";
+    delete bar.dataset.selectionSignature;
     return;
   }
   bar.classList.remove("massbar-empty");
@@ -2550,6 +2871,9 @@ function updateMassbar() {
   // so the Remux button is only offered when it could actually help.
   const remuxable = sel.filter((r) => stateClassName(r.state) === "finished" && r.file_exists !== false);
   const deletable = sel.filter((r) => r.file_exists !== false || stateClassName(r.state) !== "recording");
+  const selectionSignature = JSON.stringify(sel.map((r) => [r.id, recordingRowSignature(r)]));
+  if (bar.dataset.selectionSignature === selectionSignature) return;
+  bar.dataset.selectionSignature = selectionSignature;
   bar.innerHTML = `
     <span class="massbar-count">${sel.length} selected</span>
     ${active.length ? `<button id="mass-stop" class="danger sm">Stop ${active.length} active</button>` : ""}
@@ -2652,6 +2976,14 @@ function recThumb(r) {
   </span>`;
 }
 
+function recordingRowSignature(r) {
+  const display = recordingDisplayState(r);
+  return [
+    display.className, r.channel_name, r.stream_title, r.started_at,
+    r.file_exists, r.output_path, r.source_url, r.channel_id, r.platform,
+  ].map((value) => String(value ?? "")).join("\u0001");
+}
+
 // Stable hash → hue so the same channel always gets the same colour, but
 // different channels get different ones across the rail.
 function thumbHue(s) {
@@ -2707,7 +3039,7 @@ function recordingRow(r) {
     : "";
   const actions = `${playBtn}${fileErrorBtns}${tailBtns}`;
   return `
-    <tr class="${recSelected.has(r.id) ? "rec-sel" : ""}" data-rec-row="${htmlEscape(r.id)}">
+    <tr class="${recSelected.has(r.id) ? "rec-sel" : ""}" data-rec-row="${htmlEscape(r.id)}" data-rec-state="${htmlEscape(stateClass)}" data-rec-signature="${htmlEscape(recordingRowSignature(r))}">
       <td class="rec-check"><input type="checkbox" class="rec-row-check" data-job-id="${htmlEscape(r.id)}" ${recSelected.has(r.id) ? "checked" : ""} aria-label="Select recording"></td>
       <td>${renderStatePill(disp)}</td>
       <td>${htmlEscape(r.channel_name)}</td>
@@ -2948,4 +3280,3 @@ function renderGantt(items) {
     </div>
   `;
 }
-

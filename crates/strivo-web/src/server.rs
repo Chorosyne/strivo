@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,6 +44,13 @@ pub struct AppState {
     /// FFprobe is disk and process intensive. Bound concurrent probes so a
     /// gallery of Info modals cannot starve active recordings.
     pub probe_slots: Arc<tokio::sync::Semaphore>,
+    /// Thumbnail extraction is lower priority than probe/remux work and is
+    /// additionally serialised per recording.  A cold gallery must not turn
+    /// into one ffmpeg process per visible card.
+    pub thumbnail_slots: Arc<tokio::sync::Semaphore>,
+    pub thumbnail_locks:
+        Arc<tokio::sync::Mutex<HashMap<uuid::Uuid, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
+    pub thumbnail_failures: Arc<tokio::sync::Mutex<HashMap<uuid::Uuid, std::time::Instant>>>,
     /// One shared `jobs.db` handle for the whole web process, mirroring the
     /// daemon's single `Arc<Mutex<Connection>>`. Opening per request re-ran
     /// the full PRAGMA + `CREATE TABLE IF NOT EXISTS` batch
@@ -92,6 +100,9 @@ impl AppState {
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            thumbnail_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            thumbnail_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            thumbnail_failures: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             jobs_db: Arc::new(tokio::sync::OnceCell::new()),
             jobs_db_path: Arc::new(strivo_core::config::AppConfig::data_dir().join("jobs.db")),
         }
@@ -150,6 +161,9 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         login_limiter: crate::ratelimit::LoginLimiter::new(),
         probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         probe_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+        thumbnail_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+        thumbnail_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        thumbnail_failures: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         jobs_db: Arc::new(tokio::sync::OnceCell::new()),
         jobs_db_path: Arc::new(strivo_core::config::AppConfig::data_dir().join("jobs.db")),
     };

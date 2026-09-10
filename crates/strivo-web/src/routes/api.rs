@@ -32,6 +32,7 @@ use crate::problem::Problem;
 // Archiver's own `[archiver]` config.toml section isn't a strivo-core
 // type (see ADR 0001 CE01) — it's owned by strivo-plugins, which this
 // crate already depends on under the creator feature.
+use std::time::Duration;
 #[cfg(feature = "creator")]
 use strivo_plugins::archiver::types::ArchiverConfig;
 use uuid::Uuid;
@@ -117,6 +118,61 @@ fn page_bounds(total: usize, query: &PageQuery) -> (usize, usize, Option<usize>)
     (start, end, next)
 }
 
+/// The journal is the archive authority; the daemon snapshot is only an
+/// overlay for jobs which are still present in memory.  Keeping this lookup
+/// here makes detail, media serving, probing and artwork agree about what an
+/// archived recording is.
+pub(crate) async fn resolve_recording(
+    state: &AppState,
+    id: Uuid,
+) -> Result<strivo_core::recording::job::RecordingJob, String> {
+    if let Ok(Ok(ServerMessage::StateSnapshot { recordings, .. })) =
+        tokio::time::timeout(Duration::from_secs(2), state.ipc.snapshot()).await
+    {
+        if let Some(job) = recordings.get(&id) {
+            return Ok(job.clone());
+        }
+    }
+    let db = state.jobs_db().await?;
+    db.load_recording_job(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "recording not found".to_string())
+}
+
+async fn thumbnail_lock(state: &AppState, id: Uuid) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut locks = state.thumbnail_locks.lock().await;
+    locks.retain(|_, weak| weak.strong_count() > 0);
+    if let Some(lock) = locks.get(&id).and_then(std::sync::Weak::upgrade) {
+        lock
+    } else {
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(id, std::sync::Arc::downgrade(&lock));
+        lock
+    }
+}
+
+fn combined_page_bounds(
+    extras_total: usize,
+    start: usize,
+    limit: usize,
+) -> (usize, usize, usize, usize) {
+    let extra_start = start.min(extras_total);
+    let extra_end = extra_start.saturating_add(limit).min(extras_total);
+    let durable_start = start.saturating_sub(extras_total);
+    let durable_room = limit.saturating_sub(extra_end - extra_start);
+    (extra_start, extra_end, durable_start, durable_room)
+}
+
+async fn thumbnail_failed_recently(state: &AppState, id: Uuid) -> bool {
+    state
+        .thumbnail_failures
+        .lock()
+        .await
+        .get(&id)
+        .is_some_and(|at| at.elapsed() < Duration::from_secs(30))
+}
+
 async fn recordings(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -125,15 +181,62 @@ async fn recordings(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
-        Ok(ServerMessage::StateSnapshot { recordings, .. }) => {
-            // recordings is a HashMap<Uuid, RecordingJob>; flatten to a list
-            // so the response is stable and order-by-newest-first.
-            let mut items: Vec<_> = recordings.into_values().collect();
-            items.sort_by_key(|r| std::cmp::Reverse(r.started_at));
-            let total = items.len();
-            let (start, end, next_cursor) = page_bounds(total, &query);
-            let augmented: Vec<_> = items[start..end].iter().map(augment_recording).collect();
+    let db = match state.jobs_db().await {
+        Ok(db) => db,
+        Err(e) => return crate::problem::Problem::unavailable(e).into_response(),
+    };
+    let start = query.cursor.unwrap_or(0);
+    let limit = query.limit.unwrap_or(500).clamp(1, 500);
+    let snapshot = match tokio::time::timeout(Duration::from_secs(2), state.ipc.snapshot()).await {
+        Ok(Ok(ServerMessage::StateSnapshot { recordings, .. })) => Some(recordings),
+        _ => None,
+    };
+    let mut live_extras = Vec::new();
+    if let Some(recordings) = snapshot.as_ref() {
+        for live in recordings.values() {
+            if matches!(
+                live.state,
+                strivo_core::recording::job::RecordingState::Finished
+                    | strivo_core::recording::job::RecordingState::Failed
+            ) {
+                continue;
+            }
+            if db
+                .load_recording_job(live.id)
+                .await
+                .ok()
+                .flatten()
+                .is_none()
+            {
+                live_extras.push(live.clone());
+            }
+        }
+    }
+    live_extras.sort_by_key(|r| std::cmp::Reverse(r.started_at));
+    let extras_total = live_extras.len();
+    let (extra_start, extra_end, durable_start, durable_room) =
+        combined_page_bounds(extras_total, start, limit);
+    let mut items = live_extras[extra_start..extra_end].to_vec();
+    // Ask for one row even when live items fill this page: the query also
+    // returns the durable total needed to produce a progressing cursor.
+    match db
+        .load_recording_jobs_page(durable_start, durable_room.max(1))
+        .await
+    {
+        Ok((mut durable, durable_total)) => {
+            durable.truncate(durable_room);
+            if let Some(recordings) = snapshot.as_ref() {
+                for item in &mut durable {
+                    if let Some(live) = recordings.get(&item.id) {
+                        *item = live.clone();
+                    }
+                }
+            }
+            items.append(&mut durable);
+            let total = extras_total.saturating_add(durable_total);
+            let end = start.saturating_add(items.len());
+            let next_cursor = (end < total).then_some(end);
+            let augmented: Vec<_> = items.iter().map(augment_recording).collect();
             Json(json!({
                 "recordings": augmented,
                 "total": total,
@@ -141,8 +244,7 @@ async fn recordings(
             }))
             .into_response()
         }
-        Ok(_) => Json(json!({ "recordings": [] })).into_response(),
-        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+        Err(e) => crate::problem::Problem::internal(e.to_string()).into_response(),
     }
 }
 
@@ -154,13 +256,12 @@ async fn recording_one(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
-        Ok(ServerMessage::StateSnapshot { recordings, .. }) => match recordings.get(&id) {
-            Some(j) => Json(augment_recording(j)).into_response(),
-            None => crate::problem::Problem::not_found("recording not found").into_response(),
-        },
-        Ok(_) => crate::problem::Problem::internal("unexpected response").into_response(),
-        Err(e) => crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    match resolve_recording(&state, id).await {
+        Ok(job) => Json(augment_recording(&job)).into_response(),
+        Err(e) if e == "recording not found" => {
+            crate::problem::Problem::not_found(e).into_response()
+        }
+        Err(e) => crate::problem::Problem::unavailable(e).into_response(),
     }
 }
 
@@ -178,15 +279,12 @@ async fn recording_probe(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let path = match state.ipc.snapshot().await {
-        Ok(ServerMessage::StateSnapshot { recordings, .. }) => match recordings.get(&id) {
-            Some(j) => j.output_path.clone(),
-            None => {
-                return crate::problem::Problem::not_found("recording not found").into_response()
-            }
-        },
-        Ok(_) => return crate::problem::Problem::internal("unexpected response").into_response(),
-        Err(e) => return crate::problem::Problem::unavailable(e.to_string()).into_response(),
+    let path = match resolve_recording(&state, id).await {
+        Ok(job) => job.output_path,
+        Err(e) if e == "recording not found" => {
+            return crate::problem::Problem::not_found(e).into_response()
+        }
+        Err(e) => return crate::problem::Problem::unavailable(e).into_response(),
     };
     if !path.exists() {
         return crate::problem::Problem::not_found("file missing").into_response();
@@ -233,7 +331,9 @@ async fn recording_probe(
         }
     }
     let probe_started = std::time::Instant::now();
-    let out = match tokio::process::Command::new("ffprobe")
+    let mut probe = tokio::process::Command::new("ffprobe");
+    probe.kill_on_drop(true);
+    probe
         .args([
             "-v",
             "error",
@@ -242,15 +342,14 @@ async fn recording_probe(
             "-show_format",
             "-show_streams",
         ])
-        .arg(&canonical)
-        .output()
-        .await
-    {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        .arg(&canonical);
+    let out = match tokio::time::timeout(Duration::from_secs(30), probe.output()).await {
+        Ok(Ok(o)) => o,
+        Err(_) => return crate::problem::Problem::unavailable("ffprobe timed out").into_response(),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             return crate::problem::Problem::unavailable("ffprobe not installed").into_response();
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             return crate::problem::Problem::internal(format!("ffprobe spawn: {e}"))
                 .into_response();
         }
@@ -1055,16 +1154,19 @@ async fn recording_thumb(
     if let Ok(bytes) = tokio::fs::read(&cache_path).await {
         return thumb_response(bytes);
     }
-
-    // Fall through to ffmpeg extraction.
-    let source = match state.ipc.snapshot().await {
-        Ok(ServerMessage::StateSnapshot { recordings, .. }) => recordings
-            .get(&id)
-            .map(|r| (r.output_path.clone(), r.bytes_written)),
-        _ => None,
-    };
+    if thumbnail_failed_recently(&state, id).await {
+        return crate::problem::Problem::not_found("no thumbnail: recent extraction failed")
+            .into_response();
+    }
+    // Fall through to ffmpeg extraction. Archived jobs resolve through the
+    // durable journal, so old artwork remains available after snapshot eviction.
+    let source = resolve_recording(&state, id)
+        .await
+        .ok()
+        .map(|r| (r.output_path, r.bytes_written));
     let Some((output_path, bytes_written)) = source else {
-        return crate::problem::Problem::not_found("no thumbnail: not in snapshot").into_response();
+        return crate::problem::Problem::not_found("no thumbnail: recording not found")
+            .into_response();
     };
     if bytes_written == 0 {
         return crate::problem::Problem::not_found("no thumbnail: zero bytes").into_response();
@@ -1077,12 +1179,45 @@ async fn recording_thumb(
         .into_response();
     }
 
-    match extract_thumb_with_ffmpeg(&output_path, &cache_path).await {
-        Ok(bytes) => thumb_response(bytes),
+    let lock = thumbnail_lock(&state, id).await;
+    let _job_lock = lock.lock().await;
+    // A peer may have filled the cache while this request waited for its ID.
+    if let Ok(bytes) = tokio::fs::read(&cache_path).await {
+        return thumb_response(bytes);
+    }
+    if thumbnail_failed_recently(&state, id).await {
+        return crate::problem::Problem::not_found("no thumbnail: recent extraction failed")
+            .into_response();
+    }
+    let _thumbnail_permit = match state.thumbnail_slots.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return crate::problem::Problem::unavailable("thumbnail queue closed").into_response();
+        }
+    };
+    let _media_permit = match state.probe_slots.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            return crate::problem::Problem::unavailable("media worker pool closed")
+                .into_response();
+        }
+    };
+    let response = match extract_thumb_with_ffmpeg(&output_path, &cache_path).await {
+        Ok(bytes) => {
+            state.thumbnail_failures.lock().await.remove(&id);
+            thumb_response(bytes)
+        }
         Err(e) => {
+            let mut failures = state.thumbnail_failures.lock().await;
+            failures.insert(id, std::time::Instant::now());
+            if failures.len() > 1_024 {
+                failures.clear();
+                failures.insert(id, std::time::Instant::now());
+            }
             crate::problem::Problem::not_found(format!("no thumbnail: ffmpeg: {e}")).into_response()
         }
-    }
+    };
+    response
 }
 
 fn thumb_response(bytes: Vec<u8>) -> axum::response::Response {
@@ -1094,6 +1229,16 @@ fn thumb_response(bytes: Vec<u8>) -> axum::response::Response {
         bytes,
     )
         .into_response()
+}
+
+/// Best-effort cleanup also runs when the request future is cancelled while a
+/// child is being killed.  The temp name is unique, so removing it cannot
+/// affect a concurrent extraction.
+struct ThumbnailTemp(std::path::PathBuf);
+impl Drop for ThumbnailTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Extract a single jpg frame at ~10s into the file and cache it. Writes to
@@ -1112,13 +1257,22 @@ async fn extract_thumb_with_ffmpeg(
     // "Unable to choose an output format". Keeping `.jpg` last and
     // `-f image2 -update 1` belt-and-suspenders works on every ffmpeg
     // we ship against.
-    let tmp = cache_path.with_extension("tmp.jpg");
+    let tmp = cache_path.with_file_name(format!(
+        ".{}.{}.tmp.jpg",
+        cache_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("thumbnail"),
+        Uuid::new_v4()
+    ));
+    let _cleanup = ThumbnailTemp(tmp.clone());
 
     // -ss before -i is the fast keyframe seek; -frames:v 1 caps output;
     // scale=440:-2 matches the cd-poster width and keeps an even height for
     // mjpeg. -q:v 5 is a good size/quality midpoint. -f image2 -update 1
     // pins the muxer to single-image jpeg.
     let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.kill_on_drop(true);
     cmd.args(["-nostdin", "-y", "-ss", "10", "-i"])
         .arg(source)
         .args([
@@ -1134,11 +1288,16 @@ async fn extract_thumb_with_ffmpeg(
             "1",
         ])
         .arg(&tmp);
-    let status = cmd.output().await?;
+    let status = match tokio::time::timeout(Duration::from_secs(30), cmd.output()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(anyhow::anyhow!("ffmpeg thumbnail timed out")),
+    };
     if !status.status.success() || tokio::fs::metadata(&tmp).await.is_err() {
         // Stream may be <10s; retry at 0s before giving up.
         let _ = tokio::fs::remove_file(&tmp).await;
         let mut cmd = tokio::process::Command::new("ffmpeg");
+        cmd.kill_on_drop(true);
         cmd.args(["-nostdin", "-y", "-ss", "0", "-i"])
             .arg(source)
             .args([
@@ -1154,7 +1313,11 @@ async fn extract_thumb_with_ffmpeg(
                 "1",
             ])
             .arg(&tmp);
-        let status = cmd.output().await?;
+        let status = match tokio::time::timeout(Duration::from_secs(30), cmd.output()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => return Err(anyhow::anyhow!("ffmpeg thumbnail timed out")),
+        };
         if !status.status.success() {
             return Err(anyhow::anyhow!(
                 "ffmpeg exit {}: {}",
@@ -1168,9 +1331,9 @@ async fn extract_thumb_with_ffmpeg(
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(anyhow::anyhow!("ffmpeg produced no frame"));
     }
-    // Atomic rename; ignore the case where another concurrent extract already
-    // landed (read above succeeded so we have the bytes either way).
-    let _ = tokio::fs::rename(&tmp, cache_path).await;
+    tokio::fs::rename(&tmp, cache_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("install thumbnail cache: {e}"))?;
     Ok(bytes)
 }
 
@@ -1282,15 +1445,24 @@ async fn remux_recording(
             return crate::problem::Problem::unavailable("media worker pool closed").into_response()
         }
     };
-    let status = tokio::process::Command::new("ffmpeg")
+    let mut remux = tokio::process::Command::new("ffmpeg");
+    remux.kill_on_drop(true);
+    remux
         .args(["-y", "-hide_banner", "-loglevel", "warning"])
         .arg("-i")
         .arg(&input)
         .args(["-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "matroska"])
-        .arg(&tmp)
-        .status()
-        .await;
-    let ok = matches!(status, Ok(s) if s.success());
+        .arg(&tmp);
+    // A multi-hour archive can take more than two minutes merely to copy.
+    // Keep a finite deadline, with a conservative 4 MiB/s allowance plus
+    // startup overhead, instead of timing out healthy large-file remuxes.
+    let input_bytes = tokio::fs::metadata(&input)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let remux_deadline = Duration::from_secs(120 + input_bytes.div_ceil(4 * 1024 * 1024));
+    let status = tokio::time::timeout(remux_deadline, remux.status()).await;
+    let ok = matches!(status, Ok(Ok(s)) if s.success());
     if !ok {
         let _ = std::fs::remove_file(&tmp);
         return crate::problem::Problem::internal("ffmpeg remux failed").into_response();

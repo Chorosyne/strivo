@@ -1131,6 +1131,7 @@ function injectKeyboardHelp() {
 // RecordingProgress handler so a busy session with multiple downloads
 // in flight doesn't full-repaint the recordings grid 4×/tick.
 let _pendingPaint = null;
+const _pendingRecordingProgressIds = new Set();
 function schedulePaint(fn) {
   if (_pendingPaint) {
     _pendingPaint = fn; // overwrite — latest paint wins, prior coalesced.
@@ -1167,13 +1168,17 @@ events.on((event) => {
   const onHome = currentRoute() === "library";
 
   if (event.ChannelsUpdated) {
+    API.invalidate("/channels");
     channelCache = event.ChannelsUpdated || [];
     paintChannelListSoon();
   }
   if (event.ChannelWentLive || event.ChannelWentOffline) {
     // Refetch so the new live state (and ordering) is reflected.
+    API.invalidate("/channels");
+    const generation = API._generationFor("/channels");
     API.channels()
       .then((d) => {
+        if (API._generationFor("/channels") !== generation) return;
         channelCache = d.channels || [];
         paintChannelListSoon();
       })
@@ -1183,7 +1188,11 @@ events.on((event) => {
   // High-frequency progress: update the in-memory job + the dashboard
   // subtree in place. No rail/detail rebuild.
   if (event.RecordingProgress && recCache.length) {
+    // Progress already patches the shared records below. Retiring in-flight
+    // reads on every tick could starve them when many jobs report faster
+    // than a request completes; lifecycle events own invalidation.
     const p = event.RecordingProgress;
+    _pendingRecordingProgressIds.add(String(p.job_id));
     const j = recCache.find((r) => r.id === p.job_id);
     if (j) {
       j.bytes_written = p.bytes_written;
@@ -1197,6 +1206,25 @@ events.on((event) => {
       // the whole channel detail every 2s).
       updateVodProgressDom(j);
     }
+    // Timeline rows are built from a separate REST snapshot (histCache,
+    // 012-pvr.js) that never sees SSE ticks on its own — patch it in
+    // parallel so a Timeline visit isn't stuck on stale numbers.
+    if (typeof histCache !== "undefined" && histCache.length) {
+      const h = histCache.find((r) => r.id === p.job_id);
+      if (h) {
+        h.bytes_written = p.bytes_written;
+        h.duration_secs = p.duration_secs;
+        if (p.download_pct != null) h.download_pct = p.download_pct;
+        if (p.download_eta_secs != null) h.download_eta_secs = p.download_eta_secs;
+        if (p.download_rate_bps != null) h.download_rate_bps = p.download_rate_bps;
+        if (currentRoute() === "recordings" && typeof patchHistPillProgress === "function") {
+          patchHistPillProgress(h);
+        }
+      }
+    }
+    // Recording Info modal, if open on this job, gets a live patch too
+    // (028-pvr.js tracks which job's modal is open and no-ops otherwise).
+    if (typeof updateRecInfoModalProgress === "function") updateRecInfoModalProgress(p);
     updateLiveCount();
     // Coalesce broader-subtree repaints to one per animation frame.
     // The SSE stream fires RecordingProgress every ~2s per active job;
@@ -1204,21 +1232,29 @@ events.on((event) => {
     // per tick. updateVodProgressDom already did the surgical pill
     // update, so this is purely for the wider grid/dashboard refresh.
     schedulePaint(() => {
-      if (currentRoute() === "recordings") paintRecordings();
-      else paintDashboard();
+      const dirty = new Set(_pendingRecordingProgressIds);
+      _pendingRecordingProgressIds.clear();
+      if (currentRoute() === "recordings") paintRecordings(dirty);
+      else paintDashboard(dirty);
     });
   }
 
   // Lifecycle state changes (rare): refetch recordings, refresh the
   // dashboard + rail rec-dots, without rebuilding the detail.
   if (event.RecordingStarted || event.RecordingFinished || event.AllRecordingsStopped) {
+    // SSE is authoritative. Retire a just-read snapshot before requesting a
+    // replacement and ignore a superseded refresh if another event follows.
+    API.invalidate("/recordings");
+    const generation = API._generationFor("/recordings");
     API.recordings()
       .then((d) => {
-        recCache = d.recordings || [];
-        dashRecordings = recCache;
-        seedVodDownloadStateFromRecCache();
+        if (API._generationFor("/recordings") !== generation) return;
+        reconcileRecordingSnapshot(d.recordings || [], d.next_cursor);
         updateLiveCount();
-        if (currentRoute() === "recordings") renderRecordings().catch(() => {});
+        if (currentRoute() === "recordings") {
+          paintRecStateChips();
+          paintRecordings();
+        }
         else {
           paintDashboard();
           paintChannelList();
@@ -1240,10 +1276,15 @@ events.on((event) => {
   if (event.RecordingsPruned) {
     const ids = new Set(event.RecordingsPruned.job_ids || []);
     if (ids.size) {
+      API.invalidate("/recordings");
+      API.invalidate("/history");
       recCache = recCache.filter((r) => !ids.has(r.id));
       dashRecordings = recCache;
       updateLiveCount();
-      if (currentRoute() === "recordings") renderRecordings().catch(() => {});
+      if (currentRoute() === "recordings") {
+        paintRecStateChips();
+        paintRecordings();
+      }
       else { paintDashboard(); paintChannelList(); }
     }
   }
@@ -1383,4 +1424,3 @@ if (typeof window !== "undefined") {
     /* private mode / blocked storage — hooks simply stay off */
   }
 }
-
