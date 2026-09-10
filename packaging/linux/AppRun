@@ -1,0 +1,10 @@
+#!/bin/sh
+# AppImage entry point. strivo's own tool resolver (src/tools.rs) already
+# checks the directory the running executable lives in before falling back
+# to PATH, and every bundled tool below sits flat in usr/bin/ next to
+# strivo itself -- so prepending PATH here is redundant with that, not
+# load-bearing. Kept anyway because it's the standard AppImage convention
+# and costs nothing.
+HERE="$(dirname "$(readlink -f "${0}")")"
+export PATH="${HERE}/usr/bin:${PATH}"
+exec "${HERE}/usr/bin/strivo" "$@"

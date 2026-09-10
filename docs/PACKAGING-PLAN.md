@@ -6,9 +6,19 @@ lands; the ADR stays frozen.
 
 ## Status
 
-Proposed / not yet implemented. Three open items block starting real build
-work (see **Open decisions** at the bottom) — this plan is written so each
-platform's track can start independently once its own blockers clear.
+- **Linux**: implemented and verified. `packaging/linux/build-appimage.sh`
+  builds a real AppImage bundling ffmpeg/ffprobe/streamlink/yt-dlp (mpv
+  stays a host dependency, see the table below); `scripts/get-strivo.sh` is
+  the consumer-facing terminal installer/launcher. Verified end-to-end
+  locally: built a real AppImage, ran `strivo doctor` inside it (bundled
+  tools resolved from `usr/bin/`, correct paths), and directly executed the
+  nested ffmpeg/streamlink/yt-dlp to confirm they actually run, not just
+  resolve. Wired into `release.yml`'s `build-linux` job and the `publish`
+  job's artifact list.
+- **Windows**: in progress (Inno Setup track).
+- **macOS**: parked for now, per operator direction — the existing raw
+  `.tar.gz` release artifact is unaffected; the new bundled `.app`/`.dmg`
+  track from ADR 0003 is deferred, not abandoned.
 
 ## Shared groundwork (do first, all three platforms depend on it)
 

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=StriVo
+GenericName=Live Stream PVR
+Comment=Self-hosted live-stream PVR for Twitch, YouTube, and Patreon
+Exec=strivo
+Icon=strivo
+Terminal=false
+Categories=AudioVideo;Network;Recorder;
+StartupNotify=false

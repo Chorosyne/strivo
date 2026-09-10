@@ -81,6 +81,21 @@ jobs:
             dist/${{ steps.stage.outputs.pkg }}.tar.gz
             dist/${{ steps.stage.outputs.pkg }}.tar.gz.sha256
 
+      # mpv stays a host dependency on Linux for now (no verified static
+      # build exists) -- see packaging/vendored-deps.toml.
+      - name: Build AppImage (ffmpeg/streamlink/yt-dlp bundled)
+        run: |
+          mkdir -p dist/appimage
+          packaging/linux/build-appimage.sh target/release/strivo dist/appimage
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-appimage
+          path: |
+            dist/appimage/*.AppImage
+            dist/appimage/*.AppImage.sha256
+
   build-macos:
     name: Build x86_64-apple-darwin tarball
     if: github.event_name != 'workflow_dispatch' || inputs.macos
@@ -204,6 +219,7 @@ jobs:
         with:
           files: |
             dist/linux-tarball/*
+            dist/linux-appimage/*
             dist/macos-tarball/*
             dist/windows-zip/*
           generate_release_notes: true
