@@ -88,7 +88,10 @@
       const path = el.getAttribute("data-stg-path");
       let value;
       if (el.type === "checkbox") value = el.checked;
-      else if (el.type === "number") value = parseInt(el.value, 10);
+      else if (el.type === "number") value = el.value === "" && el.dataset.stgNullEmpty === "true"
+        ? null
+        : Number(el.value);
+      else if (el.dataset.stgNullEmpty === "true" && !el.value.trim()) value = null;
       else value = (el.value || "").trim();
       const previous = el.type === "checkbox"
         ? !el.checked
@@ -104,27 +107,86 @@
           validUrl = u.protocol === "http:" || u.protocol === "https:";
         } catch { validUrl = false; }
         if (!validUrl) {
-          el.setAttribute("aria-invalid", "true");
+          setSettingsFieldError(el, "Webhook URL must be a valid http:// or https:// URL");
           Toast.error("Webhook URL must be a valid http:// or https:// URL");
           return;
         }
       }
-      el.removeAttribute("aria-invalid");
+      if (path === "recording_dir" && (!value || /[\u0000-\u001F\u007F]/.test(value))) {
+        setSettingsFieldError(el, "Recording directory cannot be empty or contain control characters.");
+        Toast.error("Recording directory cannot be empty or contain control characters");
+        return;
+      }
+      if (path === "recording.format.bitrate_kbps" && value !== null
+          && (!Number.isSafeInteger(value) || value < 1 || value > 1_000_000)) {
+        setSettingsFieldError(el, "Bitrate preference must be a whole number from 1 through 1000000 kbps.");
+        Toast.error("Bitrate preference must be a whole number from 1 through 1000000 kbps");
+        return;
+      }
+      clearSettingsFieldError(el);
+      const resetBtn = pane.querySelector(`[data-stg-reset="${path}"]`);
+      el.disabled = true;
+      if (resetBtn) resetBtn.disabled = true;
       try {
         await API.updateSetting(path, value);
-        if (el.type !== "checkbox") el.setAttribute("data-prev", String(value));
+        if (el.type !== "checkbox") el.setAttribute("data-prev", value == null ? "" : String(value));
         if (path === "ui.reduce_motion") {
           REDUCE_MOTION_SETTING = !!value;
           applyReducedMotion();
         }
-        Toast.success(`Saved · ${path}`);
+        const restartRequired = el.dataset.stgRestartRequired === "true";
+        Toast.success(restartRequired ? "Saved — restart the daemon to apply" : `Saved · ${path}`);
       } catch (err) {
         if (el.type === "checkbox") el.checked = previous;
         else el.value = previous;
+        setSettingsFieldError(el, String(err.message || "The daemon rejected this value.").replace(/^HTTP \d+: /, ""));
         Toast.error(`Couldn't save ${path}: ${err.message}`);
+      } finally {
+        el.disabled = false;
+        if (resetBtn) resetBtn.disabled = false;
       }
     });
   });
+
+  pane.querySelectorAll("[data-stg-reset]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const path = btn.dataset.stgReset;
+      const el = pane.querySelector(`[data-stg-path="${path}"]`);
+      if (!el) return;
+      btn.disabled = true;
+      el.disabled = true;
+      clearSettingsFieldError(el);
+      try {
+        await API.updateSetting(path, null);
+        el.value = "";
+        el.setAttribute("data-prev", "");
+        Toast.success("Reset to the daemon default — restart the daemon to apply");
+      } catch (err) {
+        setSettingsFieldError(el, String(err.message || "The daemon rejected this reset.").replace(/^HTTP \d+: /, ""));
+        Toast.error(`Couldn't reset ${path}: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        el.disabled = false;
+      }
+    });
+  });
+}
+
+function clearSettingsFieldError(el) {
+  el.removeAttribute("aria-invalid");
+  el.closest(".stg-field")?.querySelector(".stg-field-error")?.remove();
+}
+
+function setSettingsFieldError(el, message) {
+  clearSettingsFieldError(el);
+  el.setAttribute("aria-invalid", "true");
+  const field = el.closest(".stg-field");
+  if (!field) return;
+  const error = document.createElement("div");
+  error.className = "stg-field-error";
+  error.setAttribute("role", "alert");
+  error.textContent = message;
+  field.append(error);
 }
 
 // Build the right-pane HTML for a section. Each section is a sequence of
@@ -150,6 +212,21 @@ function renderSettingsPane(slug, s) {
     <input class="stg-text" type="text" data-stg-path="${htmlEscape(path)}"
            data-prev="${htmlEscape(value ?? "")}" value="${htmlEscape(value ?? "")}"
            placeholder="${htmlEscape(placeholder)}" spellcheck="false" />`;
+  const restartTextInput = (path, value, placeholder = "", optional = false) => `
+    <div class="stg-field">
+      <input class="stg-text" type="text" data-stg-path="${htmlEscape(path)}"
+             data-stg-restart-required="true" ${optional ? 'data-stg-null-empty="true"' : ""}
+             data-prev="${htmlEscape(value ?? "")}" value="${htmlEscape(value ?? "")}"
+             placeholder="${htmlEscape(placeholder)}" spellcheck="false" />
+      ${optional ? `<button class="sm stg-reset" type="button" data-stg-reset="${htmlEscape(path)}">Reset to default</button>` : ""}
+    </div>`;
+  const restartNumInput = (path, value, min, max) => `
+    <div class="stg-field">
+      <input class="stg-num" type="number" data-stg-path="${htmlEscape(path)}"
+             data-stg-restart-required="true" data-stg-null-empty="true"
+             data-prev="${value ?? ""}" value="${value ?? ""}" min="${min}" max="${max}" step="1" />
+      <button class="sm stg-reset" type="button" data-stg-reset="${htmlEscape(path)}">Reset to default</button>
+    </div>`;
   const selectInput = (path, value, opts) => {
     const options = opts
       .map((o) => `<option value="${htmlEscape(o)}"${o === value ? " selected" : ""}>${htmlEscape(o)}</option>`)
@@ -279,7 +356,7 @@ function renderSettingsPane(slug, s) {
         group("Polling", [
           row(
             "Channel poll interval",
-            `${s.poll_interval_secs ?? "?"} s`,
+            `<a class="stg-linkbtn" href="#/system">${s.poll_interval_secs ?? "?"} s →</a>`,
             "How often StriVo checks each tracked channel for a live-state change. Twitch EventSub + YouTube WebSub push live signals in real time; this poll is the fallback.",
           ),
           row(
@@ -291,8 +368,8 @@ function renderSettingsPane(slug, s) {
         group("Storage", [
           row(
             "Recording directory",
-            code(s.recording_dir),
-            "Root directory for all recordings. Each platform/channel gets its own subdirectory.",
+            `<a class="stg-linkbtn" href="#/settings/recording">${code(s.recording_dir)} →</a>`,
+            "Root directory for all recordings. Edit it in Recording settings.",
           ),
         ].join("")),
         group("Channels", [
@@ -365,6 +442,7 @@ function renderSettingsPane(slug, s) {
     }
 
     case "recording": {
+      const format = rec.format || {};
       // Capture-profile rows (Task 1).
       const profiles = s.capture_profiles || [];
       const QUALITY_TIER_LABELS = {
@@ -394,17 +472,37 @@ function renderSettingsPane(slug, s) {
           <button class="btn-primary" type="submit">Add</button>
         </form>`;
       return [
+        group("Storage", [
+          row("Recording directory",
+            restartTextInput("recording_dir", s.recording_dir, "/absolute/path"),
+            "New recordings use this existing, writable absolute directory after the daemon restarts. Changing it never moves existing recordings; active jobs keep their prior configuration."),
+          `<p class="stg-effect-note" role="note">Changes in this section are saved to configuration. <a href="https://github.com/revoydotdev/strivo/blob/main/docs/DAEMON.md#lifecycle" target="_blank" rel="noopener">Restart the daemon</a> before they take effect. Existing recordings are not moved, and recordings already in progress keep their previous settings.</p>`,
+        ].join("")),
         group("Output", [
           row("Filename template",
             textInput("recording.filename_template", rec.filename_template, "{channel}_{date}_{title}.mkv") +
             tokenBrowserHtml(rec.filename_template)),
           row("Container",
             selectInput("recording.container",
-              (rec.container || "matroska").toLowerCase(),
+              (format.container || "matroska").toLowerCase(),
               ["matroska", "mp4", "webm"]),
             "Output muxer. Matroska is the browser-friendliest default; switch only if you have a downstream pipeline that needs MP4 or WebM."),
           row("Transcode", toggle("recording.transcode", rec.transcode),
             "Re-encode on the fly via h264_nvenc. Off = stream-copy (zero CPU, original bitrate)."),
+        ].join("")),
+        group("Advanced format", [
+          row("yt-dlp format selector",
+            restartTextInput("recording.format.format", format.format, "bestvideo+bestaudio", true),
+            "Passed to yt-dlp for VOD downloads. Leave blank or use Reset to restore the daemon default."),
+          row("Bitrate preference (kbps)",
+            restartNumInput("recording.format.bitrate_kbps", format.bitrate_kbps, 1, 1000000),
+            "Optional positive bitrate preference in kbps. It guides yt-dlp VOD selection and applies to h264_nvenc/libx264 encoding; it does not cap stream-copy output. Leave blank or reset to use the daemon default."),
+          row("Video codec override",
+            restartTextInput("recording.format.video_codec", format.video_codec, "for example: libx264", true),
+            "Optional codec token forwarded to the recorder. Leave blank or reset to use the daemon default."),
+          row("Audio codec override",
+            restartTextInput("recording.format.audio_codec", format.audio_codec, "for example: aac", true),
+            "Optional codec token forwarded to the recorder. Leave blank or reset to use the daemon default."),
         ].join("")),
         group("Twitch", [
           row("Record from start", toggle("recording.twitch_live_from_start", rec.twitch_live_from_start),
@@ -449,4 +547,3 @@ function renderSettingsPane(slug, s) {
           </div><div class="stg-row-value muted">Optional. Enables Patreon-locked VOD pulls from creators you support.</div></div>`),
       ].join("");
     }
-
