@@ -42,3 +42,13 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
 toml = "0.9"
+
+[target.'cfg(windows)'.build-dependencies]
+# Embeds strivo.exe's icon + version-info resource. Actively maintained
+# (unlike the older `winres`, last released 2021). Build-dependency target
+# selectors key off the HOST platform (build scripts always compile for the
+# host, never the crate's --target), which is why build.rs also gates the
+# code that references this crate with a host-matching #[cfg(windows)],
+# not the target-aware cfg!(target_os = ...) macro -- see build.rs's own
+# comment for what that means for cross-compiled checks.
+embed-resource = "3.0"
