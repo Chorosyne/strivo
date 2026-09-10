@@ -3934,6 +3934,49 @@ mod performance_tests {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn thumbnail_lock_keeps_one_lock_while_a_waiter_is_queued() {
+        let state = AppState::test_state("thumbnail-lock-test");
+        let id = Uuid::new_v4();
+        let first = thumbnail_lock(&state, id).await;
+        let queued_waiter = first.clone();
+        drop(first);
+        let next = thumbnail_lock(&state, id).await;
+        assert!(std::sync::Arc::ptr_eq(&queued_waiter, &next));
+        drop(queued_waiter);
+        drop(next);
+        // A dropped/cancelled extraction leaves only a dead Weak entry; the
+        // next lookup prunes it instead of retaining every historical ID.
+        let replacement = thumbnail_lock(&state, id).await;
+        assert_eq!(state.thumbnail_locks.lock().await.len(), 1);
+        drop(replacement);
+    }
+
+    #[tokio::test]
+    async fn queued_thumbnail_rechecks_a_recent_failure_after_its_id_lock() {
+        let state = AppState::test_state("thumbnail-failure-test");
+        let id = Uuid::new_v4();
+        let first = thumbnail_lock(&state, id).await;
+        let waiter = thumbnail_lock(&state, id).await;
+        let held = first.lock().await;
+        state
+            .thumbnail_failures
+            .lock()
+            .await
+            .insert(id, std::time::Instant::now());
+        drop(held);
+        let _waiter_guard = waiter.lock().await;
+        assert!(thumbnail_failed_recently(&state, id).await);
+    }
+
+    #[test]
+    fn live_and_durable_pages_share_a_progressing_numeric_cursor() {
+        assert_eq!(combined_page_bounds(2, 0, 1), (0, 1, 0, 0));
+        assert_eq!(combined_page_bounds(2, 1, 1), (1, 2, 0, 0));
+        assert_eq!(combined_page_bounds(2, 2, 1), (2, 2, 0, 1));
+        assert_eq!(combined_page_bounds(2, 3, 1), (2, 2, 1, 1));
+    }
+
     #[test]
     fn statvfs_bytes_reports_a_sane_total_and_avail_for_an_existing_dir() {
         // Exercises the real statvfs/GetDiskFreeSpaceExW call behind the
