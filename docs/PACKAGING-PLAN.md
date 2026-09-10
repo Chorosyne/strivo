@@ -15,7 +15,19 @@ lands; the ADR stays frozen.
   nested ffmpeg/streamlink/yt-dlp to confirm they actually run, not just
   resolve. Wired into `release.yml`'s `build-linux` job and the `publish`
   job's artifact list.
-- **Windows**: in progress (Inno Setup track).
+- **Windows**: implemented. `packaging/windows/strivo.iss` (Inno Setup
+  wizard) + `packaging/windows/build-installer.ps1` (downloads/verifies/
+  extracts ffmpeg/mpv/streamlink/yt-dlp, then invokes ISCC.exe). Could not
+  be executed end-to-end in this sandbox (no Windows/Inno Setup/PowerShell
+  here) — verified by static review instead, which caught and fixed one
+  real bug before it shipped: streamlink's `bin\streamlink.exe` is a
+  shebang-style launcher stub needing its sibling `Python\`/`pkgs\`
+  directories, not a self-contained binary (confirmed via `strings` against
+  the real downloaded artifact); switched the pin to the portable zip and
+  bundled all three together. `strivo.exe` also gained an embedded icon/
+  version resource. First real build/compile happens on the `win11-ci`
+  runner on the next release — treat that as the true first verification,
+  not this review.
 - **macOS**: parked for now, per operator direction — the existing raw
   `.tar.gz` release artifact is unaffected; the new bundled `.app`/`.dmg`
   track from ADR 0003 is deferred, not abandoned.
