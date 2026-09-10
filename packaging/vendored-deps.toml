@@ -1,0 +1,156 @@
+# Pinned upstream binaries bundled into StriVo's Linux/Windows/macOS
+# installers. See docs/adr/0003-installer-packaging-and-bundled-dependencies.md
+# for the licensing rationale (mere aggregation — each tool keeps its own
+# license, unaffected by StriVo's MIT license) and docs/PACKAGING-PLAN.md
+# for how this file is consumed by CI.
+#
+# Every row was verified against the upstream release's own GitHub-computed
+# sha256 digest (`gh api repos/<owner>/<repo>/releases/tags/<tag>`), not
+# hand-computed — re-verify the same way when bumping a pin.
+#
+# `license` here is the license of the SPECIFIC BINARY ARTIFACT being
+# bundled, which is not always the project's overall source license (see
+# the ADR: yt-dlp's source is Unlicense, but its PyInstaller standalone
+# executables embed GPLv3+ code; mpv's source supports an LGPL build mode,
+# but that mode is not recommended for the CLI player StriVo actually
+# spawns, so the CLI binary here is GPL).
+#
+# `status = "unresolved"` rows have no verified official static/standalone
+# binary source yet. Do not fill these in with an unofficial or unverified
+# third-party build without a deliberate decision — see docs/PACKAGING-PLAN.md
+# "Open decisions".
+
+[ffmpeg]
+# BtbN/FFmpeg-Builds' `latest` tag is a rolling release, rebuilt on every
+# commit — its contents (and therefore its checksum) change over time even
+# though the URL doesn't. Pin to a dated `autobuild-YYYY-MM-DD-HH-MM` tag
+# instead, which is an immutable snapshot, and re-pin deliberately.
+
+[ffmpeg.linux_x86_64]
+status = "resolved"
+version = "autobuild-2026-09-10-15-31 (ffmpeg N-126492-gefb0a7e5e7)"
+license = "LGPL-2.1-or-later"
+url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-10-15-31/ffmpeg-N-126492-gefb0a7e5e7-linux64-lgpl.tar.xz"
+sha256 = "d761a4d65982dd480b6dad58f8964be3e7a2afa343d66d68ae606e2b687e2c58"
+source_url = "https://github.com/BtbN/FFmpeg-Builds"
+notes = "Static LGPL build; contains ffmpeg + ffprobe. Extract both."
+
+[ffmpeg.windows_x86_64]
+status = "resolved"
+version = "autobuild-2026-09-10-15-31 (ffmpeg N-126492-gefb0a7e5e7)"
+license = "LGPL-2.1-or-later"
+url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-10-15-31/ffmpeg-N-126492-gefb0a7e5e7-win64-lgpl.zip"
+sha256 = "6681b2b1bf9513514b3241b81ffdc9bbb422bf85fe0a5b179abec4ad1447024b"
+source_url = "https://github.com/BtbN/FFmpeg-Builds"
+notes = "Static LGPL build; contains ffmpeg.exe + ffprobe.exe. Extract both."
+
+[ffmpeg.macos_x86_64]
+status = "unresolved"
+notes = """
+BtbN does not publish macOS builds. Community sources (evermeet.cx,
+osxexperts.net) were mentioned during research but their license/build
+variant (LGPL vs GPL) and checksum provenance are unverified — do not pin
+either without independently confirming which ffmpeg configure flags they
+used. Alternative: build ffmpeg from source with --enable-lgpl on the
+existing macos-sonoma self-hosted CI runner and publish the artifact
+ourselves, which also sidesteps trusting a third-party binary's supply
+chain. Needs a decision before this row can be filled in.
+"""
+
+[mpv]
+# mpv's own docs recommend against building the CLI player (as opposed to
+# libmpv) in LGPL mode, so treat bundled mpv CLI binaries as GPL-2.0-or-later
+# regardless of platform.
+
+[mpv.windows_x86_64]
+status = "resolved"
+version = "20260903 (git 69e63f425a)"
+license = "GPL-2.0-or-later"
+url = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260903/mpv-x86_64-20260903-git-69e63f425a.7z"
+sha256 = "418dbfb5feb851cbed33d6c05d8481ba71802621bfd6efe8974522b28d42ac97"
+source_url = "https://github.com/shinchiro/mpv-winbuild-cmake"
+notes = """
+Community rolling build (dated tag, not a stable-versioned release) — the
+closest thing to an official static Windows mpv build; widely used
+precedent (referenced from mpv.io's own downloads page). Re-pin on a
+schedule rather than once; this project does not cut stable release tags.
+"""
+
+[mpv.linux_x86_64]
+status = "unresolved"
+notes = """
+No official static/portable Linux mpv build exists (distros ship it via
+their own package manager). Candidates found during research
+(pkgforge-dev/mpv-AppImage, danrobi11/mpv-appimage) are unofficial,
+community-maintained AppImages of varying provenance — do not pin one
+without vetting its build script and maintainer trust level. Alternative:
+build mpv from source on the arch-linux self-hosted CI runner (this box
+already has mpv as a dev prerequisite) and publish the artifact ourselves.
+Needs a decision before this row can be filled in.
+"""
+
+[mpv.macos_x86_64]
+status = "unresolved"
+notes = "Same gap as ffmpeg's macOS row — no official standalone build; only Homebrew/MacPorts package-manager distribution found. Needs a decision (build from source on macos-sonoma CI, or accept Homebrew as a host dependency on macOS specifically as a narrower fallback)."
+
+[streamlink]
+# BSD-2-Clause source. Distributed via dedicated companion repos, not
+# streamlink/streamlink's own GitHub releases (which only publish the
+# source tarball).
+
+[streamlink.windows_x86_64]
+status = "resolved"
+version = "8.5.0-1"
+license = "BSD-2-Clause"
+url = "https://github.com/streamlink/windows-builds/releases/download/8.5.0-1/streamlink-8.5.0-1-py314-x86_64.exe"
+sha256 = "d6a4f98c81cea16f000850165d4c70e91fe1488b160ee6ccc365fb0105efdd24"
+source_url = "https://github.com/streamlink/windows-builds"
+notes = "Official installer; embeds its own Python + ffmpeg — extract just the streamlink executable from its install layout, do not run the bundled installer's ffmpeg since we vendor ffmpeg separately via BtbN."
+
+[streamlink.linux_x86_64]
+status = "resolved"
+version = "8.5.0-1"
+license = "BSD-2-Clause"
+url = "https://github.com/streamlink/streamlink-appimage/releases/download/8.5.0-1/streamlink-8.5.0-1-cp314-cp314-manylinux_2_28_x86_64.AppImage"
+sha256 = "640a3bf2d24670b09758c87b531e9de5e382b581c6bcfbdd732bd3e5d43b832c"
+source_url = "https://github.com/streamlink/streamlink-appimage"
+notes = """
+Official AppImage. Use the plain `streamlink-*` variant (not the
+`streamlink+ffmpeg-*` variant, which bundles its own ffmpeg — we vendor
+ffmpeg separately via BtbN to keep one ffmpeg build/license per install,
+not two). Extract the streamlink executable from the AppImage's squashfs
+at packaging time rather than nesting an AppImage inside an AppImage.
+"""
+
+[streamlink.macos_x86_64]
+status = "unresolved"
+notes = "streamlink's own install docs list only Homebrew for macOS — no official standalone binary. Needs a decision (accept Homebrew as a macOS-specific host dependency, or build a PyInstaller bundle ourselves on macos-sonoma CI)."
+
+[yt-dlp]
+# Source is Unlicense (public domain), but the standalone PyInstaller
+# executables below embed GPLv3+ code per yt-dlp's own documentation —
+# license the bundled BINARY as GPL-3.0-or-later, not Unlicense.
+
+[yt-dlp.linux_x86_64]
+status = "resolved"
+version = "2026.08.19"
+license = "GPL-3.0-or-later"
+url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp"
+sha256 = "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6"
+source_url = "https://github.com/yt-dlp/yt-dlp"
+
+[yt-dlp.windows_x86_64]
+status = "resolved"
+version = "2026.08.19"
+license = "GPL-3.0-or-later"
+url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe"
+sha256 = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+source_url = "https://github.com/yt-dlp/yt-dlp"
+
+[yt-dlp.macos_x86_64]
+status = "resolved"
+version = "2026.08.19"
+license = "GPL-3.0-or-later"
+url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos"
+sha256 = "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+source_url = "https://github.com/yt-dlp/yt-dlp"
