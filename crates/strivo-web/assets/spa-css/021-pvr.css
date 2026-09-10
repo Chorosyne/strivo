@@ -1,0 +1,63 @@
+/* Right-click context menu (channel rail row / multiview live tile).
+ * Adapted from .rec-row-menu-list/-item (002-pvr.css) but cursor-positioned
+ * (`position: fixed`) instead of anchored to a toggle button. */
+.ch-ctx-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 280px;
+  padding: 0.3rem;
+  background: var(--overlay);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.ch-ctx-menu-section {
+  display: flex;
+  flex-direction: column;
+  padding: 0.15rem 0;
+}
+.ch-ctx-menu-section + .ch-ctx-menu-section {
+  border-top: 1px solid var(--border-light);
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+}
+.ch-ctx-menu-title {
+  padding: 0.2rem 0.5rem 0.3rem;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ch-ctx-menu-label {
+  padding: 0 0.5rem 0.2rem;
+  color: var(--fg-muted, var(--fg));
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ch-ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: var(--text-caption, 13px);
+  cursor: pointer;
+}
+.ch-ctx-menu-item:hover { background: rgba(255, 255, 255, 0.08); }
+.ch-ctx-check {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+}
