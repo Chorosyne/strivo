@@ -60,7 +60,7 @@ not entitled to watch.
 | OS | Runtime support | Service integration |
 | --- | --- | --- |
 | Linux | Supported | `systemd --user` via `strivo enable` |
-| macOS | Supported | Run directly or manage with your own supervisor |
+| macOS | Supported | `launchd` LaunchAgent via `strivo enable` |
 | Windows | Supported | Task Scheduler logon task via `strivo enable` |
 
 The 0.6.0 release introduced Windows support, including named-pipe daemon IPC

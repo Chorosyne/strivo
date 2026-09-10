@@ -1333,42 +1333,149 @@ async fn handle_disable() -> Result<()> {
     Ok(())
 }
 
-// macOS ships no systemd, so there is no per-user service manager to hand a
-// unit to here. Earlier builds rendered a systemd unit on every `unix`
-// target (which includes macOS), wrote it into `~/.config/systemd/user/` --
-// a directory macOS gives no meaning to -- and then shelled out to
-// `systemctl`, which does not exist there. Refuse honestly instead: point
-// the user at running `strivo`/`strivo daemon` under their own supervisor
-// (launchd, tmux, a process manager), matching what the README already
-// documents.
-/// Message for `strivo enable` on macOS. Not `#[cfg(target_os = "macos")]`
+// macOS ships no systemd; the per-user equivalent is launchd, driven by a
+// LaunchAgent plist under ~/Library/LaunchAgents. Earlier builds rendered a
+// systemd unit on every `unix` target (which includes macOS), wrote it into
+// `~/.config/systemd/user/` -- a directory macOS gives no meaning to -- and
+// then shelled out to `systemctl`, which does not exist there. This renders
+// a real plist and drives it with `launchctl` instead.
+// Not `#[cfg(target_os = "macos")]` itself so `render_launchd_plist` (which
+// stays unit-testable from any host) can reference it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const LAUNCHD_LABEL: &str = "dev.revoydotdev.strivo";
+
+/// Escape a string for embedding as plist `<string>` element content.
+/// Only the XML special characters need handling here -- everything this
+/// is used for (an absolute exe path, an optional `--config` path) is plain
+/// text, never markup.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn plist_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Render the LaunchAgent plist content. Not `#[cfg(target_os = "macos")]`
 /// itself so it stays unit-testable from any host, including the Linux box
 /// this project is developed on, which cannot otherwise exercise a
-/// `target_os = "macos"` code path. Only actually reachable on macOS, so
-/// other targets' non-test builds would otherwise flag it as dead code.
+/// `target_os = "macos"` code path.
+///
+/// `KeepAlive` + `RunAtLoad` mirror the systemd unit's `Restart=always` +
+/// `WantedBy=default.target`: launchd restarts the job whenever it exits,
+/// and starts it at login, without needing the machine-wide, privileged
+/// `LaunchDaemons` variant. stdout/stderr are redirected to a log file
+/// since a LaunchAgent has no terminal to inherit one from.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const MACOS_ENABLE_UNSUPPORTED: &str = "`strivo enable` has no systemd on macOS (macOS ships no \
-     systemd user service manager). Run `strivo` (daemon + web UI) or `strivo \
-     daemon` directly under your own supervisor instead, e.g. launchd, tmux, \
-     or a process manager.";
+fn render_launchd_plist(
+    exe: &std::path::Path,
+    config_path: Option<&std::path::Path>,
+    daemon_only: bool,
+    log_dir: &std::path::Path,
+) -> String {
+    let mut args = vec![exe.display().to_string()];
+    if daemon_only {
+        args.push("daemon".to_string());
+    }
+    if let Some(path) = config_path {
+        args.push("--config".to_string());
+        args.push(path.display().to_string());
+    }
+    let program_arguments = args
+        .iter()
+        .map(|a| format!("\t\t<string>{}</string>", plist_escape(a)))
+        .collect::<Vec<_>>()
+        .join("\n");
 
-/// Message for `strivo disable` on macOS. See [`MACOS_ENABLE_UNSUPPORTED`].
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const MACOS_DISABLE_UNSUPPORTED: &str =
-    "`strivo enable` has no systemd on macOS, so there is no service for `disable` to remove.";
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         \t<key>Label</key>\n\
+         \t<string>{label}</string>\n\
+         \t<key>ProgramArguments</key>\n\
+         \t<array>\n{program_arguments}\n\
+         \t</array>\n\
+         \t<key>RunAtLoad</key>\n\
+         \t<true/>\n\
+         \t<key>KeepAlive</key>\n\
+         \t<true/>\n\
+         \t<key>StandardOutPath</key>\n\
+         \t<string>{stdout}</string>\n\
+         \t<key>StandardErrorPath</key>\n\
+         \t<string>{stderr}</string>\n\
+         </dict>\n\
+         </plist>\n",
+        label = LAUNCHD_LABEL,
+        stdout = plist_escape(&log_dir.join("stdout.log").display().to_string()),
+        stderr = plist_escape(&log_dir.join("stderr.log").display().to_string()),
+    )
+}
 
 #[cfg(target_os = "macos")]
 async fn handle_enable(
-    _config_path: Option<&std::path::Path>,
-    _daemon_only: bool,
+    config_path: Option<&std::path::Path>,
+    daemon_only: bool,
     _envchain: Option<&str>,
 ) -> Result<()> {
-    anyhow::bail!(MACOS_ENABLE_UNSUPPORTED)
+    let exe = std::env::current_exe()?;
+    let log_dir = dirs_home().join("Library/Logs/StriVo");
+    std::fs::create_dir_all(&log_dir)?;
+    let plist_content = render_launchd_plist(&exe, config_path, daemon_only, &log_dir);
+
+    let agents_dir = dirs_home().join("Library/LaunchAgents");
+    std::fs::create_dir_all(&agents_dir)?;
+    let plist_path = agents_dir.join(format!("{LAUNCHD_LABEL}.plist"));
+    std::fs::write(&plist_path, plist_content)?;
+    println!("Wrote {}", plist_path.display());
+
+    // Unload first, ignoring failure: a first-ever `enable` has nothing
+    // loaded yet, and launchctl errors on unloading a job that isn't
+    // loaded. This makes re-running `enable` (e.g. after a config change)
+    // pick up the new plist instead of silently keeping the old one.
+    let _ = std::process::Command::new("launchctl")
+        .arg("unload")
+        .arg("-w")
+        .arg(&plist_path)
+        .status();
+
+    let status = std::process::Command::new("launchctl")
+        .arg("load")
+        .arg("-w")
+        .arg(&plist_path)
+        .status()
+        .context("failed to run launchctl (unavailable?)")?;
+    if !status.success() {
+        anyhow::bail!("launchctl load failed");
+    }
+
+    println!("StriVo daemon enabled and started (launchd)");
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
 async fn handle_disable() -> Result<()> {
-    anyhow::bail!(MACOS_DISABLE_UNSUPPORTED)
+    let plist_path = dirs_home()
+        .join("Library/LaunchAgents")
+        .join(format!("{LAUNCHD_LABEL}.plist"));
+    if plist_path.exists() {
+        let status = std::process::Command::new("launchctl")
+            .arg("unload")
+            .arg("-w")
+            .arg(&plist_path)
+            .status();
+        if status.map(|s| !s.success()).unwrap_or(true) {
+            eprintln!("Warning: launchctl unload may have failed (agent may not be running)");
+        }
+        std::fs::remove_file(&plist_path)?;
+        println!("Removed {}", plist_path.display());
+    }
+
+    println!("StriVo daemon disabled");
+    Ok(())
 }
 
 // Windows has no systemd-user-service concept. The closest equivalent that
@@ -1482,7 +1589,7 @@ async fn handle_disable() -> Result<()> {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn dirs_home() -> std::path::PathBuf {
     directories::UserDirs::new()
         .map(|d| d.home_dir().to_path_buf())
@@ -2108,23 +2215,45 @@ mod windows_tests {
     }
 }
 
-/// Not `target_os`-gated: these assert on the plain message constants, so
-/// they run (and prove the macOS refusal text) from whatever host actually
-/// builds this crate, including this Linux dev box which cannot compile a
-/// `target_os = "macos"` code path to test directly.
+/// Not `target_os`-gated: these exercise `render_launchd_plist` from
+/// whatever host actually builds this crate, including this Linux dev box
+/// which cannot compile a `target_os = "macos"` code path to test directly.
 #[cfg(test)]
 mod macos_enable_tests {
     use super::*;
 
     #[test]
-    fn macos_enable_message_does_not_claim_systemd_support() {
-        assert!(!MACOS_ENABLE_UNSUPPORTED.contains("systemd user service on Linux/macOS"));
-        assert!(MACOS_ENABLE_UNSUPPORTED.contains("no systemd on macOS"));
-        assert!(MACOS_ENABLE_UNSUPPORTED.contains("strivo daemon"));
+    fn launchd_plist_carries_label_and_program_arguments() {
+        let plist = render_launchd_plist(
+            std::path::Path::new("/Applications/StriVo.app/Contents/MacOS/strivo"),
+            None,
+            false,
+            std::path::Path::new("/Users/me/Library/Logs/StriVo"),
+        );
+        assert!(plist.contains("<string>dev.revoydotdev.strivo</string>"));
+        assert!(plist.contains("<string>/Applications/StriVo.app/Contents/MacOS/strivo</string>"));
+        assert!(plist.contains("<true/>")); // RunAtLoad + KeepAlive
+        assert!(!plist.contains("<string>daemon</string>"));
     }
 
     #[test]
-    fn macos_disable_message_does_not_claim_systemd_support() {
-        assert!(MACOS_DISABLE_UNSUPPORTED.contains("no systemd on macOS"));
+    fn launchd_plist_adds_daemon_subcommand_and_config_flag() {
+        let plist = render_launchd_plist(
+            std::path::Path::new("/usr/local/bin/strivo"),
+            Some(std::path::Path::new("/Users/me/My Config/strivo.toml")),
+            true,
+            std::path::Path::new("/Users/me/Library/Logs/StriVo"),
+        );
+        assert!(plist.contains("<string>daemon</string>"));
+        assert!(plist.contains("<string>--config</string>"));
+        assert!(plist.contains("<string>/Users/me/My Config/strivo.toml</string>"));
+    }
+
+    #[test]
+    fn plist_escape_handles_xml_special_characters() {
+        assert_eq!(
+            plist_escape(r#"a & b < c > "d" 'e'"#),
+            "a &amp; b &lt; c &gt; &quot;d&quot; &apos;e&apos;"
+        );
     }
 }
