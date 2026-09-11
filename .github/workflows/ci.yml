@@ -86,6 +86,9 @@ jobs:
       - name: NOTICE.md matches vendored-deps.toml
         run: scripts/check-notice.sh
 
+      - name: config.toml.example covers every AppConfig field
+        run: scripts/check-config-example.sh
+
   check:
     name: fmt + clippy + test
     # Public fork PRs must never execute on local infrastructure.

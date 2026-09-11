@@ -38,6 +38,12 @@
 # # Path to a Netscape-format cookies.txt export, used for members-only and
 # # age-restricted streams. Leave unset to disable cookie-based auth.
 # cookies_path  = "/path/to/cookies.txt"
+# # Public HTTPS URL of the WebSub (PubSubHubbub) callback served by
+# # `strivo serve` at /yt-websub (e.g. a `tailscale funnel` path). When set,
+# # the daemon subscribes each followed channel's upload feed to Google's hub
+# # so a new video / live broadcast triggers an immediate poll instead of
+# # waiting for the next poll_interval_secs. Unset = polling only.
+# websub_callback_url = "https://example.com/yt-websub"
 
 # [patreon]
 # # Patreon uses cookie-based auth via the membership API. Path to a
@@ -59,6 +65,49 @@
 # #   {title}    — sanitised stream title (truncated to 80 chars)
 # #   {platform} — twitch / youtube / patreon
 # filename_template = "{channel}_{date}_{title}.mkv"
+#
+# # On Twitch recordings, post-process the finished file to drop black
+# # segments left behind when streamlink suppresses ad breaks. Off by default.
+# auto_trim_ads = false
+#
+# # Minimum contiguous black duration (seconds) to consider an ad break when
+# # auto_trim_ads is on. Shorter blackouts (fades, transitions) are preserved.
+# ad_min_secs = 8.0
+#
+# # After a Twitch live recording ends, query the helix /videos endpoint for
+# # the just-finalized archive VOD and download it alongside the live
+# # capture, saved to <base>_vod.<ext>. On by default: the live HLS pull
+# # misses the first ~5 minutes plus any ad-break gaps, the VOD has the full
+# # broadcast.
+# auto_vod_backfill = true
+#
+# # Seconds to wait after the live ends before polling for the VOD — Twitch
+# # takes a few minutes to finalize the archive.
+# vod_backfill_delay_secs = 300
+#
+# # For Twitch + from_start recordings, attempt the live-from-start (Rewind)
+# # Usher path before falling back to the standard streamlink live-edge pull.
+# # On by default; lands at broadcast t=0 instead of the ~5min HLS DVR window
+# # when the streamer has "Always publish VODs" enabled.
+# twitch_live_from_start = true
+#
+# # Default format/bitrate selection, overridable per channel (see
+# # auto_record_channels.format) or per capture_profiles entry. All fields
+# # optional; unset falls back to the built-in default: format = "bv*+ba/b",
+# # copy-mux into an mkv container.
+# [recording.format]
+# # yt-dlp -f selector. A bare "best" only matches a pre-merged single-file
+# # format, which many videos never expose — bv*+ba/b (best video + best
+# # audio, falling back to best) is the safe default.
+# format = "bv*+ba/b"
+# # Target video bitrate in kbps for transcode paths. Ignored when codec is "copy".
+# bitrate_kbps = 6000
+# # "mkv" (default — crash-resilient) or "mp4".
+# container = "mkv"
+# # "copy" (default), "h264_nvenc", "libx264", …
+# video_codec = "copy"
+# # "copy" (default), "aac", …
+# audio_codec = "copy"
 
 # ─── Auto-record channels ─────────────────────────────────────────────────
 # Each [[auto_record_channels]] block records that channel whenever it goes
@@ -69,19 +118,131 @@
 # platform     = "twitch"
 # channel_id   = "12345"
 # channel_name = "streamer_name"
+# # Per-channel format/bitrate override (same shape as [recording.format]).
+# # Falls back to the global [recording.format] when absent.
+# # format = { container = "mp4" }
+# # Name of a [[capture_profiles]] entry to apply to this channel instead.
+# # profile = "1080p60+transcript"
+
+# ─── Capture profiles ──────────────────────────────────────────────────────
+# Named, reusable capture presets — define recording settings once and
+# attach them to many channels via auto_record_channels.profile.
+#
+# [[capture_profiles]]
+# name = "1080p60+transcript"
+# # Named quality tier: "best", "1080p", "720p", "480p", or "audio_only".
+# # Maps to a yt-dlp/streamlink format selector. When set, wins over the
+# # global recording.format unless this profile's own `format` is also set.
+# quality_tier = "1080p"
+# # Per-profile format/bitrate override (same shape as [recording.format]).
+# # format = { container = "mkv" }
+# # Transcode captures using this profile (overrides the global default).
+# transcode = false
+# # Capture audio only (no video track).
+# audio_only = false
+# # Request a transcript for captures using this profile.
+# transcript = false
+# # Stop auto-capturing a channel using this profile once this many episodes
+# # have been recorded. Omit for no cutoff (capture indefinitely).
+# cutoff_episodes = 50
+
+# ─── Channel alert overrides ───────────────────────────────────────────────
+# Per-channel override of the global [notifications] on_go_live /
+# on_recording_finished switches. channel_key is "platform:channel_id"
+# (e.g. "twitch:12345"). Omitting a field follows the global default;
+# only an explicit `false` suppresses that alert for this channel.
+#
+# [[channel_alerts]]
+# channel_key = "twitch:12345"
+# on_live      = true
+# on_upload    = false
+
+# ─── Patreon auto-pull creators ────────────────────────────────────────────
+# Patreon creators whose new video posts should be auto-downloaded when the
+# monitor sees them. Empty by default — opt in per creator (sidebar toggle
+# in the web UI, or add an entry here); the monitor only refreshes the post
+# cache for unlisted creators. Identified by campaign_id rather than name
+# since creators can rename themselves; creator_name is kept for display.
+#
+# [[auto_pull_creators]]
+# campaign_id  = "1234567"
+# creator_name = "creator_display_name"
 
 # ─── Cron schedules ───────────────────────────────────────────────────────
 # Force-record a channel on a recurring schedule regardless of live status,
 # e.g. to grab a known-time broadcast on a flaky API.
 #
-# [[schedules]]
+# [[schedule]]
 # platform   = "twitch"
 # channel_id = "12345"
 # cron       = "0 20 * * 1-5"   # weekdays at 8 pm local time
 
-# ─── Crunchr (transcription + analysis) ───────────────────────────────────
-# AI transcription with optional LLM analysis. Disabled by default — flip
-# `enabled = true` to turn it on.
+# ─── Capture-time safety limits ────────────────────────────────────────────
+# Surfaced on the Monitor page. Both fields default to 0 (disabled) so
+# existing setups see no behaviour change without explicit opt-in.
+#
+# [monitor_limits]
+# # Maximum number of recordings (live + VOD pull combined) to run
+# # concurrently. New live broadcasts beyond this limit are surfaced but not
+# # started until a slot opens. 0 = unlimited.
+# max_concurrent_recordings = 0
+# # Reserved disk space in GB. New captures are deferred once free space on
+# # the recording filesystem drops below this watermark. 0 = no circuit
+# # breaker.
+# disk_budget_reserved_gb = 0
+
+# ─── Desktop / webhook notifications ───────────────────────────────────────
+# What state changes the daemon fires a notify-rust desktop banner (and
+# optionally an outbound webhook) for. Defaults err on the side of
+# useful-but-not-noisy.
+#
+# [notifications]
+# # Master switch. When false the daemon skips every notification.
+# desktop_enabled = true
+# # Banner when a tracked channel transitions offline → live.
+# on_go_live = true
+# # Banner when a recording finishes successfully.
+# on_recording_finished = true
+# # Banner when a recording dies mid-capture. Default-on: silent failures
+# # are the worst class of bug in a PVR.
+# on_recording_failed = true
+# # Banner when the Twitch auto-VOD-backfill pull lands. Off by default —
+# # most users don't track it manually.
+# on_vod_ready = false
+#
+# # Outbound webhook — POST a JSON payload for each notification-worthy
+# # event (mirrors streamerREC's webhook contract, so existing Make/n8n/
+# # Zapier integrations work unmodified). Failures are logged and swallowed.
+# [notifications.webhook]
+# enabled = false
+# url = "https://example.com/webhook"
+
+# ─── Web UI (`strivo serve`) ───────────────────────────────────────────────
+# Generated lazily on first `serve` invocation and persisted so values
+# survive restarts. Leave unset to have strivo generate and save them for
+# you. (The bind address is a `strivo serve --bind` CLI flag, not a config
+# field — default 127.0.0.1:8181.)
+#
+# [web]
+# # API key required on the X-Api-Key header for /api/v1/*.
+# api_key = "..."
+# # HMAC secret used to sign browser-session cookies.
+# session_secret = "..."
+
+# ─── Per-plugin toggles ────────────────────────────────────────────────────
+# Enable/disable individual plugins from Settings → Plugins. A missing
+# entry defaults to enabled = true. Keyed by plugin name.
+#
+# [plugin_toggles.crunchr]
+# enabled = true
+
+# ─── Crunchr (transcription + analysis) — Creator Edition only ────────────
+# This block is not a core-typed config section: it round-trips through the
+# generic `extensions` table (any [plugin-name] table not otherwise known to
+# core is preserved as-is) and is only meaningful when the Crunchr plugin is
+# compiled in (Creator Edition, see CLAUDE.md "Editions"). Absent from the
+# PVR edition entirely. AI transcription with optional LLM analysis.
+# Disabled by default — flip `enabled = true` to turn it on.
 #
 # [crunchr]
 # enabled = false
