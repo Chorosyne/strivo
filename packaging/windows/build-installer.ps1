@@ -315,7 +315,16 @@ try {
     # These /D<name> flags are the contract with strivo.iss's "Build inputs"
     # block -- the names must match exactly, or ISCC falls back to that
     # script's dev-checkout defaults instead of these verified paths.
+    # Single-source the version from the workspace manifest so strivo.iss
+    # never carries its own copy (it used to hardcode one and drifted).
+    $cargoToml = Join-Path $RepoRoot 'Cargo.toml'
+    $versionLine = Select-String -Path $cargoToml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if (-not $versionLine) { Fail "could not read the workspace version from $cargoToml" }
+    $appVersion = $versionLine.Matches[0].Groups[1].Value
+    Write-Step "Installer version (from Cargo.toml): $appVersion"
+
     $defines = @(
+        "/DMyAppVersion=$appVersion",
         "/DStrivoExePath=$StrivoExePath",
         "/Dffmpeg_exe=$($ffmpegExe.FullName)",
         "/Dffprobe_exe=$($ffprobeExe.FullName)",

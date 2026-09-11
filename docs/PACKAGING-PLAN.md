@@ -61,13 +61,15 @@ lands; the ADR stays frozen.
    plist generator in `crates/strivo-bin/src/main.rs`, mirroring the
    existing systemd `--user` unit path, replacing the current
    `MACOS_ENABLE_UNSUPPORTED`/`MACOS_DISABLE_UNSUPPORTED` stub.
-6. **Version single-source-of-truth** — today `Cargo.toml` (root),
-   `crates/strivo-bin/Cargo.toml`, and `packaging/aur/PKGBUILD`/`.SRCINFO`
-   all independently declare a version, and the AUR files are already stale
-   (`0.3.0` vs. actual `0.6.0`). Adding three more version-bearing manifests
-   (AppImage recipe, Inno Setup `.iss`, macOS `Info.plist`) without fixing
-   this first guarantees drift. Add a small bump script/xtask that updates
-   all of them atomically before the new manifests exist.
+6. **Version single-source-of-truth** — mostly done (2026-09-11). The three
+   Rust crates inherit `[workspace.package] version` from the root
+   `Cargo.toml`; `release.yml` refuses a tag that disagrees with it;
+   `build-installer.ps1` reads the same field and passes `/DMyAppVersion`
+   to `strivo.iss`, which no longer carries its own copy. Still hand-bumped
+   per release: `packaging/aur/PKGBUILD` (then regenerate `.SRCINFO`;
+   `scripts/check-srcinfo.sh` gates agreement) and the `CHANGELOG.md`
+   section. A macOS `Info.plist` does not exist yet; source it from the
+   manifest when the `.app` track lands rather than adding a fourth copy.
 
 ## Linux
 

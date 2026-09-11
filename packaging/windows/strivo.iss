@@ -30,11 +30,15 @@
 ; doubled leading brace (`{{`) to produce a single literal `{` -- routing
 ; it through a #define first only invites getting that escaping wrong.
 
-; NOTE (manual version sync): this must match crates/strivo-bin/Cargo.toml's
-; `version` field. There is no automated single-source-of-truth for version
-; numbers yet -- see docs/PACKAGING-PLAN.md's "Version single-source-of-truth"
-; open item. Bump this by hand alongside Cargo.toml until that lands.
-#define MyAppVersion "0.6.0"
+; Version comes from the workspace manifest: build-installer.ps1 reads
+; `[workspace.package] version` out of the root Cargo.toml and passes it as
+; /DMyAppVersion, so the installer, Programs-and-Features entry and the
+; embedded strivo.exe version resource can never disagree. The fallback
+; below only exists so a bare `ISCC strivo.iss` from a dev checkout still
+; compiles; it is not a source of truth.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0-dev"
+#endif
 
 ; ---------------------------------------------------------------------------
 ; Build inputs. Every one of these is overridable on the ISCC.exe command
