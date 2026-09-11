@@ -46,6 +46,12 @@ impl Problem {
         Self::new(StatusCode::NOT_FOUND, detail)
     }
 
+    /// The resource exists but can't be served in its current state — e.g.
+    /// a recording still in progress refusing a byte-range download.
+    pub fn conflict(detail: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, detail)
+    }
+
     pub fn internal(detail: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, detail)
     }

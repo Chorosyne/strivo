@@ -25,10 +25,23 @@ use crate::problem::Problem;
 use crate::routes::login::check_dual;
 use crate::server::AppState;
 
-async fn lookup_path(state: &AppState, id: Uuid) -> Result<PathBuf, String> {
-    crate::routes::api::resolve_recording(state, id)
-        .await
-        .map(|job| job.output_path)
+async fn lookup_job(
+    state: &AppState,
+    id: Uuid,
+) -> Result<strivo_core::recording::job::RecordingJob, String> {
+    crate::routes::api::resolve_recording(state, id).await
+}
+
+/// Mirrors the SPA's `isInProgress` predicate (`assets/spa/008-pvr.js`):
+/// a job is still in progress while resolving the source URL, actively
+/// recording, or winding down. `Finished`/`Failed` are the only states
+/// with a stable, fully-written file on disk.
+fn is_in_progress(state: strivo_core::recording::job::RecordingState) -> bool {
+    use strivo_core::recording::job::RecordingState;
+    matches!(
+        state,
+        RecordingState::ResolvingUrl | RecordingState::Recording | RecordingState::Stopping
+    )
 }
 
 /// Reject any path that, once canonicalised, escapes the recording root.
@@ -211,10 +224,21 @@ async fn download(
     if check_dual(&headers, &state.api_key, &state.session_secret).is_err() {
         return Problem::unauthorized().into_response();
     }
-    let raw = match lookup_path(&state, id).await {
-        Ok(p) => p,
+    let job = match lookup_job(&state, id).await {
+        Ok(j) => j,
         Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
     };
+    // Refuse to serve a job that's still resolving/recording/stopping: its
+    // Content-Length/Content-Range are computed once from a single
+    // metadata() call at the top of this handler and then frozen for the
+    // whole response, so a growing file plays a stale-length snapshot and
+    // a truncated container can trip the client's watchdog (B-04). True
+    // live-tail playback is a separate feature; this just refuses the
+    // request instead of serving a broken one.
+    if is_in_progress(job.state) {
+        return Problem::conflict("recording still in progress").into_response();
+    }
+    let raw = job.output_path;
     // Containment check before opening: canonicalise against the configured
     // recording root and refuse anything that escapes it. Reads the cached
     // config (AppState::config) instead of re-reading + re-parsing
