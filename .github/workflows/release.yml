@@ -61,7 +61,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/strivo-bin/Cargo.toml | head -1)-dev"
+            VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-dev"
           fi
           PKG="strivo-${VERSION}-x86_64-unknown-linux-gnu"
           mkdir -p "dist/${PKG}"
@@ -127,7 +127,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/strivo-bin/Cargo.toml | head -1)-dev"
+            VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-dev"
           fi
           PKG="strivo-${VERSION}-x86_64-apple-darwin"
           mkdir -p "dist/${PKG}"
@@ -178,7 +178,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $VERSION = $env:GITHUB_REF_NAME -replace '^v',''
           } else {
-            $VERSION = ((Select-String -Path crates\strivo-bin\Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value) + '-dev'
+            $VERSION = ((Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value) + '-dev'
           }
           $PKG = "strivo-$VERSION-x86_64-pc-windows-msvc"
           New-Item -ItemType Directory -Force -Path "dist\$PKG" | Out-Null

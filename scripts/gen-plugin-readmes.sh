@@ -18,6 +18,11 @@ for crate in crates/*/; do
   desc="$(grep -m1 '^description' "$toml" | sed -E 's/^description = "(.*)"$/\1/')"
   pkg="$(grep -m1 '^name' "$toml" | sed -E 's/^name = "(.*)"$/\1/')"
   ver="$(grep -m1 '^version' "$toml" | sed -E 's/^version = "(.*)"$/\1/')"
+  # strivo-bin/strivo-web inherit `version.workspace = true` from root
+  # Cargo.toml's [workspace.package] rather than declaring their own.
+  if [[ -z "$ver" ]]; then
+    ver="$(grep -m1 '^version' Cargo.toml | sed -E 's/^version = "(.*)"$/\1/')"
+  fi
   lic="$(grep -m1 '^license' "$toml" | sed -E 's/^license = "(.*)"$/\1/' || true)"
   ts=$( (grep -rcE '^#\[test\]' "${crate}src/" 2>/dev/null || true) | awk -F: '{s+=$2} END {print s+0}')
 

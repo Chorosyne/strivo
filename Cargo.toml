@@ -8,9 +8,15 @@ members = [".", "crates/strivo-bin", "crates/strivo-web", "crates/strivo-plugins
 default-members = [".", "crates/strivo-bin", "crates/strivo-web"]
 resolver = "2"
 
+[workspace.package]
+# Single source of truth for the workspace version — every crate below
+# inherits via `version.workspace = true` instead of hand-editing its own
+# copy. See docs/PACKAGING-PLAN.md "Version single-source-of-truth".
+version = "0.6.0"
+
 [package]
 name = "strivo-core"
-version = "0.6.0"
+version.workspace = true
 edition = "2021"
 description = "Core library for StriVo — self-hosted live-stream PVR"
 authors = ["revelri <slrevoy@mailbox.org>"]

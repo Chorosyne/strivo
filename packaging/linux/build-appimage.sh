@@ -21,7 +21,11 @@ OUT_DIR="${2:?usage: build-appimage.sh <strivo-binary-path> <output-dir>}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${REPO_ROOT}/crates/strivo-bin/Cargo.toml" | head -1)"
+# The version lives in root Cargo.toml's [workspace.package] table; every
+# crate manifest inherits it via `version.workspace = true` rather than
+# declaring its own copy (see docs/PACKAGING-PLAN.md "Version
+# single-source-of-truth").
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${REPO_ROOT}/Cargo.toml" | head -1)"
 
 # --- read a (tool, platform) row out of vendored-deps.toml -----------------
 # Small enough a hand-rolled TOML reader would be a wrong abstraction; Python's
