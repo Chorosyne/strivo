@@ -20,8 +20,7 @@
 // Wired as `pretest` in package.json so `npm test` always runs this before
 // Playwright.
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -105,7 +104,21 @@ function callSitesFor(strippedText, name) {
 
 // 1. Build the real PVR (non-creator) bundle into an isolated target dir,
 //    so we read exactly one, unambiguous out/assets/spa.js (and spa.css).
-const scratch = mkdtempSync(join(tmpdir(), "strivo-pvr-bundle-check-"));
+//    The scratch dir lives under cargo's own target directory rather than
+//    the OS temp directory: a fresh debug build of strivo-web is several GB,
+//    and on hosts where /tmp is a small tmpfs (the self-hosted runner
+//    included) that overflowed with "Disk quota exceeded". Override with
+//    STRIVO_BUNDLE_CHECK_DIR to put it somewhere else.
+function cargoTargetDir() {
+  const meta = execFileSync(
+    "cargo", ["metadata", "--no-deps", "--format-version", "1"],
+    { cwd: crateDir, encoding: "utf8" },
+  );
+  return JSON.parse(meta).target_directory;
+}
+const scratchBase = process.env.STRIVO_BUNDLE_CHECK_DIR || cargoTargetDir();
+mkdirSync(scratchBase, { recursive: true });
+const scratch = mkdtempSync(join(scratchBase, "strivo-pvr-bundle-check-"));
 let builtSpaJs;
 let builtSpaCss;
 try {
