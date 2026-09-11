@@ -53,7 +53,7 @@ async fn channels(headers: HeaderMap, State(state): State<AppState>) -> impl Int
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
+    match state.snapshot().await {
         Ok(ServerMessage::StateSnapshot { channels, .. }) => {
             Json(json!({ "channels": channels })).into_response()
         }
@@ -70,7 +70,7 @@ async fn patreon(headers: HeaderMap, State(state): State<AppState>) -> impl Into
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
+    match state.snapshot().await {
         Ok(ServerMessage::StateSnapshot {
             patreon_creators,
             patreon_posts,
@@ -126,9 +126,7 @@ pub(crate) async fn resolve_recording(
     state: &AppState,
     id: Uuid,
 ) -> Result<strivo_core::recording::job::RecordingJob, String> {
-    if let Ok(Ok(ServerMessage::StateSnapshot { recordings, .. })) =
-        tokio::time::timeout(Duration::from_secs(2), state.ipc.snapshot()).await
-    {
+    if let Ok(ServerMessage::StateSnapshot { recordings, .. }) = state.snapshot().await {
         if let Some(job) = recordings.get(&id) {
             return Ok(job.clone());
         }
@@ -187,8 +185,8 @@ async fn recordings(
     };
     let start = query.cursor.unwrap_or(0);
     let limit = query.limit.unwrap_or(500).clamp(1, 500);
-    let snapshot = match tokio::time::timeout(Duration::from_secs(2), state.ipc.snapshot()).await {
-        Ok(Ok(ServerMessage::StateSnapshot { recordings, .. })) => Some(recordings),
+    let snapshot = match state.snapshot().await {
+        Ok(ServerMessage::StateSnapshot { recordings, .. }) => Some(recordings),
         _ => None,
     };
     let mut live_extras = Vec::new();
@@ -673,7 +671,7 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     // Daemon reachable: a successful snapshot proves the recorder process is
     // alive and answering on the IPC socket.
-    let daemon_ok = state.ipc.snapshot().await.is_ok();
+    let daemon_ok = state.snapshot().await.is_ok();
 
     // Jobs DB usable. This reports on the process's shared handle rather than
     // opening a second connection: re-opening ran the full schema batch on
@@ -903,7 +901,7 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
     let mut checks: Vec<serde_json::Value> = Vec::new();
 
     // Network — daemon reachable.
-    let snap = state.ipc.snapshot().await;
+    let snap = state.snapshot().await;
     if snap.is_ok() {
         add_check(
             &mut checks,
@@ -1072,7 +1070,7 @@ async fn gantt(headers: HeaderMap, State(state): State<AppState>) -> impl IntoRe
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
+    match state.snapshot().await {
         Ok(ServerMessage::StateSnapshot { recordings, .. }) => {
             let cutoff = chrono::Utc::now() - chrono::Duration::hours(24);
             // Sort by the actual timestamp before serialising into JSON
@@ -2525,7 +2523,7 @@ async fn put_auto_record(
             // identifier when the channel isn't currently in the
             // cached snapshot (rare; only happens before the first
             // monitor poll completes).
-            let display_name = match state.ipc.snapshot().await {
+            let display_name = match state.snapshot().await {
                 Ok(ServerMessage::StateSnapshot { channels, .. }) => channels
                     .iter()
                     .find(|c| c.id == ch_id)
@@ -3667,7 +3665,7 @@ async fn pipeline_run(
     if check_key(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    match state.ipc.snapshot().await {
+    match state.snapshot().await {
         Ok(ServerMessage::StateSnapshot { recordings, .. }) => {
             let Some(recording) = recordings.get(&body.recording_id) else {
                 return Problem::not_found("recording not found").into_response();

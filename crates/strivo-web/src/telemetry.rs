@@ -420,6 +420,7 @@ mod tests {
             config_path: None,
             config_write_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             config_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            snapshot_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             session_secret: "telemetry-test-session-secret".to_string(),
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),

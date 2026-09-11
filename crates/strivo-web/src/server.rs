@@ -17,6 +17,10 @@ use crate::csrf;
 use crate::ipc_client::IpcClient;
 use crate::routes;
 
+/// A cached IPC snapshot plus the instant it was fetched, used to bound the
+/// short-TTL cache in `AppState::snapshot_cache` (B-06).
+type SnapshotCacheEntry = (Arc<strivo_core::ipc::ServerMessage>, std::time::Instant);
+
 #[derive(Debug, Clone)]
 pub struct ProbeCacheEntry {
     pub len: u64,
@@ -39,6 +43,13 @@ pub struct AppState {
     /// every download/Range request and every read-only settings/schedule/
     /// health endpoint (B-01/B-02).
     pub config_cache: Arc<tokio::sync::RwLock<Option<Arc<strivo_core::config::AppConfig>>>>,
+    /// Short-TTL cache over `ipc.snapshot()`. A snapshot is a full socket
+    /// round-trip that clones the daemon's entire in-memory state (~200
+    /// jobs + channels); 11 handlers previously called it independently on
+    /// every request. Invalidated immediately by the event relay spawned in
+    /// `serve` on any `DaemonEvent`; the TTL below is only the fallback for
+    /// when no event has arrived (B-06).
+    pub snapshot_cache: Arc<tokio::sync::RwLock<Option<SnapshotCacheEntry>>>,
     /// HMAC secret for browser-session cookies (W3). Loaded from
     /// `WebConfig.session_secret`, or generated + persisted at startup
     /// (see `serve`), so it always exists.
@@ -99,6 +110,36 @@ impl AppState {
         Ok(arc)
     }
 
+    /// The IPC snapshot, served from a short-TTL cache instead of a fresh
+    /// socket round-trip on every call (B-06). Callers that need a specific
+    /// field pattern-match the returned `ServerMessage` exactly as they did
+    /// against `ipc.snapshot()` directly.
+    const SNAPSHOT_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
+
+    pub async fn snapshot(&self) -> anyhow::Result<strivo_core::ipc::ServerMessage> {
+        {
+            let guard = self.snapshot_cache.read().await;
+            if let Some((msg, at)) = guard.as_ref() {
+                if at.elapsed() < Self::SNAPSHOT_CACHE_TTL {
+                    return Ok((**msg).clone());
+                }
+            }
+        }
+        let msg = tokio::time::timeout(Self::SNAPSHOT_CACHE_TTL, self.ipc.snapshot())
+            .await
+            .map_err(|_| anyhow::anyhow!("daemon snapshot timed out"))??;
+        *self.snapshot_cache.write().await = Some((Arc::new(msg.clone()), std::time::Instant::now()));
+        Ok(msg)
+    }
+
+    /// Drop the cached snapshot immediately. Called by the event relay
+    /// spawned in `serve` whenever a `DaemonEvent` arrives, so a handler
+    /// right after a mutation (start/stop recording, a live-status change)
+    /// doesn't serve state that's already stale.
+    pub async fn invalidate_snapshot(&self) {
+        *self.snapshot_cache.write().await = None;
+    }
+
     /// The shared `jobs.db` handle, opened on first use. `PersistDb` is
     /// `Clone` over an inner `Arc<Mutex<Connection>>`, so every caller shares
     /// one connection and one schema initialisation.
@@ -127,6 +168,7 @@ impl AppState {
             config_path: None,
             config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
             config_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            snapshot_cache: Arc::new(tokio::sync::RwLock::new(None)),
             session_secret: "route-shape-test-session-secret".to_string(),
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -191,6 +233,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         // Seed the cache from the load already done above for the session
         // secret, instead of reading config.toml a second time at startup.
         config_cache: Arc::new(tokio::sync::RwLock::new(cfg_file.map(Arc::new))),
+        snapshot_cache: Arc::new(tokio::sync::RwLock::new(None)),
         session_secret,
         login_limiter: crate::ratelimit::LoginLimiter::new(),
         probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -201,6 +244,31 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         jobs_db: Arc::new(tokio::sync::OnceCell::new()),
         jobs_db_path: Arc::new(strivo_core::config::AppConfig::data_dir().join("jobs.db")),
     };
+
+    // Background relay: invalidate the cached IPC snapshot the instant a
+    // DaemonEvent arrives, rather than leaving every handler to wait out
+    // the 2s TTL (B-06). Runs for the process lifetime; a dead/absent
+    // daemon just means `events()` errors immediately and the loop retries
+    // after a short backoff, same as a browser's own /events reconnect.
+    {
+        let relay_state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let mut stream = relay_state.ipc.events();
+                loop {
+                    match futures::StreamExt::next(&mut stream).await {
+                        Some(Ok(_)) => relay_state.invalidate_snapshot().await,
+                        Some(Err(e)) => {
+                            tracing::debug!("snapshot-cache event relay error: {e}");
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        });
+    }
 
     let app = build_router(state);
 

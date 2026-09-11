@@ -67,7 +67,7 @@ async fn chat_rooms(headers: HeaderMap, State(state): State<AppState>) -> impl I
         )
         .into_response();
     }
-    let channels = match state.ipc.snapshot().await {
+    let channels = match state.snapshot().await {
         Ok(strivo_core::ipc::ServerMessage::StateSnapshot { channels, .. }) => channels,
         Ok(_) => vec![],
         Err(e) => return Problem::internal(format!("snapshot: {e}")).into_response(),

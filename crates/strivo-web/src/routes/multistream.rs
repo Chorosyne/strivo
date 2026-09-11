@@ -46,7 +46,7 @@ async fn multistream_tiles(
     if authed(&headers, &state).is_err() {
         return Problem::unauthorized().into_response();
     }
-    let channels = match state.ipc.snapshot().await {
+    let channels = match state.snapshot().await {
         Ok(strivo_core::ipc::ServerMessage::StateSnapshot { channels, .. }) => channels,
         Ok(_) => vec![],
         Err(e) => return Problem::internal(format!("snapshot: {e}")).into_response(),
