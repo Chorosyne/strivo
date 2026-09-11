@@ -72,6 +72,20 @@ jobs:
       - name: check (workspace, all features)
         run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-features --locked
 
+  # Packaging/doc-contract lints -- fast, no Rust toolchain needed. Each
+  # check is a standalone script under scripts/ so it can also be run
+  # locally ahead of a PR.
+  packaging-docs:
+    name: packaging & docs lints
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, arch]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: NOTICE.md matches vendored-deps.toml
+        run: scripts/check-notice.sh
+
   check:
     name: fmt + clippy + test
     # Public fork PRs must never execute on local infrastructure.

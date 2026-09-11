@@ -38,8 +38,10 @@ file to match.
 
 - License of the bundled binary: **BSD-2-Clause** (`streamlink-BSD-2-Clause.txt`)
 - Source: [streamlink/windows-builds](https://github.com/streamlink/windows-builds)
-  (Windows)
+  (Windows) / [streamlink/streamlink-appimage](https://github.com/streamlink/streamlink-appimage)
+  (Linux)
 - Windows pin: see `[streamlink.windows_x86_64]` in `packaging/vendored-deps.toml`
+- Linux pin: see `[streamlink.linux_x86_64]` in `packaging/vendored-deps.toml`
 
 ## yt-dlp
 
@@ -51,4 +53,6 @@ file to match.
   source license. StriVo bundles the standalone executable, so it ships the
   GPL-3.0 text here, not yt-dlp's own Unlicense `LICENSE` file.
 - Source: [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) releases
+- Linux pin: see `[yt-dlp.linux_x86_64]` in `packaging/vendored-deps.toml`
 - Windows pin: see `[yt-dlp.windows_x86_64]` in `packaging/vendored-deps.toml`
+- macOS pin: see `[yt-dlp.macos_x86_64]` in `packaging/vendored-deps.toml`
