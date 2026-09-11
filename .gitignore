@@ -5,9 +5,6 @@
 /.open-next/
 /out/
 /*.tsbuildinfo
-/website/.next/
-/website/node_modules/
-/website/*.tsbuildinfo
 Cargo.lock.backup
 **/*.rs.bk
 
