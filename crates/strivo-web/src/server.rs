@@ -32,6 +32,13 @@ pub struct AppState {
     pub config_path: Option<Arc<std::path::PathBuf>>,
     /// Serialize read-modify-write configuration updates in this web process.
     pub config_write_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Cached `AppConfig`, populated by `AppConfig::load` on first access
+    /// and refreshed by mutation handlers (via `refresh_config`) after a
+    /// successful on-disk save. Removes the per-request blocking
+    /// `AppConfig::load` (fs read + TOML parse) that previously ran on
+    /// every download/Range request and every read-only settings/schedule/
+    /// health endpoint (B-01/B-02).
+    pub config_cache: Arc<tokio::sync::RwLock<Option<Arc<strivo_core::config::AppConfig>>>>,
     /// HMAC secret for browser-session cookies (W3). Loaded from
     /// `WebConfig.session_secret`, or generated + persisted at startup
     /// (see `serve`), so it always exists.
@@ -69,6 +76,29 @@ impl AppState {
         self.config_path.as_deref().map(|path| path.as_path())
     }
 
+    /// Cached config snapshot — loaded once and reused by every read-only
+    /// handler instead of re-reading + re-parsing `config.toml` per request.
+    /// Populated lazily on first call; refreshed by `refresh_config` after
+    /// any handler persists a change.
+    pub async fn config(&self) -> Result<Arc<strivo_core::config::AppConfig>, String> {
+        if let Some(cfg) = self.config_cache.read().await.as_ref().cloned() {
+            return Ok(cfg);
+        }
+        self.refresh_config().await
+    }
+
+    /// Reload `config.toml` from disk and replace the cached snapshot.
+    /// Mutation handlers call this after a successful `AppConfig::save`,
+    /// while still holding `config_write_lock`, so no reader can observe
+    /// the gap between "saved" and "cache updated".
+    pub async fn refresh_config(&self) -> Result<Arc<strivo_core::config::AppConfig>, String> {
+        let cfg = strivo_core::config::AppConfig::load(self.config_path())
+            .map_err(|e| e.to_string())?;
+        let arc = Arc::new(cfg);
+        *self.config_cache.write().await = Some(arc.clone());
+        Ok(arc)
+    }
+
     /// The shared `jobs.db` handle, opened on first use. `PersistDb` is
     /// `Clone` over an inner `Arc<Mutex<Connection>>`, so every caller shares
     /// one connection and one schema initialisation.
@@ -96,6 +126,7 @@ impl AppState {
             api_key: ApiKey(api_key.to_string()),
             config_path: None,
             config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            config_cache: Arc::new(tokio::sync::RwLock::new(None)),
             session_secret: "route-shape-test-session-secret".to_string(),
             login_limiter: crate::ratelimit::LoginLimiter::new(),
             probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -135,8 +166,8 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
     // /login signs is verifiable by check_key on the same process. Read
     // from config, else generate + persist now (don't defer to /login —
     // that left AppState's copy out of sync with the signed cookie).
+    let mut cfg_file = strivo_core::config::AppConfig::load(cfg.config_path.as_deref()).ok();
     let session_secret = {
-        let mut cfg_file = strivo_core::config::AppConfig::load(cfg.config_path.as_deref()).ok();
         let existing = cfg_file.as_ref().and_then(|c| c.web.session_secret.clone());
         match existing {
             Some(s) => s,
@@ -157,6 +188,9 @@ pub async fn serve(cfg: ServeConfig) -> Result<()> {
         api_key: cfg.api_key,
         config_path: cfg.config_path.map(Arc::new),
         config_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+        // Seed the cache from the load already done above for the session
+        // secret, instead of reading config.toml a second time at startup.
+        config_cache: Arc::new(tokio::sync::RwLock::new(cfg_file.map(Arc::new))),
         session_secret,
         login_limiter: crate::ratelimit::LoginLimiter::new(),
         probe_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),

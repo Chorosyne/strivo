@@ -216,10 +216,14 @@ async fn download(
         Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
     };
     // Containment check before opening: canonicalise against the configured
-    // recording root and refuse anything that escapes it.
-    let root = match strivo_core::config::AppConfig::load(state.config_path()) {
-        Ok(c) => c.recording_dir,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    // recording root and refuse anything that escapes it. Reads the cached
+    // config (AppState::config) instead of re-reading + re-parsing
+    // config.toml on every request — this handler serves every byte range
+    // of a playback seek, so the old per-request `AppConfig::load` ran on
+    // every seek (B-01).
+    let root = match state.config().await {
+        Ok(c) => c.recording_dir.clone(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     };
     let path = match contain_in_root(&raw, &root) {
         Ok(p) => p,
