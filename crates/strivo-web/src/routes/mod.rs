@@ -1,10 +1,21 @@
 pub mod api;
 pub mod assets;
+// Config/DB backup + restore, and durable recording history — split out of
+// `api` alongside the other `/api/v1/*` handler modules below.
+pub mod backup;
+// Blocklist, per-channel auto-record + alerts, and (Creator Edition)
+// archiver tandem/playlist toggles — split out of `api`.
+pub mod blocklist;
 // Twitch IRC chat's two server-side routes (list rooms, relay an outbound
 // send) — core, every-edition functionality, not a Creator/Pro plugin. See
 // the module doc for why it isn't folded into `plugins`.
 pub mod chat;
+// Capture-profile CRUD (quality tiers) — split out of `api`.
+pub mod capture_profiles;
 pub mod events;
+// JSON channel import/export, the Monitor page's unified view, and
+// (Creator Edition) the plugin capability matrix — split out of `api`.
+pub mod import_export;
 // Strivo Pro licence routes (status/activate/trial/refresh) — entitlement is
 // a Creator Edition product concept (ADR 0002, closing CE06); the PVR
 // edition has no notion of "Pro" at all, so this module and its router are
@@ -28,4 +39,7 @@ pub mod plugins;
 // legacy htmx page routers (channels/dashboard/logs/schedule/settings/
 // system) were retired in item 10 — the SPA + /api/v1 supersede them.
 pub mod recordings;
+// Health, channels/patreon snapshots, recordings CRUD, schedule, settings +
+// platform credentials, storage/gantt gauges, and logs — split out of `api`.
+pub mod settings;
 pub mod websub;

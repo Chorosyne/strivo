@@ -29,7 +29,7 @@ async fn lookup_job(
     state: &AppState,
     id: Uuid,
 ) -> Result<strivo_core::recording::job::RecordingJob, String> {
-    crate::routes::api::resolve_recording(state, id).await
+    crate::routes::settings::resolve_recording(state, id).await
 }
 
 /// Mirrors the SPA's `isInProgress` predicate (`assets/spa/008-pvr.js`):
