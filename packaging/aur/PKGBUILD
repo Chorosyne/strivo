@@ -7,7 +7,6 @@ arch=('x86_64')
 url="https://github.com/revoydotdev/strivo"
 license=('MIT')
 depends=('gcc-libs' 'ffmpeg' 'mpv' 'streamlink' 'yt-dlp')
-optdepends=('openai-whisper: local transcription via Crunchr plugin')
 makedepends=('cargo')
 provides=('strivo')
 conflicts=('strivo-git' 'strivo-bin')

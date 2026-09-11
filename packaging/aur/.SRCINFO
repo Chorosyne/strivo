@@ -1,8 +1,8 @@
 pkgbase = strivo
-	pkgdesc = TUI Live Stream PVR for Twitch and YouTube
-	pkgver = 0.3.0
+	pkgdesc = Self-hosted live-stream PVR for Twitch, YouTube, and Patreon
+	pkgver = 0.6.0
 	pkgrel = 1
-	url = https://github.com/revelri/strivo
+	url = https://github.com/revoydotdev/strivo
 	arch = x86_64
 	license = MIT
 	makedepends = cargo
@@ -11,11 +11,10 @@ pkgbase = strivo
 	depends = mpv
 	depends = streamlink
 	depends = yt-dlp
-	optdepends = openai-whisper: local transcription via Crunchr plugin
 	provides = strivo
 	conflicts = strivo-git
 	conflicts = strivo-bin
-	source = strivo-0.3.0.tar.gz::https://github.com/revelri/strivo/archive/refs/tags/v0.3.0.tar.gz
-	sha256sums = SKIP
+	source = strivo-0.6.0.tar.gz::https://github.com/revoydotdev/strivo/archive/refs/tags/v0.6.0.tar.gz
+	sha256sums = bd40a31c2b65300b53e376f7679bddaed5fd8ae01622e24420cc8b5a697e61c7
 
 pkgname = strivo
