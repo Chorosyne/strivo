@@ -135,6 +135,18 @@ function renderPopulatedSlotHtml(slot, path, streams) {
     const rec = recCache.find((r) => r.id === slot.recordingId);
     const title = rec ? (niceTitle(rec.stream_title) || rec.channel_name || rec.id.slice(0, 8)) : slot.recordingId.slice(0, 8);
     const channel = rec ? rec.channel_name || "" : "";
+    // B-04: a job still being written has no stable Content-Length/Range,
+    // so a growing MKV plays back a stale-length snapshot and a truncated
+    // MP4 trips the client watchdog. Reuse the same isInProgress predicate
+    // the click paths already gate on (012b-pvr.js) instead of ever
+    // sourcing /download for a job that isn't Finished yet.
+    if (rec && isInProgress(rec.state)) {
+      return `
+        <div class="ms-leaf ms-empty" data-path="${htmlEscape(path)}" data-recording-id="${htmlEscape(slot.recordingId)}"
+             tabindex="0" data-title="${htmlEscape(title)}" data-platform="recording">
+          <div class="ms-empty-pill">Still recording — check back when it finishes</div>
+        </div>`;
+    }
     return `
       <div class="ms-leaf ms-leaf-rec" data-path="${htmlEscape(path)}" data-recording-id="${htmlEscape(slot.recordingId)}"
            tabindex="0" data-title="${htmlEscape(title)}" data-platform="recording">

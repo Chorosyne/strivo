@@ -420,12 +420,13 @@ function wireTileHandlers(tile, stage, watch, streams) {
   wirePickerCard(tile, { stage, watch, streams });
 
   // A slot whose stream left the live set renders the "Stream offline"
-  // pill (019a's renderPopulatedSlotHtml, when the leaf's streamId no
-  // longer resolves against `streams`) — a dead end with no picker.
-  // `.ms-empty-pill` only ever appears on THAT branch: a real empty slot
-  // renders `.ms-picker` instead (renderEmptySlotHtml, above), so this
-  // check can't misfire on a genuinely empty tile. Clicking it converts
-  // the slot back to a real empty one and repaints, landing on the same
+  // pill, and a slot holding a recording that hasn't finished writing
+  // yet renders "Still recording" (both in 019a's
+  // renderPopulatedSlotHtml) — dead ends with no picker. `.ms-empty-pill`
+  // only ever appears on those two branches: a real empty slot renders
+  // `.ms-picker` instead (renderEmptySlotHtml, above), so this check
+  // can't misfire on a genuinely empty tile. Clicking it converts the
+  // slot back to a real empty one and repaints, landing on the same
   // picker card an empty slot shows.
   const offlinePill = tile.querySelector(".ms-empty-pill");
   if (offlinePill) {

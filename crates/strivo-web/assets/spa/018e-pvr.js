@@ -177,8 +177,14 @@ async function renderWatch(ctx) {
       }
     }
     // An explicit "watch this" click is a request to watch it, so it starts
-    // playing even though the wall opens paused by default.
-    setTilePlaying(target, true);
+    // playing even though the wall opens paused by default — unless it's a
+    // recording that's still being written (B-04): renderPopulatedSlotHtml
+    // already refuses to source /download for that state, so forcing
+    // "playing" here would just be requesting playback of a tile that
+    // renders as the "still recording" affordance instead.
+    const recStillRecording = recordingId
+      && recCache.some((r) => r.id === recordingId && isInProgress(r.state));
+    if (!recStillRecording) setTilePlaying(target, true);
     savePlayerLayout();
   }
 
