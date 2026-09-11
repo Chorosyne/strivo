@@ -972,9 +972,32 @@ pub async fn run_manager(
                                     let retry_quality_tier =
                                         resolve_quality_tier(&config, &job.channel_id, job.platform);
                                     let maybe_watch_url = rec.from_start_watch_url.clone();
+                                    let maybe_source_url = rec.job.source_url.clone();
                                     tokio::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
-                                        if let Some(watch_url) = maybe_watch_url {
+                                        if let Some(source_url) = maybe_source_url {
+                                            // VOD/upload download retry: re-spawn yt-dlp
+                                            // against the original video URL directly.
+                                            // A DownloadVod job is never a live stream
+                                            // (source_url is the discriminator: only
+                                            // DownloadVod sets it), so falling through to
+                                            // resolver::resolve_stream_url below — which
+                                            // builds a channel `/live` alias from
+                                            // job.channel_name — produced a bogus
+                                            // `@<display name>/live` URL and a confusing
+                                            // 404 on every retry instead of just
+                                            // re-fetching the same video.
+                                            match YtDlpProcess::with_options(
+                                                &source_url,
+                                                job.output_path,
+                                                retry_cookies.as_deref(),
+                                                Some(&retry_fmt),
+                                                false,
+                                            ) {
+                                                Ok(p) => { let _ = rtx.send((jid, Ok((RecorderProcess::YtDlp(p), None, None)))); }
+                                                Err(e) => { let _ = rtx.send((jid, Err(format!("{e}")))); }
+                                            }
+                                        } else if let Some(watch_url) = maybe_watch_url {
                                             // yt-dlp from-start retry: re-spawn
                                             // with the same resolved watch URL.
                                             match YtDlpProcess::with_options(
