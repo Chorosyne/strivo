@@ -130,11 +130,16 @@ Light mode accents are desaturated 10-20% for comfortable contrast:
 ### Platform Colors (Fixed — Not Themeable)
 | Platform | Hex | Notes |
 |----------|-----|-------|
-| Twitch | `#9146FF` | Official brand purple |
-| YouTube | `#FF0000` | Official brand red |
-| Patreon | `#FF424D` | Official brand coral |
+| Twitch | `#a970ff` | Desaturated from the official `#9146FF` |
+| YouTube | `#ff4d4d` | Desaturated from the official `#FF0000` |
+| Patreon | `#f96854` | Desaturated from the official `#FF424D` |
 
-Platform colors represent external brands and must not change with the user's theme.
+Platform colors represent external brands and must not change with the
+user's theme. These are deliberately desaturated from the official brand
+hexes (`spa-css/020-pvr.css` chat-compose accent variables) — the fully
+saturated brand colors read as too harsh against the JellySkin navy
+background and lose legibility at small chip/accent sizes; the values
+above are the actual shipped source of truth.
 
 ### Alpha / Glow Variants
 For backgrounds, glows, and subtle tints — use the accent color at reduced opacity:
