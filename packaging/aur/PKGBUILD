@@ -1,6 +1,6 @@
 # Maintainer: revelri <slrevoy@mailbox.org>
 pkgname=strivo
-pkgver=0.6.0
+pkgver=0.7.0
 pkgrel=1
 pkgdesc="Self-hosted live-stream PVR for Twitch, YouTube, and Patreon"
 arch=('x86_64')

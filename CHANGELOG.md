@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.7.0] — 2026-09-11
+
 ### Added
 - **Platform auth failures are surfaced instead of silently degrading.**
   A rejected OAuth refresh (revoked/expired refresh token, bad app
@@ -405,7 +409,8 @@ changelog entry at the time.
 - Dialog system for confirmations and input.
 - Color theme system for the TUI.
 
-[Unreleased]: https://github.com/revoydotdev/strivo/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/revoydotdev/strivo/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/revoydotdev/strivo/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/revoydotdev/strivo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/revoydotdev/strivo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/revoydotdev/strivo/compare/v0.3.0...v0.4.0
