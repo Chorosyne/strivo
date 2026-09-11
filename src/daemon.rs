@@ -1336,8 +1336,12 @@ async fn handle_client(
     // read loop below (Hello → snapshot via the writer task), so a
     // command-first connection is dispatched rather than dropped.
 
-    // Spawn a writer task that sends broadcast events
-    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<String>();
+    // Spawn a writer task that sends broadcast events. Bounded (matching the
+    // broadcast::channel(256) fan-out above): an unbounded queue let a
+    // stalled reader (dead client, full TCP send buffer, one per open
+    // /events SSE tab) accumulate every DaemonEvent forever, since
+    // writer_task is the only drain (B-05).
+    let (write_tx, mut write_rx) = mpsc::channel::<String>(256);
 
     let writer_task = tokio::spawn(async move {
         while let Some(msg) = write_rx.recv().await {
@@ -1347,9 +1351,17 @@ async fn handle_client(
         }
     });
 
+    // Cancelled when this connection's write queue fills up, so the read
+    // loop below (which may otherwise sit blocked on a stalled client's
+    // input) also unwinds and the connection actually closes — separate
+    // from `cancel`, which is the whole-daemon shutdown token shared by
+    // every connection.
+    let conn_cancel = CancellationToken::new();
+
     // Forward broadcast events
     let write_tx_clone = write_tx.clone();
     let cancel_clone = cancel.clone();
+    let broadcast_conn_cancel = conn_cancel.clone();
     let mut bcast_rx = broadcast_rx;
     let broadcast_task = tokio::spawn(async move {
         loop {
@@ -1359,8 +1371,16 @@ async fn handle_client(
                         Ok(event) => {
                             let msg = ServerMessage::Event(event);
                             if let Ok(encoded) = ipc::encode_message(&msg) {
-                                if write_tx_clone.send(encoded).is_err() {
-                                    break;
+                                match write_tx_clone.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        tracing::warn!(
+                                            "client write queue full (256); dropping connection"
+                                        );
+                                        broadcast_conn_cancel.cancel();
+                                        break;
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
                                 }
                             }
                         }
@@ -1378,7 +1398,15 @@ async fn handle_client(
     // Read client messages
     loop {
         line.clear();
-        let n = buf_reader.read_line(&mut line).await?;
+        // Race the blocking read against this connection's cancellation so
+        // a stalled reader whose write queue just filled up (B-05) actually
+        // gets its socket closed instead of sitting here until it next
+        // sends something (which a stalled client, by definition, may
+        // never do).
+        let n = tokio::select! {
+            r = buf_reader.read_line(&mut line) => r?,
+            _ = conn_cancel.cancelled() => break,
+        };
         if n == 0 {
             break; // Client disconnected
         }
@@ -1404,7 +1432,7 @@ async fn handle_client(
                 // snapshot is captured at connect time; good enough — the
                 // client also receives live events thereafter.)
                 if let Ok(encoded) = ipc::encode_message(&snapshot) {
-                    let _ = write_tx.send(encoded);
+                    let _ = write_tx.try_send(encoded);
                 }
             }
             ClientMessage::Recording(cmd) => {
