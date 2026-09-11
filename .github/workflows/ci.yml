@@ -33,6 +33,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Scratch on disk, not tmpfs
+        # The self-hosted Arch runner's /tmp is a quota-limited tmpfs shared
+        # with everything else on the host; cc/rustc temp files there have
+        # failed with "Disk quota exceeded". $RUNNER_TEMP is on real disk.
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Toolchain
         run: |
@@ -55,6 +60,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Scratch on disk, not tmpfs
+        # The self-hosted Arch runner's /tmp is a quota-limited tmpfs shared
+        # with everything else on the host; cc/rustc temp files there have
+        # failed with "Disk quota exceeded". $RUNNER_TEMP is on real disk.
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Resolve declared MSRV
         id: msrv
@@ -109,6 +119,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, arch]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Scratch on disk, not tmpfs
+        # The self-hosted Arch runner's /tmp is a quota-limited tmpfs shared
+        # with everything else on the host; cc/rustc temp files there have
+        # failed with "Disk quota exceeded". $RUNNER_TEMP is on real disk.
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Toolchain
         run: |
