@@ -20,6 +20,11 @@ test("recording settings persist and reset through the real PVR server", async (
     await expect(page.locator("#channel-list")).toBeVisible();
     await page.goto("/app#/settings/recording");
 
+    // recording_dir has no "Reset to default" control, so remember the
+    // sandbox's value and put it back at the end: later specs download the
+    // seeded recording, which lives under the ORIGINAL directory, and the
+    // containment check refuses anything outside the current root.
+    const originalDir = await page.locator('[data-stg-path="recording_dir"]').inputValue();
     const changes = [
       ["recording_dir", directory],
       ["recording.format.format", "bestvideo[height<=720]+bestaudio/best"],
@@ -57,6 +62,14 @@ test("recording settings persist and reset through the real PVR server", async (
     for (const [path] of changes.slice(1)) {
       await expect(page.locator(`[data-stg-path="${path}"]`)).toHaveValue("");
     }
+    const restored = page.waitForResponse(response =>
+      response.url().endsWith("/api/v1/settings/update") &&
+      response.request().postDataJSON()?.path === "recording_dir");
+    const dirField = page.locator('[data-stg-path="recording_dir"]');
+    await dirField.fill(originalDir);
+    await dirField.press("Tab");
+    expect((await restored).status(), "restore recording_dir").toBe(202);
+    await expect(dirField).toBeEnabled();
   } finally {
     // This directory belongs only to this test; no capture is started.
     await rm(directory, { recursive: true, force: true });
