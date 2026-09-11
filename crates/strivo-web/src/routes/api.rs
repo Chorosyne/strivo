@@ -3342,6 +3342,28 @@ struct VodDownloadPayload {
     post_title: Option<String>,
 }
 
+/// A YouTube URL addressing a channel tab (its live-now alias, uploads
+/// tab, etc.) rather than one specific video. `DownloadVod` pulls a single
+/// known VOD; a channel-alias URL either 404s once the broadcast it
+/// pointed at has ended, or silently downloads whatever happens to be
+/// live at request time — neither is what a caller asking for one VOD
+/// wants. Observed in the wild as a malformed `.../@handle/live` request
+/// body producing a confusing "yt-dlp ... 404" instead of a clear reason.
+fn is_youtube_channel_alias_url(url: &str) -> bool {
+    if url.contains("watch?v=") || url.contains("youtu.be/") {
+        return false;
+    }
+    let Some(after_host) = url.split("youtube.com").nth(1) else {
+        return false;
+    };
+    let path = after_host.split(['?', '#']).next().unwrap_or(after_host);
+    let path = path.trim_end_matches('/');
+    matches!(
+        path.rsplit('/').next(),
+        Some("live" | "streams" | "videos" | "featured" | "shorts")
+    )
+}
+
 /// `POST /api/v1/vods/download` — pull a single past-broadcast/VOD on demand
 /// from the channel-detail "Past Broadcasts" list. The daemon picks the
 /// platform-correct cookies path and builds the output filename from config.
@@ -3352,6 +3374,14 @@ async fn vod_download(
 ) -> impl IntoResponse {
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
+    }
+    if body.platform == PlatformKind::YouTube && is_youtube_channel_alias_url(&body.url) {
+        return crate::problem::Problem::bad_request(format!(
+            "'{}' addresses a YouTube channel tab, not a specific video. \
+             Pass the video's own watch URL instead.",
+            body.url
+        ))
+        .into_response();
     }
     let cmd = ClientMessage::DownloadVod {
         url: body.url,
@@ -3933,6 +3963,35 @@ mod performance_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_live_and_other_channel_tab_aliases() {
+        assert!(is_youtube_channel_alias_url(
+            "https://www.youtube.com/@The Yard/live"
+        ));
+        assert!(is_youtube_channel_alias_url(
+            "https://www.youtube.com/channel/UCGbg3DjQdcqWwqOLHpYHXIg/live"
+        ));
+        assert!(is_youtube_channel_alias_url(
+            "https://www.youtube.com/@somechannel/streams"
+        ));
+        assert!(is_youtube_channel_alias_url(
+            "https://www.youtube.com/@somechannel/videos"
+        ));
+    }
+
+    #[test]
+    fn accepts_real_video_urls() {
+        assert!(!is_youtube_channel_alias_url(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        ));
+        assert!(!is_youtube_channel_alias_url("https://youtu.be/dQw4w9WgXcQ"));
+        // "live" as a query param on a real watch URL must not trip the
+        // channel-alias check.
+        assert!(!is_youtube_channel_alias_url(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=live"
+        ));
+    }
 
     #[tokio::test]
     async fn thumbnail_lock_keeps_one_lock_while_a_waiter_is_queued() {
