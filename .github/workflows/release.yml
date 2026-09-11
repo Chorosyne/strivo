@@ -30,8 +30,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Fails fast, before any platform build starts, when the pushed tag
+  # disagrees with Cargo.toml's [workspace.package] version -- catching the
+  # class of drift that used to only surface after three platform builds
+  # had already run.
+  check-version:
+    name: Tag matches manifest version
+    runs-on: [self-hosted, linux, x64, arch]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: scripts/check-release-version.sh
+
   build-linux:
     name: Build x86_64-linux tarball
+    needs: check-version
     if: github.event_name != 'workflow_dispatch' || inputs.linux
     runs-on: [self-hosted, linux, x64, arch]
     timeout-minutes: 45
@@ -98,6 +111,7 @@ jobs:
 
   build-macos:
     name: Build x86_64-apple-darwin tarball
+    needs: check-version
     if: github.event_name != 'workflow_dispatch' || inputs.macos
     runs-on: [self-hosted, macos, x64, sonoma]
     timeout-minutes: 45
@@ -149,6 +163,7 @@ jobs:
 
   build-windows:
     name: Build x86_64-windows-msvc zip
+    needs: check-version
     if: github.event_name != 'workflow_dispatch' || inputs.windows
     runs-on: [self-hosted, windows, x64]
     timeout-minutes: 45
