@@ -464,4 +464,5 @@ Object.assign(TEST_HOOK_EXTENSIONS, {
   gridFitArea,
   paintPlayerStage,
   makeRecordingController,
+  debugActiveTimers,
 });

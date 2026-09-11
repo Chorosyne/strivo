@@ -521,6 +521,19 @@ function teardownAcrossRoutes() {
   if (typeof prefixTimer !== "undefined" && prefixTimer) { clearTimeout(prefixTimer); prefixTimer = null; }
 }
 
+// Timer-leak guard (mock-lane e2e only, via window.__strivoTestHooks):
+// the current value of every per-route timer teardownAcrossRoutes() is
+// responsible for clearing. All of these must read null once a route has
+// actually torn down — a stray interval id here is the A-01 class of bug.
+function debugActiveTimers() {
+  return {
+    cdPosterTimer: typeof cdPosterTimer !== "undefined" ? cdPosterTimer : null,
+    playerRefreshTimer: (typeof playerState !== "undefined" && playerState) ? playerState.refreshTimer : null,
+    watchRefreshTimer: typeof _watchRefreshTimer !== "undefined" ? _watchRefreshTimer : null,
+    logsFollowTimer: typeof logsFollowTimer !== "undefined" ? logsFollowTimer : null,
+  };
+}
+
 async function render() {
   routeGeneration += 1;
   const context = captureRouteContext();
