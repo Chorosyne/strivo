@@ -81,13 +81,26 @@ jobs:
     runs-on: [self-hosted, linux, x64, arch]
     timeout-minutes: 10
     steps:
+      # Full history (not the default shallow clone) -- the CHANGELOG check
+      # below needs `git describe --tags` / `git log <tag>..HEAD` to work.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: NOTICE.md matches vendored-deps.toml
         run: scripts/check-notice.sh
 
       - name: config.toml.example covers every AppConfig field
         run: scripts/check-config-example.sh
+
+      - name: AUR .SRCINFO matches PKGBUILD
+        run: scripts/check-srcinfo.sh
+
+      - name: documented CLI subcommands exist
+        run: scripts/check-cli-subcommands.sh
+
+      - name: CHANGELOG Unreleased is non-empty when feat/fix commits exist
+        run: scripts/check-changelog-unreleased.sh
 
   check:
     name: fmt + clippy + test
