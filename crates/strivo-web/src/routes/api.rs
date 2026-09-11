@@ -529,6 +529,9 @@ async fn schedule_add(
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response()
 }
 
@@ -555,6 +558,9 @@ async fn schedule_delete(
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -562,7 +568,7 @@ async fn schedule(headers: HeaderMap, State(state): State<AppState>) -> impl Int
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match strivo_core::config::AppConfig::load(state.config_path()) {
+    match state.config().await {
         Ok(cfg) => {
             // Annotate each entry with its next fire time (RFC3339) so the
             // webui "Upcoming" row can sort + display it. Mirrors the cron
@@ -598,7 +604,7 @@ async fn settings(headers: HeaderMap, State(state): State<AppState>) -> impl Int
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    match strivo_core::config::AppConfig::load(state.config_path()) {
+    match state.config().await {
         Ok(cfg) => {
             // Strip secrets — never expose client_secret / cookies_path.
             // We surface only the existence (`configured: bool`) of each
@@ -655,7 +661,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let db_ok = state.jobs_db().await.is_ok();
 
     // Free disk on the recording filesystem.
-    let (disk, disk_ok) = match strivo_core::config::AppConfig::load(state.config_path()) {
+    let (disk, disk_ok) = match state.config().await {
         Ok(cfg) => {
             let (total, avail) = statvfs_bytes(&cfg.recording_dir).unwrap_or((0, 0));
             (
@@ -898,7 +904,7 @@ async fn health_checks(headers: HeaderMap, State(state): State<AppState>) -> imp
     }
 
     // Storage — free space on the recording filesystem.
-    let cfg = strivo_core::config::AppConfig::load(state.config_path());
+    let cfg = state.config().await;
     match &cfg {
         Ok(cfg) => {
             let (total, avail) = statvfs_bytes(&cfg.recording_dir).unwrap_or((0, 0));
@@ -949,10 +955,10 @@ async fn storage(headers: HeaderMap, State(state): State<AppState>) -> impl Into
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+    let cfg = match state.config().await {
         Ok(c) => c,
         Err(e) => {
-            return crate::problem::Problem::internal(e.to_string()).into_response();
+            return crate::problem::Problem::internal(e).into_response();
         }
     };
     let path = cfg.recording_dir.clone();
@@ -1542,6 +1548,9 @@ async fn set_poll_interval(
                 return crate::problem::Problem::internal(format!("save config: {e}"))
                     .into_response();
             }
+            if let Err(e) = state.refresh_config().await {
+                tracing::warn!("config cache refresh failed: {e}");
+            }
         }
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     }
@@ -1743,6 +1752,9 @@ async fn update_setting(
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+    }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
     }
     (
         StatusCode::ACCEPTED,
@@ -1977,6 +1989,9 @@ async fn set_platform(
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+    }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
     }
     drop(_config_guard);
 
@@ -2526,6 +2541,9 @@ async fn put_auto_record(
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     let _ = state.ipc.send_command(ClientMessage::PollNow).await;
     (
         StatusCode::OK,
@@ -2553,9 +2571,9 @@ async fn get_channel_alerts(
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+    let cfg = match state.config().await {
         Ok(c) => c,
-        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
     let entry = cfg
         .channel_alerts
@@ -2609,6 +2627,9 @@ async fn put_channel_alerts(
     }
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
+    }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
     }
     (
         StatusCode::OK,
@@ -2667,6 +2688,9 @@ async fn put_archiver_tandem(
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     (
         StatusCode::OK,
         Json(json!({"ok": true, "enabled": body.enabled})),
@@ -2714,6 +2738,9 @@ async fn put_archiver_playlists(
     let path = cfg.config_path.clone();
     if let Err(e) = cfg.save(path.as_deref()) {
         return crate::problem::Problem::internal(format!("save config: {e}")).into_response();
+    }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
     }
     Json(json!({ "ok": true })).into_response()
 }
@@ -2776,6 +2803,9 @@ async fn create_capture_profile(
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     (
         StatusCode::CREATED,
         Json(json!({ "ok": true, "name": name })),
@@ -2834,6 +2864,9 @@ async fn update_capture_profile(
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     Json(json!({ "ok": true, "name": name })).into_response()
 }
 
@@ -2859,6 +2892,9 @@ async fn delete_capture_profile(
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -2870,9 +2906,9 @@ async fn channels_export(headers: HeaderMap, State(state): State<AppState>) -> i
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+    let cfg = match state.config().await {
         Ok(c) => c,
-        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
     Json(json!({
         "version": 1,
@@ -2962,6 +2998,9 @@ async fn channels_import(
     if let Err(e) = cfg.save(state.config_path()) {
         return crate::problem::Problem::internal(e.to_string()).into_response();
     }
+    if let Err(e) = state.refresh_config().await {
+        tracing::warn!("config cache refresh failed: {e}");
+    }
     (
         StatusCode::OK,
         Json(json!({
@@ -2982,9 +3021,9 @@ async fn monitor_state(headers: HeaderMap, State(state): State<AppState>) -> imp
     if check_key(&headers, &state).is_err() {
         return crate::problem::Problem::unauthorized().into_response();
     }
-    let cfg = match strivo_core::config::AppConfig::load(state.config_path()) {
+    let cfg = match state.config().await {
         Ok(c) => c,
-        Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
+        Err(e) => return crate::problem::Problem::internal(e).into_response(),
     };
     let auto_record: Vec<serde_json::Value> = cfg
         .auto_record_channels
