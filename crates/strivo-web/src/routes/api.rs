@@ -15,15 +15,15 @@
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::post;
 #[cfg(feature = "creator")]
 use axum::routing::get;
+use axum::routing::post;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
-use strivo_core::ipc::{BulkAction, ClientMessage};
 #[cfg(feature = "creator")]
 use strivo_core::ipc::ServerMessage;
+use strivo_core::ipc::{BulkAction, ClientMessage};
 use strivo_core::platform::PlatformKind;
 // Bare `Problem` is used only by the creator-gated pipelines handlers; PVR
 // handlers reference `crate::problem::Problem` by full path.
@@ -760,7 +760,9 @@ mod tests {
         assert!(!is_youtube_channel_alias_url(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         ));
-        assert!(!is_youtube_channel_alias_url("https://youtu.be/dQw4w9WgXcQ"));
+        assert!(!is_youtube_channel_alias_url(
+            "https://youtu.be/dQw4w9WgXcQ"
+        ));
         // "live" as a query param on a real watch URL must not trip the
         // channel-alias check.
         assert!(!is_youtube_channel_alias_url(

@@ -10,10 +10,10 @@ use serde_json::json;
 #[cfg(feature = "creator")]
 use strivo_plugins::archiver::types::ArchiverConfig;
 
-use crate::routes::settings::check_key;
-use crate::server::AppState;
 #[cfg(feature = "creator")]
 use crate::problem::Problem;
+use crate::routes::settings::check_key;
+use crate::server::AppState;
 
 /// `GET /api/v1/channels/export` — export the auto-record channel list
 /// (with per-channel overrides) as a JSON document. Safe: read-only.

@@ -1019,10 +1019,7 @@ async fn durable_archive_entry_lists_details_and_range_downloads_without_snapsho
 async fn state_with_seeded_recording(
     api_key: &str,
     state: strivo_core::recording::job::RecordingState,
-) -> (
-    axum::Router,
-    strivo_core::recording::job::RecordingJob,
-) {
+) -> (axum::Router, strivo_core::recording::job::RecordingJob) {
     use strivo_core::platform::PlatformKind;
     use strivo_core::recording::persist::{PersistDb, PersistedJob};
 

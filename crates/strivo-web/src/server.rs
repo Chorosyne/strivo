@@ -103,8 +103,8 @@ impl AppState {
     /// while still holding `config_write_lock`, so no reader can observe
     /// the gap between "saved" and "cache updated".
     pub async fn refresh_config(&self) -> Result<Arc<strivo_core::config::AppConfig>, String> {
-        let cfg = strivo_core::config::AppConfig::load(self.config_path())
-            .map_err(|e| e.to_string())?;
+        let cfg =
+            strivo_core::config::AppConfig::load(self.config_path()).map_err(|e| e.to_string())?;
         let arc = Arc::new(cfg);
         *self.config_cache.write().await = Some(arc.clone());
         Ok(arc)
@@ -128,7 +128,8 @@ impl AppState {
         let msg = tokio::time::timeout(Self::SNAPSHOT_CACHE_TTL, self.ipc.snapshot())
             .await
             .map_err(|_| anyhow::anyhow!("daemon snapshot timed out"))??;
-        *self.snapshot_cache.write().await = Some((Arc::new(msg.clone()), std::time::Instant::now()));
+        *self.snapshot_cache.write().await =
+            Some((Arc::new(msg.clone()), std::time::Instant::now()));
         Ok(msg)
     }
 

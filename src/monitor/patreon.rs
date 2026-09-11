@@ -168,8 +168,7 @@ impl PatreonMonitor {
 
                 if is_new && auto_pull {
                     tracing::info!("Patreon auto-pull: {} - {}", creator.name, post.title);
-                    let spec =
-                        auto_pull_spec(embed_url, &creator.name, &post.title);
+                    let spec = auto_pull_spec(embed_url, &creator.name, &post.title);
                     let _ = self
                         .recording_tx
                         .send(crate::intents::download_vod(spec, &self.config));

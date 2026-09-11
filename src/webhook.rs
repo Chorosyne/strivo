@@ -159,7 +159,11 @@ pub fn alert_allowed(
 ) -> Option<bool> {
     let key = channel_key?;
     let entry = channel_alerts.iter().find(|e| e.channel_key == key)?;
-    let flag = if is_upload { entry.on_upload } else { entry.on_live };
+    let flag = if is_upload {
+        entry.on_upload
+    } else {
+        entry.on_live
+    };
     Some(flag.unwrap_or(true))
 }
 

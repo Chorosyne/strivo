@@ -277,8 +277,7 @@ async fn put_channel_alerts(
         Err(e) => return crate::problem::Problem::internal(e.to_string()).into_response(),
     };
     if body.on_live.is_none() && body.on_upload.is_none() {
-        cfg.channel_alerts
-            .retain(|c| c.channel_key != channel_key);
+        cfg.channel_alerts.retain(|c| c.channel_key != channel_key);
     } else if let Some(entry) = cfg
         .channel_alerts
         .iter_mut()
