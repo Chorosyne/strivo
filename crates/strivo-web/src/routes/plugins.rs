@@ -5728,6 +5728,8 @@ mod research_route_tests {
             jobs_db_path: std::sync::Arc::new(
                 strivo_core::config::AppConfig::data_dir().join("jobs.db"),
             ),
+            config_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            snapshot_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
