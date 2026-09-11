@@ -246,7 +246,7 @@ pub enum ConfigAction {
     Get {
         /// Config key (recording_dir, poll_interval, transcode, filename_template,
         /// twitch.client_id, youtube.client_id, youtube.client_secret, youtube.cookies_path,
-        /// patreon.client_id, patreon.client_secret, patreon.poll_interval)
+        /// patreon.client_id, patreon.client_secret, patreon.poll_interval_secs)
         key: String,
     },
     /// Set a config value and save

@@ -70,7 +70,7 @@ affect users do not need an entry.
 ## Scope and design
 
 The architectural shape of the project (platform trait, plugin event bus,
-daemon / client split, ratatui-first UI) is described in the README's
+daemon / client split, browser-served SPA UI) is described in the README's
 *Architecture* and *Design rationale* sections. Larger changes that move any
 of those load-bearing pieces should be discussed in an issue first so we can
 agree on the approach before the diff lands.

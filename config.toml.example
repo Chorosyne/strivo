@@ -62,8 +62,8 @@
 
 # ─── Auto-record channels ─────────────────────────────────────────────────
 # Each [[auto_record_channels]] block records that channel whenever it goes
-# live. Toggle these from the TUI sidebar with `a`; edits there round-trip
-# through this file.
+# live. Toggle these from the web UI; edits there round-trip through this
+# file.
 #
 # [[auto_record_channels]]
 # platform     = "twitch"
@@ -81,7 +81,7 @@
 
 # ─── Crunchr (transcription + analysis) ───────────────────────────────────
 # AI transcription with optional LLM analysis. Disabled by default — flip
-# `enabled = true` (or use the in-TUI config modal) to turn it on.
+# `enabled = true` to turn it on.
 #
 # [crunchr]
 # enabled = false
@@ -172,18 +172,13 @@
 
 # ─── User themes directory ────────────────────────────────────────────────
 # Drop theme files into ~/.config/strivo/themes/ — strivo loads them on
-# startup (and on `R` inside the Ctrl+T theme picker). Two formats:
+# startup. Two formats:
 #
 #   *.toml   native strivo theme (see any built-in for the shape)
 #   *.conf   Kitty / Ghostty keyword format (foreground, background,
 #            color0..color15, cursor, selection_foreground,
 #            selection_background). Unknown keys are skipped with a
 #            warning; missing slots fall back to Neon.
-#
-# To convert a Kitty theme once (writes ~/.config/strivo/themes/<slug>.toml):
-#
-#   strivo theme import /path/to/kitty-theme.conf
-#   strivo theme import /path/to/kitty-theme.conf --name my-theme
 
 # ─── UI ───────────────────────────────────────────────────────────────────
 # Animation and accessibility toggles.
