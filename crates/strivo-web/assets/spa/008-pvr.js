@@ -515,6 +515,7 @@ function teardownAcrossRoutes() {
   if (typeof cdPosterTimer !== "undefined" && cdPosterTimer) { clearInterval(cdPosterTimer); cdPosterTimer = null; }
   if (playerState && playerState.refreshTimer) { clearInterval(playerState.refreshTimer); playerState.refreshTimer = null; }
   if (typeof _watchRefreshTimer !== "undefined" && _watchRefreshTimer) { clearInterval(_watchRefreshTimer); _watchRefreshTimer = null; }
+  if (typeof logsFollowTimer !== "undefined" && logsFollowTimer) { clearInterval(logsFollowTimer); logsFollowTimer = null; }
   // Transient keyboard-prefix + command-palette state.
   if (typeof prefixActive !== "undefined") prefixActive = false;
   if (typeof prefixTimer !== "undefined" && prefixTimer) { clearTimeout(prefixTimer); prefixTimer = null; }
