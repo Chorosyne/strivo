@@ -54,9 +54,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   surfaced in the Settings UI.
 - Recordings library: durable-journal pagination, generation-aware
   caching, and a generation-tracked API response cache.
-- The B-roll finder plugin is wired into the recording Info modal; the
-  ab-render and submix tools are wired into the Creator Studio (Creator
-  Edition).
 
 ### Fixed
 
@@ -91,9 +88,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - Twitch readiness now waits for the user id to resolve before reporting
   ready; YouTube live detection no longer depends on live chat being
   present; YouTube streams no longer get routed into the Twitch player.
-- **Creator/PVR boundary.** Stripped Creator UI, plugin/licence content,
-  and the Crunchr plugin name are now genuinely absent from the PVR
-  bundle and its `--help`/`doctor` output, not just hidden at runtime.
+- **Release boundary.** Unreleased experimental content is now genuinely
+  absent from the released PVR bundle and its `--help`/`doctor` output,
+  not just hidden at runtime.
 
 ## [0.6.0] — 2026-08-18
 
