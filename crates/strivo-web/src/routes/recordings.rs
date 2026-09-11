@@ -216,6 +216,13 @@ fn parse_range(headers: &HeaderMap, file_len: u64) -> Result<Option<(u64, u64)>,
     Ok(Some((start, end)))
 }
 
+/// Format a `SystemTime` as an RFC 9110 HTTP-date (IMF-fixdate), e.g.
+/// `Sun, 06 Nov 1994 08:49:37 GMT`, for the `Last-Modified` header.
+fn httpdate(t: std::time::SystemTime) -> String {
+    let dt: chrono::DateTime<chrono::Utc> = t.into();
+    dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
 async fn download(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -238,6 +245,7 @@ async fn download(
     if is_in_progress(job.state) {
         return Problem::conflict("recording still in progress").into_response();
     }
+    let finished = job.state == strivo_core::recording::job::RecordingState::Finished;
     let raw = job.output_path;
     // Containment check before opening: canonicalise against the configured
     // recording root and refuse anything that escapes it. Reads the cached
@@ -257,10 +265,11 @@ async fn download(
         Ok(f) => f,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-    let total_len = match file.metadata().await.map(|m| m.len()) {
-        Ok(l) => l,
+    let meta = match file.metadata().await {
+        Ok(m) => m,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
+    let total_len = meta.len();
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -338,6 +347,22 @@ async fn download(
         if let Ok(v) = header::HeaderValue::from_str(&format!("bytes {start}-{end}/{total_len}")) {
             h.insert(header::CONTENT_RANGE, v);
         }
+    }
+    // Cache validators only for a Finished job (B-08): its bytes on disk are
+    // done changing, so the browser/proxy can safely reuse a cached range
+    // instead of re-fetching it on the next seek. In-progress responses
+    // never reach here (409 above); Failed jobs are left uncached since
+    // their file may still be partial/inconsistent.
+    if finished {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(v) = header::HeaderValue::from_str(&httpdate(modified)) {
+                h.insert(header::LAST_MODIFIED, v);
+            }
+        }
+        h.insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("private, max-age=86400"),
+        );
     }
     resp
 }
