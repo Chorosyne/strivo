@@ -349,7 +349,7 @@ pub struct AutoRecordEntry {
 ///
 /// Tier → yt-dlp `-f` selector:
 /// * `Best`      → `"bv*+ba/b"` (best video+audio, merged; falls back to a
-///                 pre-merged format only if separate streams aren't available)
+///   pre-merged format only if separate streams aren't available)
 /// * `P1080`     → `"bestvideo[height<=1080]+bestaudio/best[height<=1080]"`
 /// * `P720`      → `"bestvideo[height<=720]+bestaudio/best[height<=720]"`
 /// * `P480`      → `"bestvideo[height<=480]+bestaudio/best[height<=480]"`
