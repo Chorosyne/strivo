@@ -43,6 +43,43 @@ EOF
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' is required but not found" >&2; exit 1; }; }
 
+# Downloads the sibling <url>.sha256 asset (published alongside every
+# AppImage by release.yml's build-linux job, see
+# packaging/linux/build-appimage.sh) and verifies $dest against it with
+# `sha256sum -c`, mirroring build-appimage.sh's own fetch_and_verify().
+# Fails loudly -- and removes the unverified download -- on a checksum
+# mismatch or a missing/malformed .sha256 asset; never installs on trust.
+verify_appimage() {
+  local url="$1" dest="$2"
+  local sha_url="${url}.sha256"
+  local checksum_raw
+  checksum_raw="$(curl -fsSL "$sha_url" || true)"
+  if [[ -z "$checksum_raw" ]]; then
+    echo "error: no .sha256 checksum published at ${sha_url} -- refusing to install an unverified binary" >&2
+    rm -f "$dest"
+    exit 1
+  fi
+
+  local expected_sha
+  expected_sha="$(printf '%s' "$checksum_raw" | awk 'NR==1{print $1}')"
+  if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "error: malformed checksum data from ${sha_url}" >&2
+    rm -f "$dest"
+    exit 1
+  fi
+
+  local checksum_file
+  checksum_file="$(dirname "$dest")/.$(basename "$dest").sha256"
+  printf '%s  %s\n' "$expected_sha" "$(basename "$dest")" > "$checksum_file"
+  if ! ( cd "$(dirname "$dest")" && sha256sum -c "$(basename "$checksum_file")" --status ); then
+    echo "error: sha256 mismatch for $(basename "$dest") -- refusing to install a tampered or corrupted download" >&2
+    rm -f "$dest" "$checksum_file"
+    exit 1
+  fi
+  rm -f "$checksum_file"
+  echo "› checksum verified"
+}
+
 latest_appimage_url() {
   need curl
   # GitHub's unauthenticated API is rate-limited but fine for an occasional
@@ -61,6 +98,7 @@ latest_appimage_url() {
 
 do_install() {
   need curl
+  need sha256sum
   local url
   url="$(latest_appimage_url)"
   [[ -n "$url" ]] || { echo "error: couldn't find a Linux AppImage in the latest release" >&2; exit 1; }
@@ -68,6 +106,7 @@ do_install() {
   echo "› downloading $(basename "$url")"
   mkdir -p "${APP_DIR}" "${BIN_DIR}"
   curl -fsSL -o "${APPIMAGE_PATH}.new" "$url"
+  verify_appimage "$url" "${APPIMAGE_PATH}.new"
   chmod +x "${APPIMAGE_PATH}.new"
   mv -f "${APPIMAGE_PATH}.new" "${APPIMAGE_PATH}"
 
