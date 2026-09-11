@@ -38,7 +38,7 @@ use crate::stream::resolver;
 /// 2. Capture profile `format.format` (explicit override on the profile)
 /// 3. Capture profile `quality_tier` (named preset → format selector)
 /// 4. Global `recording.format.format`
-/// 5. Built-in default `"best"`
+/// 5. Built-in default `"bv*+ba/b"`
 pub fn resolve_format(
     config: &AppConfig,
     channel_id: &str,
@@ -101,7 +101,7 @@ pub fn resolve_format(
 ///
 /// Walks: channel auto-record entry → capture profile → `quality_tier`.
 /// Returns `None` when no profile is attached or the profile has no tier,
-/// which preserves the pre-tier `"best"` fallback behaviour.
+/// which preserves the pre-tier built-in-default fallback behaviour.
 fn resolve_quality_tier(
     config: &AppConfig,
     channel_id: &str,
@@ -1341,7 +1341,7 @@ mod tests {
     #[test]
     fn format_resolution_uses_builtin_default_when_empty() {
         let r = RecordingFormat::resolved(None, &RecordingFormat::default());
-        assert_eq!(r.format, "best");
+        assert_eq!(r.format, "bv*+ba/b");
         assert_eq!(r.container, "mkv");
         assert_eq!(r.video_codec, "copy");
         assert_eq!(r.audio_codec, "copy");

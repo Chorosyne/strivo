@@ -225,11 +225,12 @@ impl Default for RecordingConfig {
 /// Format / quality selection for a recording job.
 ///
 /// All fields optional — `RecordingFormat::resolve(channel_override, global)` walks
-/// channel → global → built-in defaults: `format = "best"`, copy-mux into MKV.
+/// channel → global → built-in defaults: `format = "bv*+ba/b"`, copy-mux into MKV.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecordingFormat {
-    /// yt-dlp `-f` selector, e.g. `"best"`, `"bestvideo[height<=1080]+bestaudio"`,
-    /// `"bestaudio"`. Default: `"best"`.
+    /// yt-dlp `-f` selector, e.g. `"bv*+ba/b"`, `"bestvideo[height<=1080]+bestaudio"`,
+    /// `"bestaudio"`. Default: `"bv*+ba/b"` — a bare `"best"` only matches a
+    /// pre-merged single-file format, which many videos never expose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
 
@@ -267,7 +268,9 @@ impl RecordingFormat {
         {
             s.to_string()
         } else {
-            "best".to_string()
+            // See QualityTier::Best::format_selector's comment: a bare
+            // "best" fails outright on videos with no pre-merged format.
+            "bv*+ba/b".to_string()
         };
         let container = pick(|x| x.container.as_deref());
         let container = if container.is_empty() {
@@ -345,7 +348,8 @@ pub struct AutoRecordEntry {
 /// so the UI can offer a stable, human-readable set of choices.
 ///
 /// Tier → yt-dlp `-f` selector:
-/// * `Best`      → `"best"` (yt-dlp default; picks the highest merged format)
+/// * `Best`      → `"bv*+ba/b"` (best video+audio, merged; falls back to a
+///                 pre-merged format only if separate streams aren't available)
 /// * `P1080`     → `"bestvideo[height<=1080]+bestaudio/best[height<=1080]"`
 /// * `P720`      → `"bestvideo[height<=720]+bestaudio/best[height<=720]"`
 /// * `P480`      → `"bestvideo[height<=480]+bestaudio/best[height<=480]"`
@@ -389,7 +393,14 @@ impl QualityTier {
     /// Translate to the yt-dlp `-f` format selector string.
     pub fn format_selector(&self) -> &'static str {
         match self {
-            QualityTier::Best => "best",
+            // Not a bare "best": that selector only matches a pre-merged
+            // single-file format, which many modern YouTube videos (and
+            // most past-livestream VODs) never expose at all -- yt-dlp
+            // fails outright with "Requested format is not available."
+            // bv*+ba/b (bestvideo+bestaudio, falling back to best) is the
+            // same selector already validated for YouTube --live-from-start
+            // (src/recording/ytdlp.rs), applied consistently here too.
+            QualityTier::Best => "bv*+ba/b",
             QualityTier::P1080 => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
             QualityTier::P720 => "bestvideo[height<=720]+bestaudio/best[height<=720]",
             QualityTier::P480 => "bestvideo[height<=480]+bestaudio/best[height<=480]",
@@ -1061,7 +1072,7 @@ mod quality_tier_tests {
 
     #[test]
     fn tier_format_selectors() {
-        assert_eq!(QualityTier::Best.format_selector(), "best");
+        assert_eq!(QualityTier::Best.format_selector(), "bv*+ba/b");
         assert_eq!(
             QualityTier::P1080.format_selector(),
             "bestvideo[height<=1080]+bestaudio/best[height<=1080]"

@@ -842,7 +842,7 @@ fn quality_tier_selectors_are_valid_ytdlp_format_strings() {
     // Spot-check that each tier produces a non-empty string that looks
     // like a valid yt-dlp format expression.
     for (tier, expected_substr) in [
-        (QualityTier::Best, "best"),
+        (QualityTier::Best, "bv"),
         (QualityTier::P1080, "1080"),
         (QualityTier::P720, "720"),
         (QualityTier::P480, "480"),
