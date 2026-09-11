@@ -16,7 +16,6 @@ function makeYouTubeController(spec) {
   let volume = typeof spec.volume === "number" ? spec.volume : 1;
   let videoId = spec.videoId || "";
   let wantPlaying = spec.playing !== false;
-  let pollTimer = null;
 
   const subs = new Set();
   const notify = () => {
@@ -24,8 +23,9 @@ function makeYouTubeController(spec) {
     subs.forEach((fn) => { try { fn(s); } catch (_) { /* advisory */ } });
   };
   // Like Twitch, no time/progress event — sample state while playing only.
-  const startPoll = () => { if (!pollTimer) pollTimer = setInterval(() => { if (player && ready) notify(); }, 500); };
-  const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+  const statePoll = makeStatePoll(() => player && ready, notify);
+  const startPoll = () => statePoll.start();
+  const stopPoll = () => statePoll.stop();
 
   // No video id means no player API: YT.Player addresses a video, and the
   // live embed strivo builds addresses a channel. Fall straight back rather

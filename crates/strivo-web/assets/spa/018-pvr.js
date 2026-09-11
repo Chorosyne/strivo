@@ -299,3 +299,17 @@ function makeIframeController(spec) {
   return controller;
 }
 
+// Twitch and YouTube's SDKs have no time/progress event, so state that
+// might have drifted (isPaused/getEnded) is sampled on a fixed interval
+// while `isReady()` is true — stopped the moment it isn't, so an idle
+// wall tile costs nothing. Shared by makeTwitchController and
+// makeYouTubeController, which previously each hand-rolled the same
+// start/stop-interval pair.
+function makeStatePoll(isReady, notify, ms = 500) {
+  let timer = null;
+  return {
+    start() { if (!timer) timer = setInterval(() => { if (isReady()) notify(); }, ms); },
+    stop() { if (timer) { clearInterval(timer); timer = null; } },
+  };
+}
+

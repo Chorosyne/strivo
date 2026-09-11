@@ -16,7 +16,6 @@ function makeTwitchController(spec) {
   let muted = !!spec.muted;
   let volume = typeof spec.volume === "number" ? spec.volume : 1;
   let wantPlaying = spec.playing !== false;
-  let pollTimer = null;
 
   const subs = new Set();
   const notify = () => {
@@ -26,8 +25,9 @@ function makeTwitchController(spec) {
   // Twitch's SDK has no time/progress event, so state that might have
   // drifted (isPaused/getEnded) is sampled while the tile is playing —
   // stopped the moment it isn't, so an idle wall costs nothing.
-  const startPoll = () => { if (!pollTimer) pollTimer = setInterval(() => { if (player && ready) notify(); }, 500); };
-  const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+  const statePoll = makeStatePoll(() => player && ready, notify);
+  const startPoll = () => statePoll.start();
+  const stopPoll = () => statePoll.stop();
 
   /// Map a policy onto whatever this stream actually offers.
   ///
