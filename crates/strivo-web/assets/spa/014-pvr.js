@@ -668,7 +668,7 @@ function mountChatCompose(parent, opts = {}) {
     emoteBody.innerHTML = items.map((it) => {
       if (it.url) {
         return `<button class="cc-emote-cell" type="button" data-insert="${htmlEscape(it.code)}" title="${htmlEscape(it.code)}">
-          <img loading="lazy" src="${htmlEscape(it.url)}" alt="${htmlEscape(it.code)}"></button>`;
+          <img loading="lazy" decoding="async" src="${htmlEscape(it.url)}" alt="${htmlEscape(it.code)}"></button>`;
       }
       return `<button class="cc-emote-cell cc-emoji-cell" type="button" data-insert="${htmlEscape(it.code)}" title="${htmlEscape(it.label)}">${it.code}</button>`;
     }).join("");
@@ -940,7 +940,7 @@ function renderChatTokens(text, ranges = [], room = null) {
       || ffzCache.map.get(run)
       || seventvCache.map.get(run);
     if (tpUrl) {
-      return `<img class="chat-emote" loading="lazy" alt="${htmlEscape(run)}" title="${htmlEscape(run)}" src="${htmlEscape(tpUrl)}">`;
+      return `<img class="chat-emote" loading="lazy" decoding="async" alt="${htmlEscape(run)}" title="${htmlEscape(run)}" src="${htmlEscape(tpUrl)}">`;
     }
     return htmlEscape(run);
   };
@@ -959,7 +959,7 @@ function renderChatTokens(text, ranges = [], room = null) {
     const end = Math.min(r.end + 1, chars.length);
     const name = chars.slice(r.start, end).join("");
     const url = `https://static-cdn.jtvnw.net/emoticons/v2/${r.id}/default/dark/1.0`;
-    out.push(`<img class="chat-emote" loading="lazy" alt="${htmlEscape(name)}" title="${htmlEscape(name)}" src="${htmlEscape(url)}">`);
+    out.push(`<img class="chat-emote" loading="lazy" decoding="async" alt="${htmlEscape(name)}" title="${htmlEscape(name)}" src="${htmlEscape(url)}">`);
     cursor = end;
   }
   if (cursor < chars.length) out.push(renderPlain(chars.slice(cursor).join("")));

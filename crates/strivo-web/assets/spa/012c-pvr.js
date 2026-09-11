@@ -612,7 +612,7 @@ function vodSectionHtml(title, vods, ctx) {
       return `
     <div class="media-pill">
       <${linkTag} ${linkAttrs}>
-        <div class="mp-thumb">${thumb ? `<img class="mp-thumb-img" loading="lazy" alt="" src="${htmlEscape(thumb)}" onerror="this.remove()">` : ""}</div>
+        <div class="mp-thumb">${thumb ? `<img class="mp-thumb-img" loading="lazy" decoding="async" alt="" src="${htmlEscape(thumb)}" onerror="this.remove()">` : ""}</div>
         <div class="mp-info">
           <div class="mp-title">${htmlEscape(niceTitle(v.title))}</div>
           <div class="mp-sub">${meta}</div>
@@ -641,7 +641,7 @@ function renderPatreonPosts(c) {
     ? posts
         .map((p) => {
           const thumb = p.thumbnail_url
-            ? `<img class="mp-thumb-img" loading="lazy" alt="" src="${htmlEscape(p.thumbnail_url)}" onerror="this.remove()">`
+            ? `<img class="mp-thumb-img" loading="lazy" decoding="async" alt="" src="${htmlEscape(p.thumbnail_url)}" onerror="this.remove()">`
             : "";
           const url = p.embed_url || "";
           const state = vodDownloadState[url] || "idle";

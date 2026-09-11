@@ -167,7 +167,7 @@ function renderPopulatedSlotHtml(slot, path, streams) {
                     ${s.video_id ? `data-video-id="${htmlEscape(s.video_id)}"` : ""}
                     data-embed-base="${htmlEscape(s.embed_url)}"></div>`
             : `<div class="ms-poster" data-embed-base="${htmlEscape(s.embed_url)}">
-                 ${tilePosterUrl(s) ? `<img class="ms-poster-img" loading="lazy" alt="" src="${htmlEscape(tilePosterUrl(s))}" onerror="this.remove()">` : ""}
+                 ${tilePosterUrl(s) ? `<img class="ms-poster-img" loading="lazy" decoding="async" alt="" src="${htmlEscape(tilePosterUrl(s))}" onerror="this.remove()">` : ""}
                  <button class="ms-play" data-path="${htmlEscape(path)}" title="Play ${htmlEscape(s.channel_name)}"
                          aria-label="Play ${htmlEscape(s.channel_name)}">▶</button>
                </div>`}

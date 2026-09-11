@@ -802,7 +802,7 @@ function recThumb(r) {
   const missing = r.file_exists === false ? " rec-thumb-missing" : "";
   return `<span class="rec-thumb-wrap${missing}" data-init="${htmlEscape(initials)}"
     style="--ch-hue:${hue}deg">
-    <img class="rec-thumb" loading="lazy" alt=""
+    <img class="rec-thumb" loading="lazy" decoding="async" alt=""
       src="/api/v1/recordings/${encodeURIComponent(r.id)}/thumb"
       onerror="this.remove()" />
   </span>`;

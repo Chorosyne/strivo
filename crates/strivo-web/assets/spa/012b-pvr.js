@@ -255,7 +255,7 @@ function recordingsDashboardHtml(compact) {
     return `
       <a class="live-card" href="${href}" data-live-focus="${htmlEscape(focus)}"
          title="Open ${htmlEscape(c.display_name || c.name)} in the multi-stream viewer">
-        <div class="live-card-thumb">${thumb ? `<img loading="lazy" src="${htmlEscape(thumb)}" alt=""/>` : ""}<span class="live-card-badge micro">LIVE</span></div>
+        <div class="live-card-thumb">${thumb ? `<img loading="lazy" decoding="async" src="${htmlEscape(thumb)}" alt=""/>` : ""}<span class="live-card-badge micro">LIVE</span></div>
         <div class="live-card-meta">
           <span class="live-card-name">${htmlEscape(c.display_name || c.name)}</span>
           <span class="live-card-sub pg-cap-hint">${htmlEscape(c.platform)}${viewers ? ` · ${viewers}` : ""}</span>
@@ -323,7 +323,7 @@ function recordingPillHtml(j, dashboard = false) {
   return `
     <div class="media-pill mp-card${j.file_exists === false ? " mp-broken" : ""}${playable ? " mp-clickable" : ""}"${dashboard ? ` data-dashboard-recording="${htmlEscape(j.id)}"` : ""}${playAttrs}>
       <div class="mp-title" title="${title}">${title} ${sourceBadge}</div>
-      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" alt=""
+      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" decoding="async" alt=""
         src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
       <div class="mp-foot">
         <span class="mp-channel">${htmlEscape(j.channel_name || "")}</span>

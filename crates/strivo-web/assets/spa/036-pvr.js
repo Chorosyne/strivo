@@ -469,7 +469,7 @@ function historyPillHtml(j) {
   return `
     <div class="media-pill hist-pill${j.file_exists === false ? " mp-broken" : ""}"
          data-job-id="${htmlEscape(j.id)}">
-      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" alt=""
+      <div class="mp-thumb">${missingOverlay}<img class="mp-thumb-img" loading="lazy" decoding="async" alt=""
         src="/api/v1/recordings/${encodeURIComponent(j.id)}/thumb" onerror="this.remove()"></div>
       <div class="mp-info">
         <div class="mp-title">${htmlEscape(niceTitle(j.stream_title) || j.channel_name || "(recording)")} ${sourceBadge}</div>
