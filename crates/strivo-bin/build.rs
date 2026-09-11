@@ -27,6 +27,10 @@ fn embed_windows_resource() {
         "/../../packaging/icons/strivo.ico"
     );
     println!("cargo:rerun-if-changed={icon_path}");
+    // RC.EXE reads the quoted path as a C-style string, so a raw Windows
+    // path like `C:\actions-runner\...` loses its backslashes to escape
+    // processing (`\a` -> BEL) and the icon is "not found". Double them.
+    let icon_rc_path = icon_path.replace('\\', "\\\\");
 
     let version = env!("CARGO_PKG_VERSION");
     let mut parts = version
@@ -70,7 +74,7 @@ BEGIN
     END
 END
 "#,
-        icon_path = icon_path,
+        icon_path = icon_rc_path,
         major = major,
         minor = minor,
         patch = patch,
