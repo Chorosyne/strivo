@@ -86,7 +86,11 @@ database.
 
 Profile before adding complexity. Split the SPA into route chunks when compressed
 JavaScript exceeds 250 KiB or parse/evaluation exceeds 150 ms on the minimum
-supported client. Move history file-existence checks into a maintained catalog
-when a 500-row page exceeds the uncached read budget. Add a dedicated transcode
-queue when interactive media waits exceed two seconds under normal Creator
-loads.
+supported client. The `/api/v1/recordings` history file-existence check
+(`augment_recording`'s `Path::exists()`, up to 500 rows per page) already runs
+off the async reactor via `spawn_blocking`, so it no longer stalls other
+requests while it runs — but it is still one stat syscall per row. Move it
+into a maintained catalog (tracked alongside the journal, invalidated on
+write) when a 500-row page's wall time exceeds the uncached read budget even
+with the blocking-pool dispatch. Add a dedicated transcode queue when
+interactive media waits exceed two seconds under normal Creator loads.

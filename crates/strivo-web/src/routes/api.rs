@@ -236,7 +236,20 @@ async fn recordings(
             let total = extras_total.saturating_add(durable_total);
             let end = start.saturating_add(items.len());
             let next_cursor = (end < total).then_some(end);
-            let augmented: Vec<_> = items.iter().map(augment_recording).collect();
+            // Up to 500 rows, each stat'ing output_path via augment_recording's
+            // Path::exists() — a blocking syscall per row. Run off the reactor
+            // so a large page doesn't stall every other request on this
+            // worker thread while the syscalls complete (B-03), mirroring the
+            // spawn_blocking wrap around scan_existing_recordings
+            // (src/daemon.rs).
+            let augmented: Vec<_> = tokio::task::spawn_blocking(move || {
+                items.iter().map(augment_recording).collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("augment_recording task panicked: {e}");
+                Vec::new()
+            });
             Json(json!({
                 "recordings": augmented,
                 "total": total,
@@ -257,7 +270,15 @@ async fn recording_one(
         return crate::problem::Problem::unauthorized().into_response();
     }
     match resolve_recording(&state, id).await {
-        Ok(job) => Json(augment_recording(&job)).into_response(),
+        Ok(job) => {
+            let value = tokio::task::spawn_blocking(move || augment_recording(&job))
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("augment_recording task panicked: {e}");
+                    serde_json::Value::Null
+                });
+            Json(value).into_response()
+        }
         Err(e) if e == "recording not found" => {
             crate::problem::Problem::not_found(e).into_response()
         }
