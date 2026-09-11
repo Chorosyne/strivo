@@ -105,15 +105,47 @@ test("login then recordings list round-trips through the real daemon", async ({ 
   // Successful login leaves the login screen for the app chrome.
   await expect(page.locator("#channel-list")).toBeVisible();
 
-  // Navigate to Recordings — a fresh daemon has no recordings, so the
-  // page renders its empty state rather than `.recordings-table` (that
-  // only mounts once there's a row to show). The empty state itself is
-  // still real GET /api/v1/recordings output (cookie auth -> daemon IPC
-  // -> JSON -> SPA render), which is what this test is proving.
+  // Navigate to Recordings — real-server.sh seeds one Finished recording
+  // (see its ffmpeg step) that scan_existing_recordings journals at daemon
+  // startup, so the table renders that row rather than the empty state.
+  // This is still real GET /api/v1/recordings output (cookie auth -> daemon
+  // IPC/journal -> JSON -> SPA render), which is what this test is proving.
   await page.locator('.topnav-link[data-route="recordings"]').click();
   await expect(page).toHaveURL(/#\/recordings/);
   await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
-  await expect(page.getByText("No recordings yet")).toBeVisible();
+  await expect(page.getByText("No recordings yet")).not.toBeVisible();
+  await expect(page.locator(".recordings-table")).toBeVisible();
+});
+
+// B-04/B-08 — RAN, not TRACED: the mock lane's routes use synthetic
+// responses, so a real Range request against real bytes on disk only ever
+// ran in the audit's absence-of-coverage note. real-server.sh's ffmpeg
+// step seeds exactly one Finished recording for this.
+test("download serves a real finished recording with Range + cache validators", async ({ request }) => {
+  const list = await request.get("/api/v1/recordings", {
+    headers: { "x-api-key": API_KEY },
+  });
+  expect(list.status()).toBe(200);
+  const { recordings } = await list.json();
+  const seeded = recordings.find((r: { channel_name: string }) =>
+    r.channel_name === "e2eseed");
+  expect(seeded, `seeded recording not found in ${JSON.stringify(recordings)}`).toBeTruthy();
+  expect(seeded.state).toBe("Finished");
+
+  const full = await request.get(`/api/v1/recordings/${seeded.id}/download`, {
+    headers: { "x-api-key": API_KEY },
+  });
+  expect(full.status()).toBe(200);
+  expect(full.headers()["accept-ranges"]).toBe("bytes");
+  expect(full.headers()["last-modified"]).toBeTruthy();
+  expect(full.headers()["cache-control"]).toContain("private");
+
+  const ranged = await request.get(`/api/v1/recordings/${seeded.id}/download`, {
+    headers: { "x-api-key": API_KEY, range: "bytes=0-99" },
+  });
+  expect(ranged.status()).toBe(206);
+  expect(ranged.headers()["content-range"]).toMatch(/^bytes 0-99\//);
+  expect((await ranged.body()).length).toBe(100);
 });
 
 // CE03 — this lane runs against the REAL `cargo build -p strivo-web`

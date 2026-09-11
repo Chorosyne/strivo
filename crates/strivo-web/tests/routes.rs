@@ -1010,3 +1010,165 @@ async fn durable_archive_entry_lists_details_and_range_downloads_without_snapsho
         b"archive"
     );
 }
+
+/// Builds an `AppState` + real router wired to a durable jobs.db seeded
+/// with a single recording of the given state, same setup as
+/// `durable_archive_entry_lists_details_and_range_downloads_without_snapshot`
+/// above. Returns the router and the job so callers can hit
+/// `/api/v1/recordings/{id}/download`.
+async fn state_with_seeded_recording(
+    api_key: &str,
+    state: strivo_core::recording::job::RecordingState,
+) -> (
+    axum::Router,
+    strivo_core::recording::job::RecordingJob,
+) {
+    use strivo_core::platform::PlatformKind;
+    use strivo_core::recording::persist::{PersistDb, PersistedJob};
+
+    let dir = tempfile::tempdir().unwrap();
+    // Leaked so the temp dir outlives this function — the router keeps
+    // serving from it for the rest of the calling test.
+    let dir = Box::leak(Box::new(dir));
+    let recording_dir = dir.path().join("recordings");
+    std::fs::create_dir_all(&recording_dir).unwrap();
+    let media = recording_dir.join("seeded.mkv");
+    std::fs::write(&media, b"0123456789seeded-download-bytes").unwrap();
+    let config_path = dir.path().join("config.toml");
+    let cfg = strivo_core::config::AppConfig {
+        recording_dir: recording_dir.clone(),
+        ..Default::default()
+    };
+    cfg.save(Some(&config_path)).unwrap();
+
+    let mut job = strivo_core::recording::job::RecordingJob::new(
+        "seeded-channel".into(),
+        "Seeded channel".into(),
+        PlatformKind::Twitch,
+        media,
+        false,
+        Some("Seeded".into()),
+    );
+    job.state = state;
+    job.bytes_written = 32;
+    let db_path = dir.path().join("jobs.db");
+    PersistDb::open(&db_path)
+        .unwrap()
+        .upsert_job(&PersistedJob {
+            id: job.id.to_string(),
+            kind: "Recording".into(),
+            payload: serde_json::to_string(&job).unwrap(),
+            state: format!("{state:?}").to_lowercase(),
+            attempts: 0,
+            last_error: None,
+            episode_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let mut app_state = AppState::test_state(api_key);
+    app_state.config_path = Some(Arc::new(config_path));
+    app_state.jobs_db_path = Arc::new(db_path);
+    (build_router(app_state), job)
+}
+
+/// B-04 — download() must refuse a job that's still resolving/recording/
+/// stopping with 409 Conflict (problem+json), never serve a stale-length
+/// snapshot of a file that's still growing.
+#[tokio::test]
+async fn download_in_progress_recording_returns_409() {
+    use strivo_core::recording::job::RecordingState;
+
+    for state in [
+        RecordingState::ResolvingUrl,
+        RecordingState::Recording,
+        RecordingState::Stopping,
+    ] {
+        let api_key = "in-progress-download-test-key";
+        let (router, job) = state_with_seeded_recording(api_key, state).await;
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/recordings/{}/download", job.id))
+                    .header("x-api-key", api_key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "state {state:?} must be refused with 409"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/problem+json"),
+        );
+        assert!(response.headers().get(header::ACCEPT_RANGES).is_none());
+        assert!(response.headers().get(header::LAST_MODIFIED).is_none());
+    }
+}
+
+/// B-04/B-08 — a Finished job's download response must carry
+/// Accept-Ranges/Content-Range for a byte-range request, plus Last-Modified
+/// and a private Cache-Control (added only once a job stops changing).
+#[tokio::test]
+async fn download_finished_recording_returns_206_with_cache_headers() {
+    use strivo_core::recording::job::RecordingState;
+
+    let api_key = "finished-download-test-key";
+    let (router, job) = state_with_seeded_recording(api_key, RecordingState::Finished).await;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/recordings/{}/download", job.id))
+                .header("x-api-key", api_key)
+                .header(header::RANGE, "bytes=0-9")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCEPT_RANGES)
+            .and_then(|v| v.to_str().ok()),
+        Some("bytes"),
+    );
+    assert!(
+        response.headers().get(header::LAST_MODIFIED).is_some(),
+        "Finished job's download response must carry Last-Modified"
+    );
+    let cache_control = response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        cache_control.contains("private"),
+        "expected a private Cache-Control, got {cache_control:?}"
+    );
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+        b"0123456789"
+    );
+}
+
+/// B-01 regression guard: recordings.rs must read config through the
+/// AppState cache (`state.config()`), never `AppConfig::load` directly —
+/// that was the per-Range-request blocking fs read this lane fixed. A
+/// plain source-scan is cheap, exact, and doesn't need a running router.
+#[test]
+fn recordings_module_never_calls_app_config_load_directly() {
+    let src = include_str!("../src/routes/recordings.rs");
+    assert!(
+        !src.contains("AppConfig::load"),
+        "recordings.rs must not call AppConfig::load directly; use AppState::config()/state.config()"
+    );
+}

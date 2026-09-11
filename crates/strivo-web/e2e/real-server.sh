@@ -32,6 +32,35 @@ export XDG_STATE_HOME="$WORKDIR/.local/state"
 export XDG_CACHE_HOME="$WORKDIR/.cache"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
 
+# Seed one finished recording so the real lane exercises download/Range
+# (B-04/B-08) against an actual HTTP response, not just the mock lane's
+# synthetic bytes. `scan_existing_recordings` (daemon startup) would pick up
+# a file dropped into recording_dir, but it only lands in the daemon's
+# in-memory snapshot — GET /api/v1/recordings only lists it if it's also in
+# the durable jobs.db (see routes/*.rs `recordings()`: a live Finished/Failed
+# entry not already in the db is never added to the page). So write the
+# journal row directly instead, the same shape `RecordingFinished` would
+# have written (see `PersistedJob`/`upsert_job` in src/recording/persist.rs)
+# — same technique crates/strivo-web/tests/routes.rs's
+# durable_archive_entry_lists_details_and_range_downloads_without_snapshot
+# test uses, just via python3's stdlib sqlite3 module against the real
+# compiled binaries instead of calling PersistDb from Rust.
+SEED_ID=""
+SEED_FILE=""
+if command -v ffmpeg >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  SEED_DIR="$WORKDIR/Videos/StriVo"
+  mkdir -p "$SEED_DIR"
+  SEED_FILE="$SEED_DIR/e2eseed_2024-01-01_real-lane-range-check.mkv"
+  ffmpeg -y -loglevel error \
+    -f lavfi -i testsrc=duration=2:size=320x240:rate=10 \
+    -f lavfi -i sine=frequency=440:duration=2 \
+    -shortest \
+    "$SEED_FILE"
+  SEED_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')"
+else
+  echo "real-server.sh: ffmpeg or python3 not found on PATH; skipping seeded recording" >&2
+fi
+
 DAEMON_PID=""
 SERVE_PID=""
 
@@ -65,6 +94,59 @@ if [ "$daemon_up" -ne 1 ]; then
   echo "real-server.sh: daemon never came up; recent log:" >&2
   find "$XDG_STATE_HOME" -name 'strivo.*.log' -exec tail -n 100 {} \; >&2 || true
   exit 1
+fi
+
+# jobs.db exists once the daemon is up (PersistDb::open runs before the IPC
+# listener binds, which `strivo status` above already proved is live).
+# directories::ProjectDirs::from("", "", "strivo").data_dir() is
+# $XDG_DATA_HOME/strivo on Linux.
+if [ -n "$SEED_ID" ] && [ -f "$SEED_FILE" ]; then
+  JOBS_DB="$XDG_DATA_HOME/strivo/jobs.db"
+  SEED_BYTES="$(stat -c%s "$SEED_FILE" 2>/dev/null || stat -f%z "$SEED_FILE")"
+  SEED_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  SEED_PAYLOAD="$(python3 - "$SEED_ID" "$SEED_FILE" "$SEED_BYTES" "$SEED_NOW" <<'PY'
+import json
+import sys
+
+job_id, path, size, now = sys.argv[1:5]
+print(json.dumps({
+    "id": job_id,
+    "channel_id": "",
+    "channel_name": "e2eseed",
+    "platform": "Twitch",
+    "state": "Finished",
+    "output_path": path,
+    "started_at": now,
+    "bytes_written": int(size),
+    "duration_secs": 2.0,
+    "transcode": False,
+    "error": None,
+    "stream_title": "real lane range check",
+    "watched": False,
+    "playlist": None,
+    "thumbnail_url": None,
+    "source_url": None,
+}))
+PY
+  )"
+  if [ -f "$JOBS_DB" ]; then
+    python3 - "$JOBS_DB" "$SEED_ID" "$SEED_PAYLOAD" "$SEED_NOW" <<'PY'
+import sqlite3
+import sys
+
+db_path, job_id, payload, now = sys.argv[1:5]
+conn = sqlite3.connect(db_path)
+conn.execute(
+    "INSERT INTO jobs (id, kind, payload, state, created_at, updated_at, attempts, last_error, episode_dir)"
+    " VALUES (?, 'Recording', ?, 'finished', ?, ?, 0, NULL, NULL)",
+    (job_id, payload, now, now),
+)
+conn.commit()
+conn.close()
+PY
+  else
+    echo "real-server.sh: $JOBS_DB not found after daemon startup; skipping seeded recording" >&2
+  fi
 fi
 
 "$STRIVO_BIN" serve --bind "127.0.0.1:$PORT" --api-key "$API_KEY" &

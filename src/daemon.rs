@@ -1308,6 +1308,56 @@ impl PlatformControl {
     }
 }
 
+/// Forwards broadcast `DaemonEvent`s onto one connection's bounded write
+/// queue (`write_tx`). Bounded (matches `broadcast::channel(256)` at the
+/// call site above): an unbounded queue let a stalled reader (dead client,
+/// full TCP send buffer — reachable via one open `/events` SSE tab)
+/// accumulate every event forever, since the connection's writer task is
+/// the only drain (B-05). On a full queue, warns and cancels `conn_cancel`
+/// so `handle_client`'s read loop also unwinds and the connection actually
+/// closes (clients re-sync via Hello) instead of the queue growing without
+/// bound. Split out of `handle_client` so this behavior is unit-testable
+/// (see `tests::stalled_write_queue_cancels_the_connection_instead_of_growing`)
+/// without standing up a full daemon.
+fn spawn_event_forwarder(
+    write_tx: mpsc::Sender<String>,
+    mut bcast_rx: broadcast::Receiver<DaemonEvent>,
+    cancel: CancellationToken,
+    conn_cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = bcast_rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            let msg = ServerMessage::Event(event);
+                            if let Ok(encoded) = ipc::encode_message(&msg) {
+                                match write_tx.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        tracing::warn!(
+                                            "client write queue full (256); dropping connection"
+                                        );
+                                        conn_cancel.cancel();
+                                        break;
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            tracing::warn!("Client lagged, they should re-sync via Hello");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = cancel.cancelled() => break,
+            }
+        }
+    })
+}
+
 async fn handle_client(
     stream: ipc::Stream,
     snapshot: ServerMessage,
@@ -1357,43 +1407,12 @@ async fn handle_client(
     // from `cancel`, which is the whole-daemon shutdown token shared by
     // every connection.
     let conn_cancel = CancellationToken::new();
-
-    // Forward broadcast events
-    let write_tx_clone = write_tx.clone();
-    let cancel_clone = cancel.clone();
-    let broadcast_conn_cancel = conn_cancel.clone();
-    let mut bcast_rx = broadcast_rx;
-    let broadcast_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                result = bcast_rx.recv() => {
-                    match result {
-                        Ok(event) => {
-                            let msg = ServerMessage::Event(event);
-                            if let Ok(encoded) = ipc::encode_message(&msg) {
-                                match write_tx_clone.try_send(encoded) {
-                                    Ok(()) => {}
-                                    Err(mpsc::error::TrySendError::Full(_)) => {
-                                        tracing::warn!(
-                                            "client write queue full (256); dropping connection"
-                                        );
-                                        broadcast_conn_cancel.cancel();
-                                        break;
-                                    }
-                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            tracing::warn!("Client lagged, they should re-sync via Hello");
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                _ = cancel_clone.cancelled() => break,
-            }
-        }
-    });
+    let broadcast_task = spawn_event_forwarder(
+        write_tx.clone(),
+        broadcast_rx,
+        cancel.clone(),
+        conn_cancel.clone(),
+    );
 
     // Read client messages
     loop {
@@ -1983,6 +2002,50 @@ mod tests {
     use super::*;
     use crate::platform::PlatformKind;
     use crate::recording::job::{RecordingJob, RecordingState};
+
+    /// B-05 — a stalled reader (never drains `write_rx`, standing in for a
+    /// dead client / full TCP send buffer) must not let the write queue
+    /// grow past its bound. Drives the real `spawn_event_forwarder` used by
+    /// `handle_client`, with real bounded/broadcast channels — no daemon
+    /// stood up, since the behavior under test lives entirely in the queue
+    /// wiring, not in IPC framing or the rest of handle_client's command
+    /// dispatch.
+    #[tokio::test]
+    async fn stalled_write_queue_cancels_the_connection_instead_of_growing() {
+        let (write_tx, write_rx) = mpsc::channel::<String>(256);
+        let (bcast_tx, bcast_rx) = broadcast::channel::<DaemonEvent>(512);
+        let cancel = CancellationToken::new();
+        let conn_cancel = CancellationToken::new();
+
+        let forwarder =
+            spawn_event_forwarder(write_tx, bcast_rx, cancel.clone(), conn_cancel.clone());
+
+        // Never drain write_rx — the stalled reader this connection's queue
+        // is supposed to survive without growing unboundedly.
+        for i in 0..300u32 {
+            bcast_tx
+                .send(DaemonEvent::Notification {
+                    title: format!("t{i}"),
+                    body: String::new(),
+                })
+                .unwrap();
+        }
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !conn_cancel.is_cancelled() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect(
+            "conn_cancel must fire once the 256-capacity queue fills; \
+             it must never grow past that bound",
+        );
+
+        forwarder.abort();
+        drop(write_rx);
+        drop(cancel);
+    }
 
     /// Write a config.toml carrying one platform's credentials and return its
     /// path, so the reload path can be driven through the real

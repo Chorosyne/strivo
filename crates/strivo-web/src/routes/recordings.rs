@@ -251,8 +251,8 @@ async fn download(
     // recording root and refuse anything that escapes it. Reads the cached
     // config (AppState::config) instead of re-reading + re-parsing
     // config.toml on every request — this handler serves every byte range
-    // of a playback seek, so the old per-request `AppConfig::load` ran on
-    // every seek (B-01).
+    // of a playback seek, so the old per-request blocking config load ran
+    // on every seek (B-01).
     let root = match state.config().await {
         Ok(c) => c.recording_dir.clone(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
