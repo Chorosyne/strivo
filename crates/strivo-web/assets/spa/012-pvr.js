@@ -1439,6 +1439,21 @@ function wireVodDownloadButtons() {
       }
     });
   });
+  // Past Broadcasts: clicking a downloaded entry opens in-app playback
+  // instead of the source platform — these are already-recorded VODs,
+  // there's no reason to send the click to YouTube.
+  document.querySelectorAll('[data-action="open-vod-recording"]').forEach((el) => {
+    if (el.dataset.wired === "1") return;
+    el.dataset.wired = "1";
+    const open = () => {
+      const id = el.dataset.jobId;
+      if (id) openRecordingPlayer(id);
+    };
+    el.addEventListener("click", open);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
+  });
 }
 
 // Walk recCache and reflect each recording whose source_url points at a VOD
@@ -1559,13 +1574,28 @@ function vodSectionHtml(title, vods, ctx) {
   // sits next to it so we don't nest interactive elements.
   const rows = vods
     .map((v) => {
-      const href = /^https?:\/\//i.test(v.url || "") ? htmlEscape(v.url) : "#";
       const thumb = vodThumb(v.thumbnail_url);
       const date = (v.published_at || "").slice(0, 10);
       const dur = fmtDur(v.duration);
       const live = v.kind === "Live" || v.kind === "live";
       const meta = [date, dur].filter(Boolean).map(htmlEscape).join(" · ");
       const downloadable = !!(v.url && channelName && platform);
+      // Past Broadcasts are already-recorded livestreams, not arbitrary
+      // uploads — once downloaded, the pill should play the local
+      // recording, never send the click out to YouTube. A match is a
+      // finished recording whose source_url is this exact VOD's URL.
+      const matchingJob = isPast
+        ? recCache.find((r) => r.source_url === v.url && r.state === "Finished" && r.file_exists !== false)
+        : null;
+      const linkTag = isPast ? "div" : "a";
+      const linkAttrs = isPast
+        ? matchingJob
+          ? `class="mp-link" data-action="open-vod-recording" data-job-id="${htmlEscape(matchingJob.id)}" role="button" tabindex="0"`
+          : `class="mp-link mp-link-inert" style="cursor:default"`
+        : (() => {
+            const href = /^https?:\/\//i.test(v.url || "") ? htmlEscape(v.url) : "#";
+            return `class="mp-link" href="${href}" target="_blank" rel="noopener"`;
+          })();
       const state = vodDownloadState[v.url] || "idle";
       // For the downloading state, embed a live progress widget instead of
       // plain text. Seed pct/eta/rate from any matching cached job so a
@@ -1591,16 +1621,22 @@ function vodSectionHtml(title, vods, ctx) {
               data-title="${htmlEscape(v.title || "")}"
               ${state !== "idle" ? "disabled" : ""}>${inner}</button>`
         : "";
+      // "Upload" was a confusing label on Past Broadcasts — every entry
+      // there is a recorded livestream, not an upload; only flag the
+      // ones that were actually captured live.
+      const badge = live
+        ? '<span class="mp-badge micro live">LIVE VOD</span>'
+        : (isPast ? "" : '<span class="mp-badge micro">Upload</span>');
       return `
     <div class="media-pill">
-      <a class="mp-link" href="${href}" target="_blank" rel="noopener">
+      <${linkTag} ${linkAttrs}>
         <div class="mp-thumb">${thumb ? `<img class="mp-thumb-img" loading="lazy" alt="" src="${htmlEscape(thumb)}" onerror="this.remove()">` : ""}</div>
         <div class="mp-info">
           <div class="mp-title">${htmlEscape(niceTitle(v.title))}</div>
           <div class="mp-sub">${meta}</div>
         </div>
-        <div class="mp-meta">${live ? '<span class="mp-badge micro live">LIVE VOD</span>' : '<span class="mp-badge micro">Upload</span>'}</div>
-      </a>
+        <div class="mp-meta">${badge}</div>
+      </${linkTag}>
       ${btn}
     </div>`;
     })
