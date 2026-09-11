@@ -32,6 +32,68 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   with the `strivo setup cookies <platform> --browser <browser>` fix, and
   clears itself the next time a recording on that platform actually
   writes data.
+- **Native installers.** A Linux AppImage plus a curl-pipeable terminal
+  installer (`get-strivo.sh`), a Windows Inno Setup wizard installer, and
+  a Docker image/compose stack — three additional install paths beyond
+  building from source, all bundling ffmpeg/mpv/streamlink/yt-dlp so
+  nothing has to be installed separately. Bundled tools are resolved next
+  to the running executable before falling back to `PATH`.
+- `strivo enable`/`disable` now support macOS via a generated `launchd`
+  LaunchAgent, alongside the existing systemd (Linux) and Task Scheduler
+  (Windows) paths. Windows builds also carry an embedded icon and
+  version-info resource.
+- **Player and watch page.** A capability-aware player controller
+  interface, per-tile volume mixing, a unified tile chrome/player bar, and
+  a compact docked bar for short grid tiles; multi-view gained a
+  drag-and-drop layout composer with keyboard support and a channel
+  picker card.
+- **Design system.** Spacing/control/type tokens; the two Ctrl+K command
+  palettes were merged into one; per-channel live/upload alert overrides;
+  a right-click context menu for channels and stream tiles.
+- Server-side validation for recording settings, with matching errors
+  surfaced in the Settings UI.
+- Recordings library: durable-journal pagination, generation-aware
+  caching, and a generation-tracked API response cache.
+- The B-roll finder plugin is wired into the recording Info modal; the
+  ab-render and submix tools are wired into the Creator Studio (Creator
+  Edition).
+
+### Fixed
+
+- **Recording pipeline.** Container/extension is now detected from what
+  ffmpeg/yt-dlp actually produced instead of assumed from the filename
+  template; recordings no longer get listed twice; a new recording
+  settles before its first poll instead of briefly reporting broken; the
+  default yt-dlp format selector changed to `bv*+ba/b` (a bare `best`
+  silently failed on many streams); a VOD download retries against its
+  own URL instead of re-resolving a live stream; channel-alias YouTube
+  URLs are rejected before reaching `vod_download`.
+- **Playback.** Past Broadcasts pills play in-app instead of opening
+  YouTube; Twitch and YouTube tiles drive through their platform embed/
+  IFrame player APIs instead of a generic iframe; a live-channel click is
+  honoured, and a broken recording says so instead of failing silently.
+- **Security.** Every mutating and read-sensitive web route now requires
+  auth — pipeline-chain delete/save/list, licence status/activate/
+  refresh/trial issuance, recording download/play, Twitch chat routes —
+  instead of trusting an unauthenticated request; session cookies use
+  constant-time HMAC verification; auth now runs ahead of body/query
+  extraction; vulnerable web and licence-backend dependencies (including
+  two sharp/libheif CVEs) were updated.
+- **Daemon.** Twitch EventSub follow listing and startup auth both retry
+  instead of giving up on a transient network error; the `jobs.db` single
+  mutex was replaced with a connection pool that recovers a poisoned
+  connection instead of spinning; the daemon no longer writes a systemd
+  unit on macOS.
+- **Accessibility.** Recordings table headers are keyboard-sortable, a
+  skip-to-content link was added, and sub-12px text across the rail,
+  table, schedule, and general chrome was raised to the design system's
+  minimum sizes.
+- Twitch readiness now waits for the user id to resolve before reporting
+  ready; YouTube live detection no longer depends on live chat being
+  present; YouTube streams no longer get routed into the Twitch player.
+- **Creator/PVR boundary.** Stripped Creator UI, plugin/licence content,
+  and the Crunchr plugin name are now genuinely absent from the PVR
+  bundle and its `--help`/`doctor` output, not just hidden at runtime.
 
 ## [0.6.0] — 2026-08-18
 
